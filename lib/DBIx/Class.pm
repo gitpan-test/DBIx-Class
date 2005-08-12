@@ -4,31 +4,10 @@ use strict;
 use warnings;
 
 use vars qw($VERSION);
-use base;
+use base qw/DBIx::Class::Componentised/;
 
-$VERSION = '0.01';
+$VERSION = '0.02';
 
-sub load_components {
-  my $class = shift;
-  my @comp = map { "DBIx::Class::$_" } grep { $_ !~ /^#/ } @_;
-  $class->_load_components(@comp);
-}
-
-sub load_own_components {
-  my $class = shift;
-  my @comp = map { "${class}::$_" } grep { $_ !~ /^#/ } @_;
-  $class->_load_components(@comp);
-}
-
-sub _load_components {
-  my ($class, @comp) = @_;
-  foreach my $comp (@comp) {
-    eval "use $comp";
-    die $@ if $@;
-  }
-  no strict 'refs';
-  unshift(@{"${class}::ISA"}, @comp);
-}
 
 1;
 
@@ -89,9 +68,23 @@ for ::Table and ::Relationship,
 
 and have a look at t/lib/DBICTest.pm for a brief example.
 
-=head1 AUTHORS
+=head1 AUTHOR
 
 Matt S. Trout <mst@shadowcatsystems.co.uk>
+
+=head1 CONTRIBUTORS
+
+Andy Grundman <andy@hybridized.org>
+
+Brian Cassidy <bricas@cpan.org>
+
+Dan Kubb <dan.kubb-cpan@onautopilot.com>
+
+Dan Sully <daniel@cpan.org>
+
+davekam
+
+Marcus Ramberg <mramberg@cpan.org>
 
 =head1 LICENSE
 

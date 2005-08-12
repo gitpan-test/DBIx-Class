@@ -3,7 +3,7 @@ package DBIx::Class::Storage::DBI;
 use strict;
 use warnings;
 use DBI;
-use SQL::Abstract;
+use SQL::Abstract::Limit;
 use DBIx::Class::Storage::DBI::Cursor;
 
 use base qw/DBIx::Class/;
@@ -11,11 +11,10 @@ use base qw/DBIx::Class/;
 __PACKAGE__->load_components(qw/Exception AccessorGroup/);
 
 __PACKAGE__->mk_group_accessors('simple' =>
-  qw/connect_info _dbh sql_maker debug cursor/);
+  qw/connect_info _dbh _sql_maker debug cursor/);
 
 sub new {
   my $new = bless({}, ref $_[0] || $_[0]);
-  $new->sql_maker(new SQL::Abstract);
   $new->cursor("DBIx::Class::Storage::DBI::Cursor");
   $new->debug(1) if $ENV{DBIX_CLASS_STORAGE_DBI_DEBUG};
   return $new;
@@ -54,6 +53,14 @@ sub dbh {
     $self->_populate_dbh;
   }
   return $self->_dbh;
+}
+
+sub sql_maker {
+  my ($self) = @_;
+  unless ($self->_sql_maker) {
+    $self->_sql_maker(new SQL::Abstract::Limit( limit_dialect => $self->dbh ));
+  }
+  return $self->_sql_maker;
 }
 
 sub _populate_dbh {
@@ -119,8 +126,30 @@ sub select {
   if (ref $condition eq 'SCALAR') {
     $order = $1 if $$condition =~ s/ORDER BY (.*)$//i;
   }
-  my ($rv, $sth, @bind) = $self->_execute('select', $attrs->{bind}, $ident, $select, $condition, $order);
+  my @args = ('select', $attrs->{bind}, $ident, $select, $condition, $order);
+  if ($self->sql_maker->_default_limit_syntax eq "GenericSubQ") {
+    $attrs->{software_limit} = 1;
+  } else {
+    push @args, $attrs->{rows}, $attrs->{offset};
+  }
+  my ($rv, $sth, @bind) = $self->_execute(@args);
   return $self->cursor->new($sth, \@bind, $attrs);
+}
+
+sub select_single {
+  my ($self, $ident, $select, $condition, $attrs) = @_;
+  my $order = $attrs->{order_by};
+  if (ref $condition eq 'SCALAR') {
+    $order = $1 if $$condition =~ s/ORDER BY (.*)$//i;
+  }
+  my @args = ('select', $attrs->{bind}, $ident, $select, $condition, $order);
+  if ($self->sql_maker->_default_limit_syntax eq "GenericSubQ") {
+    $attrs->{software_limit} = 1;
+  } else {
+    push @args, 1, $attrs->{offset};
+  }  
+  my ($rv, $sth, @bind) = $self->_execute(@args);
+  return $sth->fetchrow_array;
 }
 
 sub sth {
@@ -134,6 +163,8 @@ sub sth {
 =head1 AUTHORS
 
 Matt S. Trout <mst@shadowcatsystems.co.uk>
+
+Andy Grundman <andy@hybridized.org>
 
 =head1 LICENSE
 

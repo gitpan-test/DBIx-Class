@@ -1,4 +1,5 @@
 Build.PL
+Changes
 lib/DBIx/Class.pm
 lib/DBIx/Class/AccessorGroup.pm
 lib/DBIx/Class/CDBICompat.pm
@@ -24,6 +25,7 @@ lib/DBIx/Class/CDBICompat/Stringify.pm
 lib/DBIx/Class/CDBICompat/TempColumns.pm
 lib/DBIx/Class/CDBICompat/Triggers.pm
 lib/DBIx/Class/ClassResolver/PassThrough.pm
+lib/DBIx/Class/Componentised.pm
 lib/DBIx/Class/Core.pm
 lib/DBIx/Class/Cursor.pm
 lib/DBIx/Class/DB.pm
@@ -31,7 +33,9 @@ lib/DBIx/Class/Exception.pm
 lib/DBIx/Class/InflateColumn.pm
 lib/DBIx/Class/PK.pm
 lib/DBIx/Class/PK/Auto.pm
+lib/DBIx/Class/PK/Auto/MSSQL.pm
 lib/DBIx/Class/PK/Auto/MySQL.pm
+lib/DBIx/Class/PK/Auto/Oracle.pm
 lib/DBIx/Class/PK/Auto/Pg.pm
 lib/DBIx/Class/PK/Auto/SQLite.pm
 lib/DBIx/Class/Relationship.pm
@@ -47,8 +51,6 @@ lib/DBIx/Class/Storage/DBI/Cursor.pm
 lib/DBIx/Class/Table.pm
 lib/DBIx/Class/Test/SQLite.pm
 MANIFEST			This list of files
-META.yml
-Makefile.PL
 script/nextalyzer.pl
 t/01core.t
 t/02pod.t
@@ -62,6 +64,9 @@ t/09update.t
 t/10auto.t
 t/11mysql.t
 t/12pg.t
+t/13oracle.t
+t/14mssql.t
+t/15limit.t
 t/cdbi-t/01-columns.t
 t/cdbi-t/02-Film.t
 t/cdbi-t/03-subclassing.t
@@ -106,3 +111,6 @@ t/testlib/MyStarLinkMCPK.pm
 t/testlib/Order.pm
 t/testlib/OtherFilm.pm
 t/testlib/PgBase.pm
+META.yml
+Makefile.PL
+README

@@ -1,19 +1,21 @@
 ---
 name: DBIx-Class
-version: 0.01
-author: ~
+version: 0.02
+author:
+  - Matt S. Trout <mst@shadowcatsystems.co.uk>
 abstract: Because the brain is a terrible thing to waste.
 license: perl
 requires:
   DBD::SQLite: 1.08
   DBI: 0
   NEXT: 0
-  SQL::Abstract: 1.19
+  SQL::Abstract::Limit: 0.033
   Tie::IxHash: 0
+  UNIVERSAL::require: 0
 provides:
   DBIx::Class:
     file: lib/DBIx/Class.pm
-    version: 0.01
+    version: 0.02
   DBIx::Class::AccessorGroup:
     file: lib/DBIx/Class/AccessorGroup.pm
   DBIx::Class::CDBICompat:
@@ -64,6 +66,8 @@ provides:
     file: lib/DBIx/Class/CDBICompat/Triggers.pm
   DBIx::Class::ClassResolver::PassThrough:
     file: lib/DBIx/Class/ClassResolver/PassThrough.pm
+  DBIx::Class::Componentised:
+    file: lib/DBIx/Class/Componentised.pm
   DBIx::Class::Core:
     file: lib/DBIx/Class/Core.pm
   DBIx::Class::Cursor:
@@ -80,8 +84,12 @@ provides:
     file: lib/DBIx/Class/PK.pm
   DBIx::Class::PK::Auto:
     file: lib/DBIx/Class/PK/Auto.pm
+  DBIx::Class::PK::Auto::MSSQL:
+    file: lib/DBIx/Class/PK/Auto/MSSQL.pm
   DBIx::Class::PK::Auto::MySQL:
     file: lib/DBIx/Class/PK/Auto/MySQL.pm
+  DBIx::Class::PK::Auto::Oracle:
+    file: lib/DBIx/Class/PK/Auto/Oracle.pm
   DBIx::Class::PK::Auto::Pg:
     file: lib/DBIx/Class/PK/Auto/Pg.pm
   DBIx::Class::PK::Auto::SQLite:
@@ -112,4 +120,4 @@ provides:
     file: lib/DBIx/Class/Test/SQLite.pm
   DBIx::ContextualFetch::st:
     file: lib/DBIx/Class/CDBICompat/ImaDBI.pm
-generated_by: Module::Build version 0.25
+generated_by: Module::Build version 0.2611
