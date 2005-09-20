@@ -4,6 +4,7 @@ use strict;
 use warnings;
 
 use DBIx::Class::ResultSet;
+use Data::Page;
 
 use base qw/Class::Data::Inheritable/;
 
@@ -112,9 +113,9 @@ sub search {
     $attrs = { %{ pop(@_) } };
   }
   $attrs->{where} = (@_ == 1 || ref $_[0] eq "HASH" ? shift: {@_});
-
+  
   my $rs = $class->resultset($attrs);
-
+  
   return (wantarray ? $rs->all : $rs);
 }
 

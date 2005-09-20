@@ -1,10 +1,6 @@
-use Test::More;
+sub run_tests {
 
-plan tests => 2;
-
-use lib qw(t/lib);
-
-use_ok('DBICTest');
+plan tests => 1;
 
 DBICTest::Artist->load_components(qw/PK::Auto::SQLite/);
 
@@ -12,3 +8,7 @@ DBICTest::Artist->load_components(qw/PK::Auto::SQLite/);
 my $artist = DBICTest::Artist->create( { name => 'Auto' } );
 $artist->name( 'Auto Change' );
 ok($artist->update, 'update on object created without PK ok');
+
+}
+
+1;

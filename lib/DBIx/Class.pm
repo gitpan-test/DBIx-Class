@@ -6,7 +6,7 @@ use warnings;
 use vars qw($VERSION);
 use base qw/DBIx::Class::Componentised/;
 
-$VERSION = '0.02';
+$VERSION = '0.03';
 
 
 1;
@@ -61,7 +61,7 @@ yo load the approriate PK::Auto subclass - e.g.
 interface)
 
 If you fancy playing around with DBIx::Class from scratch, then read the docs
-for ::Table and ::Relationship,
+for DBIx::Class::Table, ::Row, ::Schema, ::DB and ::Relationship,
 
   use base qw/DBIx::Class/;
   __PACKAGE__->load_components(qw/Core DB/);

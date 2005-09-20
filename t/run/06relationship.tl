@@ -1,29 +1,38 @@
-use Test::More;
-
-plan tests => 14;
-
-use lib qw(t/lib);
-
-use_ok('DBICTest');
+sub run_tests {
+  
+plan tests => 13;
 
 # has_a test
 my $cd = DBICTest::CD->find(4);
-my ($artist) = $cd->search_related('artist');
+my ($artist) = ($INC{'DBICTest/HelperRels'}
+                  ? $cd->artist
+                  : $cd->search_related('artist'));
 is($artist->name, 'Random Boy Band', 'has_a search_related ok');
 
 # has_many test with an order_by clause defined
 $artist = DBICTest::Artist->find(1);
-is( ($artist->search_related('cds'))[1]->title, 'Spoonful of bees', 'has_many search_related with order_by ok' );
+my @cds = ($INC{'DBICTest/HelperRels'}
+             ? $artist->cds
+             : $artist->search_related('cds'));
+is( $cds[1]->title, 'Spoonful of bees', 'has_many search_related with order_by ok' );
 
 # search_related with additional abstract query
-my @cds = $artist->search_related('cds', { title => { like => '%of%' } } );
+@cds = ($INC{'DBICTest/HelperRels'}
+          ? $artist->cds({ title => { like => '%of%' } })
+          : $artist->search_related('cds', { title => { like => '%of%' } } )
+       );
 is( $cds[1]->title, 'Forkful of bees', 'search_related with abstract query ok' );
 
 # creating a related object
-$artist->create_related( 'cds', {
-    title => 'Big Flop',
-    year => 2005,
-} );
+if ($INC{'DBICTest/HelperRels.pm'}) {
+  $artist->add_to_cds({ title => 'Big Flop', year => 2005 });
+} else {
+  $artist->create_related( 'cds', {
+      title => 'Big Flop',
+      year => 2005,
+  } );
+}
+
 is( ($artist->search_related('cds'))[3]->title, 'Big Flop', 'create_related ok' );
 
 # count_related
@@ -37,7 +46,12 @@ my $track = DBICTest::Track->create( {
   title => 'Hidden Track'
 } );
 $track->set_from_related( cd => $cd );
-is( $track->cd, 4, 'set_from_related ok' );
+
+if ($INC{'DBICTest/HelperRels.pm'}) { # except inflated object
+  is($track->cd->cdid, 4, 'set_from_related ok' );
+} else {
+  is( $track->cd, 4, 'set_from_related ok' );
+}
 
 # update_from_related, the same as set_from_related, but it calls update afterwards
 $track = DBICTest::Track->create( {
@@ -47,7 +61,14 @@ $track = DBICTest::Track->create( {
   title => 'Hidden Track'
 } );
 $track->update_from_related( cd => $cd );
-is( (DBICTest::Track->search( cd => 4, position => 99 ))[0]->cd, 4, 'update_from_related ok' );
+
+my $t_cd = (DBICTest::Track->search( cd => 4, position => 99 ))[0]->cd;
+
+if ($INC{'DBICTest/HelperRels.pm'}) { # except inflated object
+  is( $t_cd->cdid, 4, 'update_from_related ok' );
+} else {
+  is( $t_cd, 4, 'update_from_related ok' );
+}
 
 # find_or_create_related with an existing record
 $cd = $artist->find_or_create_related( 'cds', { title => 'Big Flop' } );
@@ -83,3 +104,7 @@ eval {
     $artist->add_relationship( tracks => 'DBICTest::Track' );
 };
 like($@, qr/join condition/, 'failed when creating a rel without join condition, ok');
+
+}
+
+1;

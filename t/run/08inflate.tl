@@ -1,13 +1,9 @@
-use Test::More;
+sub run_tests {
 
 eval { require DateTime };
 plan skip_all => "Need DateTime for inflation tests" if $@;
 
-plan tests => 4;
-
-use lib qw(t/lib);
-
-use_ok('DBICTest');
+plan tests => 3;
 
 DBICTest::CD->inflate_column( 'year',
     { inflate => sub { DateTime->new( year => shift ) },
@@ -28,3 +24,7 @@ $cd->update;
 
 ($cd) = DBICTest::CD->search( year => $now->year );
 is( $cd->year->year, $now->year, 'deflate ok' );
+
+}
+
+1;

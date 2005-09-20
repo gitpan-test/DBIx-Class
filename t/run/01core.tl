@@ -1,10 +1,6 @@
-use Test::More;
+sub run_tests {
 
-plan tests => 23;
-
-use lib qw(t/lib);
-
-use_ok('DBICTest');
+plan tests => 22; 
 
 my @art = DBICTest::Artist->search({ }, { order_by => 'name DESC'});
 
@@ -94,3 +90,7 @@ is( DBICTest::Track->find(100)->position, 5, 'insert_or_update update ok');
 eval { DBICTest::Track->load_components('DoesNotExist'); };
 
 ok $@, $@;
+
+}
+
+1;

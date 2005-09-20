@@ -44,7 +44,7 @@ QUICKSTART
     Class::DBI::Test::SQLite interface)
 
     If you fancy playing around with DBIx::Class from scratch, then read the
-    docs for ::Table and ::Relationship,
+    docs for DBIx::Class::Table, ::Row, ::Schema, ::DB and ::Relationship,
 
       use base qw/DBIx::Class/;
       __PACKAGE__->load_components(qw/Core DB/);

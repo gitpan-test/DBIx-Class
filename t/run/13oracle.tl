@@ -1,7 +1,4 @@
-use lib qw(lib t/lib);
-use DBICTest::Schema;
-
-use Test::More;
+sub run_tests {
 
 my ($dsn, $user, $pass) = @ENV{map { "DBICTEST_ORA_${_}" } qw/DSN USER PASS/};
 
@@ -59,5 +56,7 @@ is( $it->next, undef, "next past end of resultset ok" );
 # clean up our mess
 $dbh->do("DROP SEQUENCE artist_seq");
 $dbh->do("DROP TABLE artist");
+
+}
 
 1;

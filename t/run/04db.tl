@@ -1,10 +1,6 @@
-use Test::More;
-
-plan tests => 4;
-
-use lib qw(t/lib);
-
-use_ok('DBICTest');
+sub run_tests {
+  
+plan tests => 3;
 
 # add some rows inside a transaction and commit it
 # XXX: Is storage->dbh the only way to get a dbh?
@@ -43,3 +39,6 @@ DBICTest::Artist->dbi_rollback;
 ($artist) = DBICTest::Artist->search( artistid => 25 );
 is($artist, undef, "Rollback ok");
 
+}
+
+1;

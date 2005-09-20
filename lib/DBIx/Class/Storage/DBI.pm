@@ -6,6 +6,79 @@ use DBI;
 use SQL::Abstract::Limit;
 use DBIx::Class::Storage::DBI::Cursor;
 
+BEGIN {
+
+package DBIC::SQL::Abstract; # Temporary. Merge upstream.
+
+use base qw/SQL::Abstract::Limit/;
+
+sub _table {
+  my ($self, $from) = @_;
+  if (ref $from eq 'ARRAY') {
+    return $self->_recurse_from(@$from);
+  } elsif (ref $from eq 'HASH') {
+    return $self->_make_as($from);
+  } else {
+    return $from;
+  }
+}
+
+sub _recurse_from {
+  my ($self, $from, @join) = @_;
+  my @sqlf;
+  push(@sqlf, $self->_make_as($from));
+  foreach my $j (@join) {
+    my ($to, $on) = @$j;
+
+	# check whether a join type exists
+	my $join_clause = '';
+	if (ref($to) eq 'HASH' and exists($to->{-join_type})) {
+		$join_clause = ' '.uc($to->{-join_type}).' JOIN ';
+	} else {
+		$join_clause = ' JOIN ';
+	}
+    push(@sqlf, $join_clause);
+
+    if (ref $to eq 'ARRAY') {
+      push(@sqlf, '(', $self->_recurse_from(@$to), ')');
+    } else {
+      push(@sqlf, $self->_make_as($to));
+    }
+    push(@sqlf, ' ON ', $self->_join_condition($on));
+  }
+  return join('', @sqlf);
+}
+
+sub _make_as {
+  my ($self, $from) = @_;
+  	return join(' ', map { $self->_quote($_) }
+                           reverse each %{$self->_skip_options($from)});
+}
+
+sub _skip_options {
+	my ($self, $hash) = @_;
+	my $clean_hash = {};
+	$clean_hash->{$_} = $hash->{$_}
+		for grep {!/^-/} keys %$hash;
+	return $clean_hash;
+}
+
+sub _join_condition {
+  my ($self, $cond) = @_;
+  die "no chance" unless ref $cond eq 'HASH';
+  my %j;
+  for (keys %$cond) { my $x = '= '.$self->_quote($cond->{$_}); $j{$_} = \$x; };
+  return $self->_recurse_where(\%j);
+}
+
+sub _quote {
+  my ($self, $label) = @_;
+  return '' unless defined $label;
+  return $self->SUPER::_quote($label);
+}
+
+} # End of BEGIN block
+
 use base qw/DBIx::Class/;
 
 __PACKAGE__->load_components(qw/Exception AccessorGroup/);
@@ -58,7 +131,7 @@ sub dbh {
 sub sql_maker {
   my ($self) = @_;
   unless ($self->_sql_maker) {
-    $self->_sql_maker(new SQL::Abstract::Limit( limit_dialect => $self->dbh ));
+    $self->_sql_maker(new DBIC::SQL::Abstract( limit_dialect => $self->dbh ));
   }
   return $self->_sql_maker;
 }
@@ -120,35 +193,32 @@ sub delete {
   return shift->_execute('delete' => [], @_);
 }
 
-sub select {
+sub _select {
   my ($self, $ident, $select, $condition, $attrs) = @_;
   my $order = $attrs->{order_by};
   if (ref $condition eq 'SCALAR') {
     $order = $1 if $$condition =~ s/ORDER BY (.*)$//i;
   }
   my @args = ('select', $attrs->{bind}, $ident, $select, $condition, $order);
-  if ($self->sql_maker->_default_limit_syntax eq "GenericSubQ") {
-    $attrs->{software_limit} = 1;
+  if ($attrs->{software_limit} ||
+      $self->sql_maker->_default_limit_syntax eq "GenericSubQ") {
+        $attrs->{software_limit} = 1;
   } else {
     push @args, $attrs->{rows}, $attrs->{offset};
   }
-  my ($rv, $sth, @bind) = $self->_execute(@args);
+  return $self->_execute(@args);
+}
+
+sub select {
+  my $self = shift;
+  my ($ident, $select, $condition, $attrs) = @_;
+  my ($rv, $sth, @bind) = $self->_select(@_);
   return $self->cursor->new($sth, \@bind, $attrs);
 }
 
 sub select_single {
-  my ($self, $ident, $select, $condition, $attrs) = @_;
-  my $order = $attrs->{order_by};
-  if (ref $condition eq 'SCALAR') {
-    $order = $1 if $$condition =~ s/ORDER BY (.*)$//i;
-  }
-  my @args = ('select', $attrs->{bind}, $ident, $select, $condition, $order);
-  if ($self->sql_maker->_default_limit_syntax eq "GenericSubQ") {
-    $attrs->{software_limit} = 1;
-  } else {
-    push @args, 1, $attrs->{offset};
-  }  
-  my ($rv, $sth, @bind) = $self->_execute(@args);
+  my $self = shift;
+  my ($rv, $sth, @bind) = $self->_select(@_);
   return $sth->fetchrow_array;
 }
 

@@ -1,7 +1,4 @@
-use lib qw(lib t/lib);
-use DBICTest::Schema;
-
-use Test::More;
+sub run_tests {
 
 my ($dsn, $user, $pass) = @ENV{map { "DBICTEST_MYSQL_${_}" } qw/DSN USER PASS/};
 
@@ -10,7 +7,7 @@ my ($dsn, $user, $pass) = @ENV{map { "DBICTEST_MYSQL_${_}" } qw/DSN USER PASS/};
 plan skip_all, 'Set $ENV{DBICTEST_MYSQL_DSN}, _USER and _PASS to run this test'
   unless ($dsn && $user);
 
-plan tests => 1;
+plan tests => 4;
 
 DBICTest::Schema->compose_connection('MySQLTest' => $dsn, $user, $pass);
 
@@ -45,5 +42,7 @@ is( $it->next, undef, "next past end of resultset ok" );
 
 # clean up our mess
 $dbh->do("DROP TABLE artist");
+
+}
 
 1;

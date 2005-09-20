@@ -1,7 +1,4 @@
-use lib qw(lib t/lib);
-use DBICTest::Schema;
-
-use Test::More;
+sub run_tests {
 
 my ($dsn, $user, $pass) = @ENV{map { "DBICTEST_PG_${_}" } qw/DSN USER PASS/};
 
@@ -27,5 +24,7 @@ PgTest::Artist->load_components('PK::Auto::Pg');
 my $new = PgTest::Artist->create({ name => 'foo' });
 
 ok($new->artistid, "Auto-PK worked");
+
+}
 
 1;

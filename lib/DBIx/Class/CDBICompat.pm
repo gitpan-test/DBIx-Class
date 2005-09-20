@@ -16,13 +16,14 @@ __PACKAGE__->load_own_components(qw/
   Constructor
   AccessorMapping
   ColumnCase
-  MightHave
   HasMany
   HasA
+  MightHave
   LazyLoading
   AutoUpdate
   TempColumns
   Retrieve
+  Pager
   ColumnGroups
   ImaDBI/);
 

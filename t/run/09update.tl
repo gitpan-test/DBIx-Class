@@ -1,14 +1,9 @@
-use strict;
-use Test::More;
+sub run_tests {
 
 BEGIN {
         eval "use DBD::SQLite";
-        plan $@ ? (skip_all => 'needs DBD::SQLite for testing') : (tests => 4);
+        plan $@ ? (skip_all => 'needs DBD::SQLite for testing') : (tests => 3);
 }                                                                               
-
-use lib qw(t/lib);
-
-use_ok('DBICTest');
 
 my $art = DBICTest::Artist->find(1);
 
@@ -24,3 +19,7 @@ ok($art->name($name) eq $name, 'update');
 }                                                                               
 
 $art->discard_changes;
+
+}
+
+1;
