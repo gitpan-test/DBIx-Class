@@ -6,14 +6,14 @@ use warnings;
 use vars qw($VERSION);
 use base qw/DBIx::Class::Componentised/;
 
-$VERSION = '0.03';
+$VERSION = '0.03001';
 
 
 1;
 
 =head1 NAME 
 
-DBIx::Class - Because the brain is a terrible thing to waste.
+DBIx::Class - Extensible and flexible object <-> relational mapper.
 
 =head1 SYNOPSIS
 
