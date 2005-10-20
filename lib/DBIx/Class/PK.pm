@@ -25,7 +25,6 @@ and depending on them.
 
 =cut
 
-
 sub _ident_cond {
   my ($class) = @_;
   return join(" AND ", map { "$_ = ?" } keys %{$class->_primaries});
@@ -36,13 +35,24 @@ sub _ident_values {
   return (map { $self->{_column_data}{$_} } keys %{$self->_primaries});
 }
 
+=item set_primary_key <@cols>
+
+define one or more columns as primary key for this class
+
+=cut
+
 sub set_primary_key {
   my ($class, @cols) = @_;
   my %pri;
-  tie %pri, 'Tie::IxHash';
-  %pri = map { $_ => {} } @cols;
+  tie %pri, 'Tie::IxHash', map { $_ => {} } @cols;
   $class->_primaries(\%pri);
 }
+
+=item find
+
+Finds columns based on the primary key(s).
+
+=cut
 
 sub find {
   my ($class, @vals) = @_;
@@ -71,6 +81,12 @@ sub find {
   return (@row ? $class->_row_to_object(\@cols, \@row) : ());
 }
 
+=item discard_changes
+
+Roll back changes that hasn't been comitted to the database.
+
+=cut
+
 sub discard_changes {
   my ($self) = @_;
   delete $self->{_dirty_columns};
@@ -87,6 +103,13 @@ sub discard_changes {
   return $self;
 }
 
+=item id
+
+returns the primary key(s) for the current row. Can't be called as
+a class method.
+
+=cut
+
 sub id {
   my ($self) = @_;
   $self->throw( "Can't call id() as a class method" ) unless ref $self;
@@ -94,8 +117,27 @@ sub id {
   return (wantarray ? @pk : $pk[0]);
 }
 
+=item  primary_columns
+
+read-only accessor which returns a list of primary keys.
+
+=cut
+
 sub primary_columns {
   return keys %{shift->_primaries};
+}
+
+sub ID {
+  my ($self) = @_;
+  $self->throw( "Can't call ID() as a class method" ) unless ref $self;
+  return undef unless $self->in_storage;
+  return $self->_create_ID(map { $_ => $self->{_column_data}{$_} } keys %{$self->_primaries});
+}
+
+sub _create_ID {
+  my ($class,%vals) = @_;
+  $class = ref $class || $class;
+  return join '|', $class, map { $_ . '=' . $vals{$_} } sort keys %vals;    
 }
 
 1;

@@ -44,9 +44,20 @@ DBIx::Class::Schema - composable schemas
 
 =head1 DESCRIPTION
 
+Creates database classes based on a schema. This allows you to have more than
+one concurrent connection using the same database classes, by making 
+subclasses under a new namespace for each connection. If you only need one 
+class, you should probably use L<DBIx::Class::DB> directly instead.
+
 =head1 METHODS
 
 =over 4
+
+=item register_class <component> <component_class>
+
+Registers the class in the schema's class_registrations. This is a hash
+containing database classes, keyed by their monikers. It's used by
+compose_connection to create/modify all the existing database classes.
 
 =cut
 
@@ -57,9 +68,25 @@ sub register_class {
   $class->class_registrations(\%reg);
 }
 
+=item registered_classes
+
+Simple read-only accessor for the schema's registered classes. See 
+register_class above if you want to modify it.
+
+
+=cut
+
 sub registered_classes {
   return values %{shift->class_registrations};
 }
+
+=item  load_classes [<classes>}
+
+Uses L<Module::Find> to find all classes under the database class' namespace,
+or uses the classes you select.  Then it loads the component (using L<use>), 
+and registers them (using B<register_class>);
+
+=cut
 
 sub load_classes {
   my $class = shift;
@@ -73,11 +100,28 @@ sub load_classes {
   }
   foreach my $comp (@comp) {
     my $comp_class = "${class}::${comp}";
-    eval "use $comp_class";
-    die $@ if $@;
+    eval "use $comp_class"; # If it fails, assume the user fixed it
     $class->register_class($comp => $comp_class);
   }
 }
+
+=item compose_connection <target> <@db_info>
+
+This is the most important method in this class. it takes a target namespace,
+as well as dbh connection info, and creates a L<DBIx::Class::DB> class as
+well as subclasses for each of your database classes in this namespace, using
+this connection.
+
+It will also setup a ->table method on the target class, which lets you
+resolve database classes based on the schema component name, for example
+
+  MyApp::DB->table('Foo') # returns MyApp::DB::Foo, 
+                          # which ISA MyApp::Schema::Foo
+
+This is the recommended API for accessing Schema generated classes, and 
+using it might give you instant advantages with future versions of DBIC.
+
+=cut
 
 sub compose_connection {
   my ($class, $target, @info) = @_;
@@ -99,9 +143,17 @@ sub compose_connection {
         my ($class, $to_map) = @_;
         return $map{$to_map};
       };
+    *{"${target}::classes"} = sub { return \%map; };
   }
   $conn_class->class_resolver($target);
 }
+
+=item setup_connection_class <$target> <@info>
+
+Sets up a database connection class to inject between the schema
+and the subclasses the schema creates.
+
+=cut
 
 sub setup_connection_class {
   my ($class, $target, @info) = @_;
