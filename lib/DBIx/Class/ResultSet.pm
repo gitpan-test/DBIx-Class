@@ -118,7 +118,9 @@ sub next {
 
 sub _construct_object {
   my ($self, @row) = @_;
-  my @cols = $self->{class}->_select_columns;
+  my @cols = @{ $self->{attrs}{cols} };
+  s/^me\.// for @cols;
+  @cols = grep { /\(/ or ! /\./ } @cols;
   my $new;
   unless ($self->{attrs}{prefetch}) {
     $new = $self->{class}->_row_to_object(\@cols, \@row);
@@ -135,7 +137,10 @@ sub _construct_object {
         unless defined $rel_obj->{attrs}{accessor};
       if ($rel_obj->{attrs}{accessor} eq 'single') {
         foreach my $pri ($rel_obj->{class}->primary_columns) {
-          next PRE unless defined $fetched->get_column($pri);
+          unless (defined $fetched->get_column($pri)) {
+            undef $fetched;
+            last;
+          }
         }
         $new->{_relationship_data}{$pre} = $fetched;
       } elsif ($rel_obj->{attrs}{accessor} eq 'filter') {
