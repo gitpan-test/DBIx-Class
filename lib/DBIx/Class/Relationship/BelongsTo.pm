@@ -6,22 +6,37 @@ use warnings;
 sub belongs_to {
   my ($class, $rel, $f_class, $cond, $attrs) = @_;
   eval "require $f_class";
+  if ($@) {
+    $class->throw($@) unless $@ =~ /Can't locate/;
+  }
+
   my %f_primaries;
   $f_primaries{$_} = 1 for eval { $f_class->primary_columns };
   my $f_loaded = !$@;
+  
   # single key relationship
-  if (not defined $cond) {
-    $class->throw("Can't infer join condition for ${rel} on ${class}; unable to load ${f_class}") unless $f_loaded;
+  if (!ref $cond) {
+    $class->throw("Can't infer join condition for ${rel} on ${class}; unable to load ${f_class}")
+      unless $f_loaded;
+
     my ($pri, $too_many) = keys %f_primaries;
-    $class->throw("Can't infer join condition for ${rel} on ${class}; ${f_class} has multiple primary key") if $too_many;
-    my $acc_type = ($class->has_column($rel)) ? 'filter' : 'single';
+    $class->throw("Can't infer join condition for ${rel} on ${class}; ${f_class} has no primary keys")
+      unless defined $pri;      
+    $class->throw("Can't infer join condition for ${rel} on ${class}; ${f_class} has multiple primary key")
+      if $too_many;      
+
+    my $fk = defined $cond ? $cond : $rel;
+    $class->throw("Can't infer join condition for ${rel} on ${class}; $fk is not a column")
+      unless $class->has_column($fk);
+
+    my $acc_type = $class->has_column($rel) ? 'filter' : 'single';
     $class->add_relationship($rel, $f_class,
-      { "foreign.${pri}" => "self.${rel}" },
+      { "foreign.${pri}" => "self.${fk}" },
       { accessor => $acc_type, %{$attrs || {}} }
     );
   }
   # multiple key relationship
-  else {
+  elsif (ref $cond eq 'HASH') {
     my $cond_rel;
     for (keys %$cond) {
       if (m/\./) { # Explicit join condition
@@ -34,6 +49,9 @@ sub belongs_to {
       $cond_rel,
       { accessor => 'single', %{$attrs || {}} }
     );
+  }
+  else {
+    $class->throw('third argument for belongs_to must be undef, a column name, or a join condition');
   }
   return 1;
 }

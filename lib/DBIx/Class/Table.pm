@@ -26,12 +26,10 @@ DBIx::Class::Table - Basic table methods
 
 =head1 DESCRIPTION
 
-This class is responsible for defining and doing basic operations on 
-L<DBIx::Class> objects.
+This class is responsible for defining and doing table-level operations on 
+L<DBIx::Class> classes.
 
 =head1 METHODS
-
-=over 4
 
 =cut
 
@@ -47,11 +45,11 @@ sub _mk_column_accessors {
   $class->mk_group_accessors('column' => @cols);
 }
 
-=item add_columns
+=head2 add_columns
 
   __PACKAGE__->add_columns(qw/col1 col2 col3/);
 
-Adds columns to the current package, and creates accessors for them
+Adds columns to the current class and creates accessors for them.
 
 =cut
 
@@ -61,7 +59,7 @@ sub add_columns {
   $class->_mk_column_accessors(@cols);
 }
 
-=item search_literal
+=head2 search_literal
 
   my @obj    = $class->search_literal($literal_where_cond, @bind);
   my $cursor = $class->search_literal($literal_where_cond, @bind);
@@ -76,7 +74,7 @@ sub search_literal {
   return $class->search(\$cond, $attrs);
 }
 
-=item count_literal
+=head2 count_literal
 
   my $count = $class->count_literal($literal_where_cond);
 
@@ -87,7 +85,7 @@ sub count_literal {
   return $class->search_literal(@_)->count;
 }
 
-=item count
+=head2 count
 
   my $count = $class->count({ foo => 3 });
 
@@ -98,7 +96,7 @@ sub count {
   return $class->search(@_)->count;
 }
 
-=item search 
+=head2 search 
 
   my @obj    = $class->search({ foo => 3 }); # "... WHERE foo = 3"
   my $cursor = $class->search({ foo => 3 });
@@ -137,7 +135,7 @@ sub resultset {
   my $rs = $rs_class->new($class, @_);
 }
 
-=item search_like
+=head2 search_like
 
 Identical to search except defaults to 'LIKE' instead of '=' in condition
 
@@ -158,9 +156,11 @@ sub _select_columns {
   return keys %{$_[0]->_columns};
 }
 
-=item table
+=head2 table
 
   __PACKAGE__->table('tbl_name');
+  
+Gets or sets the table name.
 
 =cut
 
@@ -168,12 +168,12 @@ sub table {
   shift->_table_name(@_);
 }
 
-=item find_or_create
+=head2 find_or_create
 
   $class->find_or_create({ key => $val, ... });
 
 Searches for a record matching the search condition; if it doesn't find one,
-creates one and returns that instead
+creates one and returns that instead.
 
 =cut
 
@@ -184,11 +184,11 @@ sub find_or_create {
   return defined($exists) ? $exists : $class->create($hash);
 }
 
-=item has_column                                                                
+=head2 has_column                                                                
                                                                                 
   if ($obj->has_column($col)) { ... }                                           
                                                                                 
-Returns 1 if the object has a column of this name, 0 otherwise                  
+Returns 1 if the class has a column of this name, 0 otherwise.                  
                                                                                 
 =cut                                                                            
 
@@ -197,11 +197,11 @@ sub has_column {
   return exists $self->_columns->{$column};
 }
 
-=item column_info                                                               
+=head2 column_info                                                               
                                                                                 
   my $info = $obj->column_info($col);                                           
                                                                                 
-Returns the column metadata hashref for the column                              
+Returns the column metadata hashref for a column.
                                                                                 
 =cut                                                                            
 
@@ -211,17 +211,18 @@ sub column_info {
   return $self->_columns->{$column};
 }
 
-=item columns                                                                   
+=head2 columns                                                                   
                                                                                 
   my @column_names = $obj->columns;                                             
                                                                                 
 =cut                                                                            
 
-sub columns { return keys %{shift->_columns}; }
+sub columns {
+  die "columns() is a read-only accessor, did you mean add_columns()?" if (@_ > 1);
+  return keys %{shift->_columns};
+}
 
 1;
-
-=back
 
 =head1 AUTHORS
 

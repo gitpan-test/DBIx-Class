@@ -1,9 +1,20 @@
 Revision history for DBIx::Class
 
+0.04001 2005-12-13 22:00:00
+        - Fix so set_inflated_column calls set_column
+        - Syntax errors in relationship classes are now reported
+		- Better error detection in set_primary_key and columns methods
+		- Documentation improvements
+		- Better transaction support with txn_* methods
+		- belongs_to now works when $cond is a string
+		- PK::Auto::Pg updated, only tries primary keys instead of all cols
+
+0.04 2005-11-26
         - Moved get_simple and set_simple into AccessorGroup
         - Made 'new' die if given invalid columns
         - Added has_column and column_info to Table.pm
         - Refactored away from direct use of _columns and _primaries
+        - Switched from NEXT to Class::C3
 
 0.03004
         - Added an || '' to the CDBICompat stringify to avoid null warnings
