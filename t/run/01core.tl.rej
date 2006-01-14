@@ -1,0 +1,15 @@
+***************
+*** 1,6 ****
+  sub run_tests {
+  
+- plan tests => 33;
+  
+  my @art = DBICTest->class("Artist")->search({ }, { order_by => 'name DESC'});
+  
+--- 1,6 ----
+  sub run_tests {
+  
++ plan tests => 34;
+  
+  my @art = DBICTest->class("Artist")->search({ }, { order_by => 'name DESC'});
+  

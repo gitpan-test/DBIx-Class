@@ -17,7 +17,7 @@ sub _register_columns {
 
 sub add_columns {
   my ($class, @cols) = @_;
-  $class->table_instance->add_columns(map lc, @cols);
+  $class->result_source->add_columns(map lc, @cols);
   $class->_mk_column_accessors(@cols);
 }
 
@@ -82,16 +82,6 @@ sub _mk_group_accessors {
   }
   return $class->next::method($type, $group,
                                                      @fields, @extra);
-}
-
-sub _cond_key {
-  my ($class, $attrs, $key, @rest) = @_;
-  return $class->next::method($attrs, lc($key), @rest);
-}
-
-sub _cond_value {
-  my ($class, $attrs, $key, @rest) = @_;
-  return $class->next::method($attrs, lc($key), @rest);
 }
 
 sub new {

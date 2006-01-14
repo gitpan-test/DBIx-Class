@@ -1,6 +1,7 @@
 package DBIx::Class::DB;
 
 use base qw/DBIx::Class/;
+use DBIx::Class::Schema;
 use DBIx::Class::Storage::DBI;
 use DBIx::Class::ClassResolver::PassThrough;
 use DBI;
@@ -10,14 +11,16 @@ __PACKAGE__->load_components(qw/ResultSetInstance/);
 *dbi_commit = \&txn_commit;
 *dbi_rollback = \&txn_rollback;
 
-sub storage { shift->storage_instance(@_); }
+sub storage { shift->schema_instance(@_)->storage; }
 
 sub resultset_instance {
   my $class = shift;
-  my $table = $class->table_instance->new($class->table_instance);
-  $table->storage($class->storage_instance);
-  $table->result_class($class);
-  return $table->resultset;
+  my $source = $class->result_source;
+  if ($source->result_class ne $class) {
+    $source = $source->new($source);
+    $source->result_class($class);
+  }
+  return $source->resultset;
 }
 
 =head1 NAME 
@@ -50,7 +53,7 @@ This class provides a simple way of specifying a database connection.
 
 Sets or gets the storage backend. Defaults to L<DBIx::Class::Storage::DBI>.
 
-=head2 class_resolver
+=head2 class_resolver ****DEPRECATED****
 
 Sets or gets the class to use for resolving a class. Defaults to 
 L<DBIx::Class::ClassResolver::Passthrough>, which returns whatever you give
@@ -74,7 +77,8 @@ sub connection {
   my ($class, @info) = @_;
   my $storage = DBIx::Class::Storage::DBI->new;
   $storage->connect_info(\@info);
-  $class->mk_classdata('storage_instance' => $storage);
+  my $schema = bless({ storage => $storage }, 'DBIx::Class::Schema');
+  $class->mk_classdata('schema_instance' => $schema);
 }
 
 =head2 txn_begin
@@ -101,7 +105,14 @@ Rolls back the current transaction.
 
 sub txn_rollback { $_[0]->storage->txn_rollback }
 
-sub resolve_class { return shift->class_resolver->class(@_); }
+{
+  my $warn;
+
+  sub resolve_class {
+    warn "resolve_class deprecated as of 0.04999_02" unless $warn++;
+    return shift->class_resolver->class(@_);
+  }
+}
 
 1;
 

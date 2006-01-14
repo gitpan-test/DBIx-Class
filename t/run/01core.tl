@@ -1,6 +1,6 @@
 sub run_tests {
 
-plan tests => 29; 
+plan tests => 34; 
 
 my @art = DBICTest->class("Artist")->search({ }, { order_by => 'name DESC'});
 
@@ -90,6 +90,11 @@ is($cd->year, 2005, 'set_columns ok');
 
 $cd->discard_changes;
 
+# check whether ResultSource->ordered_columns returns columns in order originally supplied
+my @cd = DBICTest->class("CD")->find(1)->result_source->ordered_columns;
+
+is_deeply( \@cd, [qw/cdid artist title year/], 'ordered_columns');
+
 $cd = DBICTest->class("CD")->search({ title => 'Spoonful of bees' }, { cols => ['title'] })->next;
 is($cd->title, 'Spoonful of bees', 'subset of columns returned correctly');
 
@@ -113,6 +118,26 @@ eval { DBICTest->class("Track")->load_components('DoesNotExist'); };
 ok $@, $@;
 
 is(DBICTest->class("Artist")->field_name_for->{name}, 'artist name', 'mk_classdata usage ok');
+
+my $search = [ { 'tags.tag' => 'Cheesy' }, { 'tags.tag' => 'Blue' } ];
+
+my $or_rs = DBICTest->class("CD")->search($search, { join => 'tags',
+                                                  order_by => 'cdid' });
+
+cmp_ok($or_rs->count, '==', 5, 'Search with OR ok');
+
+my $distinct_rs = DBICTest->class("CD")->search($search, { join => 'tags', distinct => 1 });
+
+cmp_ok($distinct_rs->all, '==', 4, 'DISTINCT search with OR ok');
+
+my $tag_rs = DBICTest->class('Tag')->search(
+               [ { 'me.tag' => 'Cheesy' }, { 'me.tag' => 'Blue' } ]);
+
+my $rel_rs = $tag_rs->search_related('cd');
+
+cmp_ok($rel_rs->count, '==', 5, 'Related search ok');
+
+cmp_ok($or_rs->next->cdid, '==', $rel_rs->next->cdid, 'Related object ok');
 
 }
 

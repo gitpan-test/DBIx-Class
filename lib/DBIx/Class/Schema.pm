@@ -8,6 +8,8 @@ use base qw/DBIx::Class/;
 
 __PACKAGE__->load_components(qw/Exception/);
 __PACKAGE__->mk_classdata('class_registrations' => {});
+__PACKAGE__->mk_classdata('storage_type' => 'DBI');
+__PACKAGE__->mk_classdata('storage');
 
 =head1 NAME
 
@@ -29,7 +31,7 @@ in My/Schema/Foo.pm
 
   use base qw/DBIx::Class/;
 
-  __PACKAGE__->load_components(qw/Core PK::Auto::Pg/); # for example
+  __PACKAGE__->load_components(qw/PK::Auto::Pg Core/); # for example
   __PACKAGE__->table('foo');
   ...
 
@@ -65,10 +67,11 @@ compose_connection to create/modify all the existing database classes.
 =cut
 
 sub register_class {
-  my ($class, $name, $to_register) = @_;
-  my %reg = %{$class->class_registrations};
+  my ($self, $name, $to_register) = @_;
+  my %reg = %{$self->class_registrations};
   $reg{$name} = $to_register;
-  $class->class_registrations(\%reg);
+  $self->class_registrations(\%reg);
+  $to_register->result_source->schema($self);
 }
 
 =head2 registered_classes
@@ -82,6 +85,47 @@ register_class above if you want to modify it.
 sub registered_classes {
   return values %{shift->class_registrations};
 }
+
+=head2 class
+
+  my $class = $schema->class('Foo');
+
+Shortcut to retrieve a single class by its registered name
+
+=cut
+
+sub class {
+  my ($self, $class) = @_;
+  return $self->class_registrations->{$class};
+}
+
+=head2 source
+
+  my $source = $schema->source('Foo');
+
+Returns the result source object for the registered name
+
+=cut
+
+sub source {
+  my ($self, $class) = @_;
+  return $self->class_registrations->{$class}->result_source
+    if $self->class_registrations->{$class};
+}
+
+=head2 resultset
+
+  my $rs = $schema->resultset('Foo');
+
+Returns the resultset for the registered name
+
+=cut
+
+sub resultset {
+  my ($self, $class) = @_;
+  return $self->class_registrations->{$class}->result_source->resultset;
+}
+
 
 =head2  load_classes [<classes>, (<class>, <class>), {<namespace> => [<classes>]}]
 
@@ -134,6 +178,9 @@ sub load_classes {
     foreach my $comp (@{$comps_for{$prefix}||[]}) {
       my $comp_class = "${prefix}::${comp}";
       eval "use $comp_class"; # If it fails, assume the user fixed it
+      if ($@) {
+        die $@ unless $@ =~ /Can't locate/;
+      }
       $class->register_class($comp => $comp_class);
     }
   }
@@ -146,39 +193,61 @@ as well as dbh connection info, and creates a L<DBIx::Class::DB> class as
 well as subclasses for each of your database classes in this namespace, using
 this connection.
 
-It will also setup a ->table method on the target class, which lets you
+It will also setup a ->class method on the target class, which lets you
 resolve database classes based on the schema component name, for example
 
-  MyApp::DB->table('Foo') # returns MyApp::DB::Foo, 
+  MyApp::DB->class('Foo') # returns MyApp::DB::Foo, 
                           # which ISA MyApp::Schema::Foo
 
 This is the recommended API for accessing Schema generated classes, and 
 using it might give you instant advantages with future versions of DBIC.
 
+WARNING: Loading components into Schema classes after compose_connection
+may not cause them to be seen by the classes in your target namespace due
+to the dispatch table approach used by Class::C3. If you do this you may find
+you need to call Class::C3->reinitialize() afterwards to get the behaviour
+you expect.
+
 =cut
 
 sub compose_connection {
-  my ($class, $target, @info) = @_;
+  my ($self, $target, @info) = @_;
   my $conn_class = "${target}::_db";
-  $class->setup_connection_class($conn_class, @info);
+  $self->setup_connection_class($conn_class, @info);
+  my $schema = $self->compose_namespace($target, $conn_class);
+  $schema->storage($conn_class->storage);
+  foreach my $class ($schema->registered_classes) {
+    my $source = $class->result_source;
+    $source = $source->new($source);
+    $source->schema($schema);
+    $source->result_class($class);
+    $class->mk_classdata(result_source => $source);
+    $class->mk_classdata(resultset_instance => $source->resultset);
+  }
+  return $schema;
+}
+
+sub compose_namespace {
+  my ($class, $target, $base) = @_;
   my %reg = %{ $class->class_registrations };
   my %target;
   my %map;
+  my $schema = bless({ }, $class);
   while (my ($comp, $comp_class) = each %reg) {
     my $target_class = "${target}::${comp}";
-    $class->inject_base($target_class, $comp_class, $conn_class);
+    $class->inject_base($target_class, $comp_class, ($base ? $base : ()));
     @map{$comp, $comp_class} = ($target_class, $target_class);
   }
+  $schema->class_registrations(\%map);
   {
     no strict 'refs';
+    *{"${target}::schema"} =
+      sub { $schema };
     *{"${target}::class"} =
-      sub {
-        my ($class, $to_map) = @_;
-        return $map{$to_map};
-      };
-    *{"${target}::classes"} = sub { return \%map; };
+      sub { shift->schema->class(@_) };
   }
-  $conn_class->class_resolver($target);
+  $base->class_resolver($target);
+  return $schema;
 }
 
 =head2 setup_connection_class <$target> <@info>

@@ -1,14 +1,13 @@
 use strict;
 
-use Test::More tests => 25;
+use Test::More tests => 24;
 
 #-----------------------------------------------------------------------
 # Make sure that we can set up columns properly
 #-----------------------------------------------------------------------
 package State;
 
-use base 'DBIx::Class';
-State->load_components(qw/CDBICompat Core/);
+use base 'DBIx::Class::Test::SQLite';
 
 State->table('State');
 State->columns(Essential => qw/Abbreviation Name/);
@@ -34,8 +33,7 @@ sub Snowfall { 1 }
 
 package City;
 
-use base 'DBIx::Class';
-City->load_components(qw/CDBICompat Core/);
+use base 'DBIx::Class::Test::SQLite';
 
 City->table('City');
 City->columns(All => qw/Name State Population/);
@@ -44,8 +42,7 @@ City->has_a(State => 'State');
 
 #-------------------------------------------------------------------------
 package CD;
-use base 'DBIx::Class';
-CD->load_components(qw/CDBICompat Core/);
+use base 'DBIx::Class::Test::SQLite';
 
 CD->table('CD');
 CD->columns('All' => qw/artist title length/);
@@ -103,15 +100,16 @@ ok(!State->find_column('HGLAGAGlAG'), '!find_column HGLAGAGlAG');
 	is $grps[1], 'Weather', " - Weather";
 }
 
-{
-        package DieTest;
-        @DieTest::ISA = qw(DBIx::Class);
-        DieTest->load_components(qw/CDBICompat::Retrieve Core/);
-        package main;
-	local $SIG{__WARN__} = sub { };
-	eval { DieTest->retrieve(1) };
-	like $@, qr/unless primary columns are defined/, "Need primary key for retrieve";
-}
+#{
+#        
+#        package DieTest;
+#        @DieTest::ISA = qw(DBIx::Class);
+#        DieTest->load_components(qw/CDBICompat::Retrieve Core/);
+#        package main;
+#	local $SIG{__WARN__} = sub { };
+#	eval { DieTest->retrieve(1) };
+#	like $@, qr/unless primary columns are defined/, "Need primary key for retrieve";
+#}
 
 #-----------------------------------------------------------------------
 # Make sure that columns inherit properly
