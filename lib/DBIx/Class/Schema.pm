@@ -2,12 +2,13 @@ package DBIx::Class::Schema;
 
 use strict;
 use warnings;
-use DBIx::Class::DB;
+use UNIVERSAL::require;
 
 use base qw/DBIx::Class/;
 
 __PACKAGE__->load_components(qw/Exception/);
-__PACKAGE__->mk_classdata('class_registrations' => {});
+__PACKAGE__->mk_classdata('class_mappings' => {});
+__PACKAGE__->mk_classdata('source_registrations' => {});
 __PACKAGE__->mk_classdata('storage_type' => 'DBI');
 __PACKAGE__->mk_classdata('storage');
 
@@ -58,45 +59,49 @@ particular which module inherits off which.
 
 =head1 METHODS
 
-=head2 register_class <component> <component_class>
+=head2 register_class <moniker> <component_class>
 
-Registers the class in the schema's class_registrations. This is a hash
-containing database classes, keyed by their monikers. It's used by
-compose_connection to create/modify all the existing database classes.
+Registers a class which isa ResultSourceInstance; equivalent to calling
+
+  $schema->register_source($moniker, $class->result_source_instance);
 
 =cut
 
 sub register_class {
-  my ($self, $name, $to_register) = @_;
-  my %reg = %{$self->class_registrations};
-  $reg{$name} = $to_register;
-  $self->class_registrations(\%reg);
-  $to_register->result_source->schema($self);
+  my ($self, $moniker, $to_register) = @_;
+  $self->register_source($moniker => $to_register->result_source_instance);
 }
 
-=head2 registered_classes
+=head2 register_source <moniker> <result source>
 
-Simple read-only accessor for the schema's registered classes. See 
-register_class above if you want to modify it.
-
+Registers the result source in the schema with the given moniker
 
 =cut
 
-sub registered_classes {
-  return values %{shift->class_registrations};
-}
+sub register_source {
+  my ($self, $moniker, $source) = @_;
+  my %reg = %{$self->source_registrations};
+  $reg{$moniker} = $source;
+  $self->source_registrations(\%reg);
+  $source->schema($self);
+  if ($source->result_class) {
+    my %map = %{$self->class_mappings};
+    $map{$source->result_class} = $moniker;
+    $self->class_mappings(\%map);
+  }
+} 
 
 =head2 class
 
   my $class = $schema->class('Foo');
 
-Shortcut to retrieve a single class by its registered name
+Retrieves the result class name for a given result source
 
 =cut
 
 sub class {
-  my ($self, $class) = @_;
-  return $self->class_registrations->{$class};
+  my ($self, $moniker) = @_;
+  return $self->source($moniker)->result_class;
 }
 
 =head2 source
@@ -108,24 +113,39 @@ Returns the result source object for the registered name
 =cut
 
 sub source {
-  my ($self, $class) = @_;
-  return $self->class_registrations->{$class}->result_source
-    if $self->class_registrations->{$class};
+  my ($self, $moniker) = @_;
+  my $sreg = $self->source_registrations;
+  return $sreg->{$moniker} if exists $sreg->{$moniker};
+
+  # if we got here, they probably passed a full class name
+  my $mapped = $self->class_mappings->{$moniker};
+  die "Can't find source for ${moniker}"
+    unless $mapped && exists $sreg->{$mapped};
+  return $sreg->{$mapped};
 }
+
+=head2 sources
+
+  my @source_monikers = $schema->sources;
+
+Returns the source monikers of all source registrations on this schema
+
+=cut
+
+sub sources { return keys %{shift->source_registrations}; }
 
 =head2 resultset
 
   my $rs = $schema->resultset('Foo');
 
-Returns the resultset for the registered name
+Returns the resultset for the registered moniker
 
 =cut
 
 sub resultset {
-  my ($self, $class) = @_;
-  return $self->class_registrations->{$class}->result_source->resultset;
+  my ($self, $moniker) = @_;
+  return $self->source($moniker)->resultset;
 }
-
 
 =head2  load_classes [<classes>, (<class>, <class>), {<namespace> => [<classes>]}]
 
@@ -212,41 +232,44 @@ you expect.
 
 sub compose_connection {
   my ($self, $target, @info) = @_;
-  my $conn_class = "${target}::_db";
-  $self->setup_connection_class($conn_class, @info);
-  my $schema = $self->compose_namespace($target, $conn_class);
-  $schema->storage($conn_class->storage);
-  foreach my $class ($schema->registered_classes) {
-    my $source = $class->result_source;
-    $source = $source->new($source);
-    $source->schema($schema);
-    $source->result_class($class);
-    $class->mk_classdata(result_source => $source);
+  my $base = 'DBIx::Class::ResultSetInstance';
+  $base->require;
+  my $schema = $self->compose_namespace($target, $base);
+  $schema->connection(@info);
+  foreach my $moniker ($schema->sources) {
+    my $source = $schema->source($moniker);
+    my $class = $source->result_class;
+    #warn "$moniker $class $source ".$source->storage;
+    $class->mk_classdata(result_source_instance => $source);
     $class->mk_classdata(resultset_instance => $source->resultset);
+    $class->mk_classdata(class_resolver => $schema);
   }
   return $schema;
 }
 
 sub compose_namespace {
-  my ($class, $target, $base) = @_;
-  my %reg = %{ $class->class_registrations };
+  my ($self, $target, $base) = @_;
+  my %reg = %{ $self->source_registrations };
   my %target;
   my %map;
-  my $schema = bless({ }, $class);
-  while (my ($comp, $comp_class) = each %reg) {
-    my $target_class = "${target}::${comp}";
-    $class->inject_base($target_class, $comp_class, ($base ? $base : ()));
-    @map{$comp, $comp_class} = ($target_class, $target_class);
+  my $schema = $self->clone;
+  foreach my $moniker ($schema->sources) {
+    my $source = $schema->source($moniker);
+    my $target_class = "${target}::${moniker}";
+    $self->inject_base(
+      $target_class => $source->result_class, ($base ? $base : ())
+    );
+    $source->result_class($target_class);
   }
-  $schema->class_registrations(\%map);
   {
     no strict 'refs';
     *{"${target}::schema"} =
       sub { $schema };
-    *{"${target}::class"} =
-      sub { shift->schema->class(@_) };
+    foreach my $meth (qw/class source resultset/) {
+      *{"${target}::${meth}"} =
+        sub { shift->schema->$meth(@_) };
+    }
   }
-  $base->class_resolver($target);
   return $schema;
 }
 
@@ -262,6 +285,50 @@ sub setup_connection_class {
   $class->inject_base($target => 'DBIx::Class::DB');
   #$target->load_components('DB');
   $target->connection(@info);
+}
+
+=head2 connection(@args)
+
+Instantiates a new Storage object of type storage_type and passes the
+arguments to $storage->connection_info. Sets the connection in-place on
+the schema.
+
+=cut
+
+sub connection {
+  my ($self, @info) = @_;
+  my $storage_class = 'DBIx::Class::Storage::'.$self->storage_type;
+  $storage_class->require;
+  my $storage = $storage_class->new;
+  $storage->connect_info(\@info);
+  $self->storage($storage);
+  return $self;
+}
+
+=head2 connect(@info)
+
+Conveneience method, equivalent to $schema->clone->connection(@info)
+
+=cut
+
+sub connect { shift->clone->connection(@_) };
+
+=head2 clone
+
+Clones the schema and its associated result_source objects and returns the
+copy.
+
+=cut
+
+sub clone {
+  my ($self) = @_;
+  my $clone = bless({ (ref $self ? %$self : ()) }, ref $self || $self);
+  foreach my $moniker ($self->sources) {
+    my $source = $self->source($moniker);
+    my $new = $source->new($source);
+    $clone->register_source($moniker => $new);
+  }
+  return $clone;
 }
 
 1;

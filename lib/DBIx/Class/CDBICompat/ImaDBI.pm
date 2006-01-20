@@ -14,11 +14,11 @@ __PACKAGE__->mk_classdata('_transform_sql_handlers' =>
     'TABLE' =>
       sub {
         my ($self, $class, $data) = @_;
-        return $class->_table_name unless $data;
+        return $class->result_source_instance->name unless $data;
         my ($f_class, $alias) = split(/=/, $data);
         $f_class ||= $class;
         $self->{_classes}{$alias} = $f_class;
-        return $f_class->_table_name." ${alias}";
+        return $f_class->result_source_instance->name." ${alias}";
       },
     'ESSENTIAL' =>
       sub {
@@ -44,7 +44,7 @@ __PACKAGE__->mk_classdata('_transform_sql_handlers' =>
         $self->throw( "No relationship to JOIN from ${from_class} to ${to_class}" )
           unless $rel_obj;
         my $join = $from_class->storage->sql_maker->_join_condition(
-          $from_class->result_source->resolve_condition(
+          $from_class->result_source_instance->resolve_condition(
             $rel_obj->{cond}, $to, $from) );
         return $join;
       }
@@ -91,7 +91,7 @@ sub sth_to_objects {
   my ($class, $sth) = @_;
   my @ret;
   while (my $row = $sth->fetchrow_hashref) {
-    push(@ret, $class->inflate_result($row));
+    push(@ret, $class->inflate_result($class->result_source_instance, $row));
   }
   return @ret;
 }

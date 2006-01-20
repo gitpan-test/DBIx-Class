@@ -1,6 +1,6 @@
 ---
 name: DBIx-Class
-version: 0.04999_02
+version: 0.04999_03
 author:
   - Matt S. Trout <mst@shadowcatsystems.co.uk>
 abstract: Extensible and flexible object <-> relational mapper.
@@ -10,7 +10,7 @@ requires:
   Class::Data::Accessor: 0.01
   Class::Trigger: 0
   DBD::SQLite: 1.08
-  DBI: 0
+  DBI: 1.4
   DBIx::ContextualFetch: 0
   Data::Page: 2
   Module::Find: 0
@@ -27,7 +27,7 @@ provides:
     file: lib/DBIx/Class/Storage/DBI.pm
   DBIx::Class:
     file: lib/DBIx/Class.pm
-    version: 0.04999_02
+    version: 0.04999_03
   DBIx::Class::AccessorGroup:
     file: lib/DBIx/Class/AccessorGroup.pm
   DBIx::Class::CDBICompat:
@@ -138,6 +138,10 @@ provides:
     file: lib/DBIx/Class/ResultSetInstance.pm
   DBIx::Class::ResultSource:
     file: lib/DBIx/Class/ResultSource.pm
+  DBIx::Class::ResultSource::Table:
+    file: lib/DBIx/Class/ResultSource/Table.pm
+  DBIx::Class::ResultSourceInstance:
+    file: lib/DBIx/Class/ResultSourceInstance.pm
   DBIx::Class::Row:
     file: lib/DBIx/Class/Row.pm
   DBIx::Class::Schema:
@@ -146,8 +150,6 @@ provides:
     file: lib/DBIx/Class/Storage/DBI.pm
   DBIx::Class::Storage::DBI::Cursor:
     file: lib/DBIx/Class/Storage/DBI/Cursor.pm
-  DBIx::Class::Table:
-    file: lib/DBIx/Class/Table.pm
   DBIx::Class::TableInstance:
     file: lib/DBIx/Class/TableInstance.pm
   DBIx::Class::Test::SQLite:
@@ -159,4 +161,7 @@ provides:
     version: 0.01
   DBIx::ContextualFetch::st:
     file: lib/DBIx/Class/CDBICompat/ImaDBI.pm
+  SQL::Translator::Parser::DBIx::Class:
+    file: lib/SQL/Translator/Parser/DBIx/Class.pm
+    version: 1.00
 generated_by: Module::Build version 0.2611

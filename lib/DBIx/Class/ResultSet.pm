@@ -35,9 +35,9 @@ not perform any queries -- these are executed as needed by the other methods.
 
 sub new {
   my $class = shift;
-  $class->new_result(@_) if ref $class;
+  return $class->new_result(@_) if ref $class;
   my ($source, $attrs) = @_;
-  #use Data::Dumper; warn Dumper(@_);
+  #use Data::Dumper; warn Dumper($attrs);
   $attrs = Storable::dclone($attrs || {}); # { %{ $attrs || {} } };
   my %seen;
   my $alias = ($attrs->{alias} ||= 'me');
@@ -67,7 +67,7 @@ sub new {
       unless $seen{$pre};
     my @pre = 
       map { "$pre.$_" }
-      $source->result_class->relationship_info($pre)->{class}->columns;
+      $source->related_source($pre)->columns;
     push(@{$attrs->{select}}, @pre);
     push(@{$attrs->{as}}, @pre);
   }
@@ -113,7 +113,9 @@ sub search {
   my $where = (@_ ? ((@_ == 1 || ref $_[0] eq "HASH") ? shift : {@_}) : undef());
   if (defined $where) {
     $where = (defined $attrs->{where}
-                ? { '-and' => [ $where, $attrs->{where} ] }
+                ? { '-and' =>
+                    [ map { ref $_ eq 'ARRAY' ? [ -or => $_ ] : $_ }
+                        $where, $attrs->{where} ] }
                 : $where);
     $attrs->{where} = $where;
   }
@@ -177,7 +179,7 @@ sub find {
 
 sub search_related {
   my ($self, $rel, @rest) = @_;
-  my $rel_obj = $self->{source}->result_class->relationship_info($rel);
+  my $rel_obj = $self->{source}->relationship_info($rel);
   $self->{source}->result_class->throw(
     "No such relationship ${rel} in search_related")
       unless $rel_obj;
@@ -264,7 +266,8 @@ sub _construct_object {
       $me{$col} = shift @row;
     }
   }
-  my $new = $self->{source}->result_class->inflate_result(\%me, \%pre);
+  my $new = $self->{source}->result_class->inflate_result(
+              $self->{source}, \%me, \%pre);
   $new = $self->{attrs}{record_filter}->($new)
     if exists $self->{attrs}{record_filter};
   return $new;
@@ -342,19 +345,59 @@ sub first {
   return $_[0]->reset->next;
 }
 
+=head2 update(\%values)
+
+Sets the specified columns in the resultset to the supplied values
+
+=cut
+
+sub update {
+  my ($self, $values) = @_;
+  die "Values for update must be a hash" unless ref $values eq 'HASH';
+  return $self->{source}->storage->update(
+           $self->{source}->from, $values, $self->{cond});
+}
+
+=head2 update_all(\%values)
+
+Fetches all objects and updates them one at a time. ->update_all will run
+cascade triggers, ->update will not.
+
+=cut
+
+sub update_all {
+  my ($self, $values) = @_;
+  die "Values for update must be a hash" unless ref $values eq 'HASH';
+  foreach my $obj ($self->all) {
+    $obj->set_columns($values)->update;
+  }
+  return 1;
+}
+
 =head2 delete
 
-Deletes all elements in the resultset.
+Deletes the contents of the resultset from its result source.
 
 =cut
 
 sub delete {
   my ($self) = @_;
-  $_->delete for $self->all;
+  $self->{source}->storage->delete($self->{source}->from, $self->{cond});
   return 1;
 }
 
-*delete_all = \&delete; # Yeah, yeah, yeah ...
+=head2 delete_all
+
+Fetches all objects and deletes them one at a time. ->delete_all will run
+cascade triggers, ->delete will not.
+
+=cut
+
+sub delete_all {
+  my ($self) = @_;
+  $_->delete for $self->all;
+  return 1;
+}
 
 =head2 pager
 
@@ -403,7 +446,9 @@ sub new_result {
   foreach my $key (keys %{$self->{cond}||{}}) {
     $new{$1} = $self->{cond}{$key} if ($key =~ m/^(?:$alias\.)?([^\.]+)$/);
   }
-  return $self->{source}->result_class->new(\%new);
+  my $obj = $self->{source}->result_class->new(\%new);
+  $obj->result_source($self->{source}) if $obj->can('result_source');
+  $obj;
 }
 
 =head2 create(\%vals)

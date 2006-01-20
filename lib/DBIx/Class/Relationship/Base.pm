@@ -69,19 +69,13 @@ created, which calls C<create_related> for the relationship.
 
 =back
 
+=head2 register_relationship($relname, $rel_info)
+
+Registers a relationship on the class
+
 =cut
 
-sub add_relationship {
-  shift->result_source->add_relationship(@_);
-}
-
-sub relationships {
-  shift->result_source->relationships(@_);
-}
-
-sub relationship_info {
-  shift->result_source->relationship_info(@_);
-}
+sub register_relationship { }
 
 =head2 search_related
 

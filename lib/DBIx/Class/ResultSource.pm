@@ -44,15 +44,20 @@ sub add_columns {
   my ($self, @cols) = @_;
   $self->_ordered_columns( \@cols )
     if !$self->_ordered_columns;
-  push @{ $self->_ordered_columns }, @cols;
+  my @added;
+  my $columns = $self->_columns;
   while (my $col = shift @cols) {
 
-    my $column_info = ref $cols[0] ? shift : {};
+    my $column_info = ref $cols[0] ? shift(@cols) : {};
       # If next entry is { ... } use that for the column info, if not
       # use an empty hashref
 
-    $self->_columns->{$col} = $column_info;
+    push(@added, $col) unless exists $columns->{$col};
+
+    $columns->{$col} = $column_info;
   }
+  push @{ $self->_ordered_columns }, @added;
+  return $self;
 }
 
 *add_column = \&add_columns;
@@ -108,25 +113,14 @@ sub column_info {
 
 =head2 columns
 
-  my @column_names = $obj->columns;                                             
+  my @column_names = $obj->columns;
+
+Returns all column names in the order they were declared to add_columns
                                                                                 
 =cut                                                                            
 
 sub columns {
   croak "columns() is a read-only accessor, did you mean add_columns()?" if (@_ > 1);
-  return keys %{shift->_columns};
-}
-
-=head2 ordered_columns
-
-  my @column_names = $obj->ordered_columns;
-
-Like columns(), but returns column names using the order in which they were
-originally supplied to add_columns().
-
-=cut
-
-sub ordered_columns {
   return @{shift->{_ordered_columns}||[]};
 }
 
@@ -150,7 +144,7 @@ sub set_primary_key {
 =head2 primary_columns                                                          
                                                                                 
 Read-only accessor which returns the list of primary keys.
-                                                                                
+
 =cut                                                                            
 
 sub primary_columns {
@@ -240,7 +234,7 @@ sub add_relationship {
                   attrs => $attrs };
   $self->_relationships(\%rels);
 
-  return 1;
+  return $self;
 
   # XXX disabled. doesn't work properly currently. skip in tests.
 
