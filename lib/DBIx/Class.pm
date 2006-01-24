@@ -13,7 +13,7 @@ sub component_base_class { 'DBIx::Class' }
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
 
-$VERSION = '0.04999_03';
+$VERSION = '0.04999_04';
 
 1;
 
@@ -132,6 +132,12 @@ Marcus Ramberg
 Will Hawes
 
 Todd Lipcon
+
+Daniel Westermann-Clark <danieltwc@cpan.org>
+
+Alexander Hartmaier <alex_hartmaier@hotmail.com>
+
+Zbigniew Lukasiak
 
 =head1 LICENSE
 

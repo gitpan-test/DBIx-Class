@@ -1,4 +1,4 @@
-package DBIx::Class::ResultSourceInstance;
+package DBIx::Class::ResultSourceProxy;
 
 use strict;
 use warnings;
@@ -15,10 +15,6 @@ sub add_columns {
   foreach my $c (grep { !ref } @cols) {
     $class->register_column($c => $source->column_info($c));
   }
-}
-
-sub _select_columns {
-  return shift->result_source_instance->columns;
 }
 
 sub has_column {                                                                
@@ -38,6 +34,9 @@ sub columns {
                                                                                 
 sub set_primary_key { shift->result_source_instance->set_primary_key(@_); }     
 sub primary_columns { shift->result_source_instance->primary_columns(@_); }
+
+sub add_unique_constraint { shift->result_source_instance->add_unique_constraint(@_); }     
+sub unique_constraints { shift->result_source_instance->unique_constraints(@_); }
 
 sub add_relationship {
   my ($class, $rel, @rest) = @_;

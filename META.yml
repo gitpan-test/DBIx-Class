@@ -1,6 +1,6 @@
 ---
 name: DBIx-Class
-version: 0.04999_03
+version: 0.04999_04
 author:
   - Matt S. Trout <mst@shadowcatsystems.co.uk>
 abstract: Extensible and flexible object <-> relational mapper.
@@ -27,7 +27,7 @@ provides:
     file: lib/DBIx/Class/Storage/DBI.pm
   DBIx::Class:
     file: lib/DBIx/Class.pm
-    version: 0.04999_03
+    version: 0.04999_04
   DBIx::Class::AccessorGroup:
     file: lib/DBIx/Class/AccessorGroup.pm
   DBIx::Class::CDBICompat:
@@ -134,14 +134,16 @@ provides:
     file: lib/DBIx/Class/Relationship/ProxyMethods.pm
   DBIx::Class::ResultSet:
     file: lib/DBIx/Class/ResultSet.pm
-  DBIx::Class::ResultSetInstance:
-    file: lib/DBIx/Class/ResultSetInstance.pm
+  DBIx::Class::ResultSetProxy:
+    file: lib/DBIx/Class/ResultSetProxy.pm
   DBIx::Class::ResultSource:
     file: lib/DBIx/Class/ResultSource.pm
   DBIx::Class::ResultSource::Table:
     file: lib/DBIx/Class/ResultSource/Table.pm
-  DBIx::Class::ResultSourceInstance:
-    file: lib/DBIx/Class/ResultSourceInstance.pm
+  DBIx::Class::ResultSourceProxy:
+    file: lib/DBIx/Class/ResultSourceProxy.pm
+  DBIx::Class::ResultSourceProxy::Table:
+    file: lib/DBIx/Class/ResultSourceProxy/Table.pm
   DBIx::Class::Row:
     file: lib/DBIx/Class/Row.pm
   DBIx::Class::Schema:
@@ -150,8 +152,6 @@ provides:
     file: lib/DBIx/Class/Storage/DBI.pm
   DBIx::Class::Storage::DBI::Cursor:
     file: lib/DBIx/Class/Storage/DBI/Cursor.pm
-  DBIx::Class::TableInstance:
-    file: lib/DBIx/Class/TableInstance.pm
   DBIx::Class::Test::SQLite:
     file: lib/DBIx/Class/Test/SQLite.pm
   DBIx::Class::UUIDColumns:
@@ -164,4 +164,7 @@ provides:
   SQL::Translator::Parser::DBIx::Class:
     file: lib/SQL/Translator/Parser/DBIx/Class.pm
     version: 1.00
+  SQL::Translator::Producer::DBIx::Class::File:
+    file: lib/SQL/Translator/Producer/DBIx/Class/File.pm
+    version: 0.1
 generated_by: Module::Build version 0.2611
