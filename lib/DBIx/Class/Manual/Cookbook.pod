@@ -231,8 +231,7 @@ main query. Five CDs, five extra queries. A hundred CDs, one hundred extra
 queries!
 
 Thankfully, L<DBIx::Class> has a C<prefetch> attribute to solve this problem.
-This allows you to fetch results from a related table as well as the main table
-for your class:
+This allows you to fetch results from related tables in advance:
 
   my $rs = $schema->resultset('CD')->search(
     {
@@ -324,6 +323,31 @@ notes:
   # JOIN ( author ON author.id = liner_notes.author )
   # WHERE liner_notes.notes LIKE '%some text%'
   # AND author.name = 'A. Writer'
+
+=head2 Multi-step prefetch
+
+From 0.04999_05 onwards, C<prefetch> can be nested more than one relationship
+deep using the same syntax as a multi-step join:
+
+  my $rs = $schema->resultset('Tag')->search(
+    {},
+    {
+      prefetch => {
+        cd => 'artist'
+      }
+    }
+  );
+
+  # Equivalent SQL:
+  # SELECT tag.*, cd.*, artist.* FROM tag
+  # JOIN cd ON tag.cd = cd.cdid
+  # JOIN artist ON cd.artist = artist.artistid
+
+Now accessing our C<cd> and C<artist> relationships does not need additional
+SQL statements:
+
+  my $tag = $rs->first;
+  print $tag->cd->artist->name;
 
 =head2 Transactions
 
@@ -535,5 +559,19 @@ database schema:
 =head3 Deploy update to customers
 
 The schema update can be deployed to customers using the same method as before.
+
+=head2 Setting limit dialect for SQL::Abstract::Limit
+
+In some cases, SQL::Abstract::Limit cannot determine the dialect of the remote
+SQL-server by looking at the database-handle. This is a common problem when
+using the DBD::JDBC, since the DBD-driver only know that in has a Java-driver
+available, not which JDBC-driver the Java component has loaded.
+This specifically sets the limit_dialect to Microsoft SQL-server (Se more names
+in SQL::Abstract::Limit -documentation.
+
+  __PACKAGE__->storage->sql_maker->limit_dialect('mssql');
+
+The JDBC-bridge is one way of getting access to a MSSQL-server from a platform
+that Microsoft doesn't deliver native client libraries for. (e.g. Linux)
 
 =cut

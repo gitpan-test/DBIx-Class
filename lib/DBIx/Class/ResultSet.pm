@@ -2,13 +2,16 @@ package DBIx::Class::ResultSet;
 
 use strict;
 use warnings;
-use Carp qw/croak/;
 use overload
         '0+'     => 'count',
         'bool'   => sub { 1; },
         fallback => 1;
 use Data::Page;
 use Storable;
+
+use base qw/DBIx::Class/;
+__PACKAGE__->load_components(qw/AccessorGroup/);
+__PACKAGE__->mk_group_accessors('simple' => 'result_source');
 
 =head1 NAME
 
@@ -89,22 +92,35 @@ sub new {
     push(@{$attrs->{from}}, $source->resolve_join($join, $attrs->{alias}));
   }
   $attrs->{group_by} ||= $attrs->{select} if delete $attrs->{distinct};
-  foreach my $pre (@{delete $attrs->{prefetch} || []}) {
-    push(@{$attrs->{from}}, $source->resolve_join($pre, $attrs->{alias}))
-      unless $seen{$pre};
-    my @pre = 
-      map { "$pre.$_" }
-      $source->related_source($pre)->columns;
-    push(@{$attrs->{select}}, @pre);
-    push(@{$attrs->{as}}, @pre);
+
+  if (my $prefetch = delete $attrs->{prefetch}) {
+    foreach my $p (ref $prefetch eq 'ARRAY'
+              ? (@{$prefetch}) : ($prefetch)) {
+      if( ref $p eq 'HASH' ) {
+        foreach my $key (keys %$p) {
+          push(@{$attrs->{from}}, $source->resolve_join($p, $attrs->{alias}))
+            unless $seen{$key};
+        }
+      }
+      else {
+        push(@{$attrs->{from}}, $source->resolve_join($p, $attrs->{alias}))
+            unless $seen{$p};
+      }
+      my @cols = ();
+      push @cols, $source->resolve_prefetch($p, $attrs->{alias});
+      #die Dumper \@cols;
+      push(@{$attrs->{select}}, @cols);
+      push(@{$attrs->{as}}, @cols);
+    }
   }
+
   if ($attrs->{page}) {
     $attrs->{rows} ||= 10;
     $attrs->{offset} ||= 0;
     $attrs->{offset} += ($attrs->{rows} * ($attrs->{page} - 1));
   }
   my $new = {
-    source => $source,
+    result_source => $source,
     cond => $attrs->{where},
     from => $attrs->{from},
     count => undef,
@@ -148,7 +164,7 @@ sub search {
     $attrs->{where} = $where;
   }
 
-  my $rs = (ref $self)->new($self->{source}, $attrs);
+  my $rs = (ref $self)->new($self->result_source, $attrs);
 
   return (wantarray ? $rs->all : $rs);
 }
@@ -195,15 +211,15 @@ sub find {
   my ($self, @vals) = @_;
   my $attrs = (@vals > 1 && ref $vals[$#vals] eq 'HASH' ? pop(@vals) : {});
 
-  my @cols = $self->{source}->primary_columns;
+  my @cols = $self->result_source->primary_columns;
   if (exists $attrs->{key}) {
-    my %uniq = $self->{source}->unique_constraints;
+    my %uniq = $self->result_source->unique_constraints;
     $self->( "Unknown key " . $attrs->{key} . " on " . $self->name )
       unless exists $uniq{$attrs->{key}};
     @cols = @{ $uniq{$attrs->{key}} };
   }
   #use Data::Dumper; warn Dumper($attrs, @vals, @cols);
-  $self->{source}->result_class->throw( "Can't find unless a primary key or unique constraint is defined" )
+  $self->throw_exception( "Can't find unless a primary key or unique constraint is defined" )
     unless @cols;
 
   my $query;
@@ -216,10 +232,6 @@ sub find {
     $query = {@vals};
   }
   #warn Dumper($query);
-  # Useless -> disabled
-  #$self->{source}->result_class->throw( "Can't find unless all primary keys are specified" )
-  #  unless (keys %$query >= @pk); # If we check 'em we run afoul of uc/lc
-                                  # column names etc. Not sure what to do yet
   return $self->search($query)->next;
 }
 
@@ -234,12 +246,12 @@ records.
 
 sub search_related {
   my ($self, $rel, @rest) = @_;
-  my $rel_obj = $self->{source}->relationship_info($rel);
-  $self->{source}->result_class->throw(
+  my $rel_obj = $self->result_source->relationship_info($rel);
+  $self->throw_exception(
     "No such relationship ${rel} in search_related")
       unless $rel_obj;
   my $rs = $self->search(undef, { join => $rel });
-  return $self->{source}->schema->resultset($rel_obj->{class}
+  return $self->result_source->schema->resultset($rel_obj->{class}
            )->search( undef,
              { %{$rs->{attrs}},
                alias => $rel,
@@ -256,10 +268,10 @@ Returns a storage-driven cursor to the given resultset.
 
 sub cursor {
   my ($self) = @_;
-  my ($source, $attrs) = @{$self}{qw/source attrs/};
+  my ($attrs) = $self->{attrs};
   $attrs = { %$attrs };
   return $self->{cursor}
-    ||= $source->storage->select($self->{from}, $attrs->{select},
+    ||= $self->result_source->storage->select($self->{from}, $attrs->{select},
           $attrs->{where},$attrs);
 }
 
@@ -296,7 +308,7 @@ sub slice {
   $attrs->{offset} ||= 0;
   $attrs->{offset} += $min;
   $attrs->{rows} = ($max ? ($max - $min + 1) : 1);
-  my $slice = (ref $self)->new($self->{source}, $attrs);
+  my $slice = (ref $self)->new($self->result_source, $attrs);
   return (wantarray ? $slice->all : $slice);
 }
 
@@ -323,22 +335,32 @@ sub next {
 
 sub _construct_object {
   my ($self, @row) = @_;
-  my @cols = @{ $self->{attrs}{as} };
+  my @as = @{ $self->{attrs}{as} };
   #warn "@cols -> @row";
-  my (%me, %pre);
-  foreach my $col (@cols) {
-    if ($col =~ /([^\.]+)\.([^\.]+)/) {
-      $pre{$1}[0]{$2} = shift @row;
-    } else {
-      $me{$col} = shift @row;
+  my $info = [ {}, {} ];
+  foreach my $as (@as) {
+    my $target = $info;
+    my @parts = split(/\./, $as);
+    my $col = pop(@parts);
+    foreach my $p (@parts) {
+      $target = $target->[1]->{$p} ||= [];
     }
+    $target->[0]->{$col} = shift @row;
   }
-  my $new = $self->{source}->result_class->inflate_result(
-              $self->{source}, \%me, \%pre);
+  #use Data::Dumper; warn Dumper(\@as, $info);
+  my $new = $self->result_source->result_class->inflate_result(
+              $self->result_source, @$info);
   $new = $self->{attrs}{record_filter}->($new)
     if exists $self->{attrs}{record_filter};
   return $new;
 }
+
+=head2 result_source 
+
+Returns a reference to the result source for this recordset.
+
+=cut
+
 
 =head2 count
 
@@ -351,15 +373,37 @@ on the resultset and counts the results of that.
 sub count {
   my $self = shift;
   return $self->search(@_)->count if @_ && defined $_[0];
-  croak "Unable to ->count with a GROUP BY" if defined $self->{attrs}{group_by};
   unless (defined $self->{count}) {
+    my $group_by;
+    my $select = { 'count' => '*' };
+    if( $group_by = delete $self->{attrs}{group_by} ) {
+      my @distinct = @$group_by;
+      # todo: try CONCAT for multi-column pk
+      my @pk = $self->result_source->primary_columns;
+      if( scalar(@pk) == 1 ) {
+        my $pk = shift(@pk);
+        my $alias = $self->{attrs}{alias};
+        my $re = qr/^($alias\.)?$pk$/;
+        foreach my $column ( @$group_by ) {
+          if( $column =~ $re ) {
+            @distinct = ( $column );
+            last;
+          }
+        } 
+      }
+
+      $select = { count => { 'distinct' => \@distinct } };
+      #use Data::Dumper; die Dumper $select;
+    }
+
     my $attrs = { %{ $self->{attrs} },
-                  select => { 'count' => '*' },
+                  select => $select,
                   as => [ 'count' ] };
     # offset, order by and page are not needed to count. record_filter is cdbi
     delete $attrs->{$_} for qw/rows offset order_by page pager record_filter/;
         
-    ($self->{count}) = (ref $self)->new($self->{source}, $attrs)->cursor->next;
+    ($self->{count}) = (ref $self)->new($self->result_source, $attrs)->cursor->next;
+    $self->{attrs}{group_by} = $group_by;
   }
   return 0 unless $self->{count};
   my $count = $self->{count};
@@ -420,9 +464,9 @@ Sets the specified columns in the resultset to the supplied values.
 
 sub update {
   my ($self, $values) = @_;
-  croak "Values for update must be a hash" unless ref $values eq 'HASH';
-  return $self->{source}->storage->update(
-           $self->{source}->from, $values, $self->{cond});
+  $self->throw_exception("Values for update must be a hash") unless ref $values eq 'HASH';
+  return $self->result_source->storage->update(
+           $self->result_source->from, $values, $self->{cond});
 }
 
 =head2 update_all(\%values)
@@ -434,7 +478,7 @@ will run cascade triggers while L</update> will not.
 
 sub update_all {
   my ($self, $values) = @_;
-  croak "Values for update must be a hash" unless ref $values eq 'HASH';
+  $self->throw_exception("Values for update must be a hash") unless ref $values eq 'HASH';
   foreach my $obj ($self->all) {
     $obj->set_columns($values)->update;
   }
@@ -449,7 +493,7 @@ Deletes the contents of the resultset from its result source.
 
 sub delete {
   my ($self) = @_;
-  $self->{source}->storage->delete($self->{source}->from, $self->{cond});
+  $self->result_source->storage->delete($self->result_source->from, $self->{cond});
   return 1;
 }
 
@@ -476,7 +520,7 @@ sense for queries with a C<page> attribute.
 sub pager {
   my ($self) = @_;
   my $attrs = $self->{attrs};
-  croak "Can't create pager for non-paged rs" unless $self->{page};
+  $self->throw_exception("Can't create pager for non-paged rs") unless $self->{page};
   $attrs->{rows} ||= 10;
   $self->count;
   return $self->{pager} ||= Data::Page->new(
@@ -493,7 +537,7 @@ sub page {
   my ($self, $page) = @_;
   my $attrs = { %{$self->{attrs}} };
   $attrs->{page} = $page;
-  return (ref $self)->new($self->{source}, $attrs);
+  return (ref $self)->new($self->result_source, $attrs);
 }
 
 =head2 new_result(\%vals)
@@ -504,17 +548,17 @@ Creates a result in the resultset's result class.
 
 sub new_result {
   my ($self, $values) = @_;
-  $self->{source}->result_class->throw( "new_result needs a hash" )
+  $self->throw_exception( "new_result needs a hash" )
     unless (ref $values eq 'HASH');
-  $self->{source}->result_class->throw( "Can't abstract implicit construct, condition not a hash" )
+  $self->throw_exception( "Can't abstract implicit construct, condition not a hash" )
     if ($self->{cond} && !(ref $self->{cond} eq 'HASH'));
   my %new = %$values;
   my $alias = $self->{attrs}{alias};
   foreach my $key (keys %{$self->{cond}||{}}) {
     $new{$1} = $self->{cond}{$key} if ($key =~ m/^(?:$alias\.)?([^\.]+)$/);
   }
-  my $obj = $self->{source}->result_class->new(\%new);
-  $obj->result_source($self->{source}) if $obj->can('result_source');
+  my $obj = $self->result_source->result_class->new(\%new);
+  $obj->result_source($self->result_source) if $obj->can('result_source');
   $obj;
 }
 
@@ -528,7 +572,7 @@ Effectively a shortcut for C<< ->new_result(\%vals)->insert >>.
 
 sub create {
   my ($self, $attrs) = @_;
-  $self->{source}->result_class->throw( "create needs a hashref" ) unless ref $attrs eq 'HASH';
+  $self->throw_exception( "create needs a hashref" ) unless ref $attrs eq 'HASH';
   return $self->new_result($attrs)->insert;
 }
 
@@ -537,7 +581,7 @@ sub create {
   $class->find_or_create({ key => $val, ... });
 
 Searches for a record matching the search condition; if it doesn't find one,    
-creates one and returns that instead.                                           
+creates one and returns that instead.                                       
 
   my $cd = $schema->resultset('CD')->find_or_create({
     cdid   => 5,
@@ -606,7 +650,7 @@ sub update_or_create {
   my $attrs = (@_ > 1 && ref $_[$#_] eq 'HASH' ? pop(@_) : {});
   my $hash  = ref $_[0] eq "HASH" ? shift : {@_};
 
-  my %unique_constraints = $self->{source}->unique_constraints;
+  my %unique_constraints = $self->result_source->unique_constraints;
   my @constraint_names   = (exists $attrs->{key}
                             ? ($attrs->{key})
                             : keys %unique_constraints);
@@ -639,6 +683,17 @@ sub update_or_create {
   return $row;
 }
 
+=head2 throw_exception
+
+See Schema's throw_exception
+
+=cut
+
+sub throw_exception {
+  my $self=shift;
+  $self->result_source->schema->throw_exception(@_);
+}
+
 =head1 ATTRIBUTES
 
 The resultset takes various attributes that modify its behavior. Here's an
@@ -664,11 +719,11 @@ names:
   $rs = $schema->resultset('Foo')->search(
     {},
     {
-      select => {
+      select => [
         'column_name',
         { count => 'column_to_count' },
         { sum => 'column_to_sum' }
-      }
+      ]
     }
   );
 
@@ -685,10 +740,10 @@ procedure names:
   $rs = $schema->resultset('Foo')->search(
     {},
     {
-      select => {
+      select => [
         'column1',
         { count => 'column2' }
-      },
+      ],
       as => [qw/ column1 column2_count /]
     }
   );
@@ -740,16 +795,40 @@ For example:
     }
   );
 
-If you want to fetch the columns from the related table as well, see
-C<prefetch> below.
+If you want to fetch columns from related tables as well, see C<prefetch>
+below.
 
-=head2 prefetch
+=head2 prefetch arrayref/hashref
 
-Contains a list of relationships that should be fetched along with the main 
+Contains one or more relationships that should be fetched along with the main 
 query (when they are accessed afterwards they will have already been
 "prefetched").  This is useful for when you know you will need the related
-objects, because it saves a query.  Currently limited to prefetching
-one relationship deep, so unlike C<join>, prefetch must be an arrayref.
+objects, because it saves at least one query:
+
+  my $rs = $schema->resultset('Tag')->search(
+    {},
+    {
+      prefetch => {
+        cd => 'artist'
+      }
+    }
+  );
+
+The initial search results in SQL like the following:
+
+  SELECT tag.*, cd.*, artist.* FROM tag
+  JOIN cd ON tag.cd = cd.cdid
+  JOIN artist ON cd.artist = artist.artistid
+
+L<DBIx::Class> has no need to go back to the database when we access the
+C<cd> or C<artist> relationships, which saves us two SQL statements in this
+case.
+
+Any prefetched relationship will be joined automatically, so there is no need
+for a C<join> attribute in the above search.
+
+C<prefetch> can be used with the following relationship types: C<belongs_to>,
+C<has_one>.
 
 =head2 from (arrayref)
 

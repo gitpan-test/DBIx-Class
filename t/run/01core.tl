@@ -110,9 +110,9 @@ $new->insert_or_update;
 ok($new->in_storage, 'insert_or_update insert ok');
 
 # test in update mode
-$new->position(5);
+$new->pos(5);
 $new->insert_or_update;
-is( $schema->resultset("Track")->find(100)->position, 5, 'insert_or_update update ok');
+is( $schema->resultset("Track")->find(100)->pos, 5, 'insert_or_update update ok');
 
 eval { $schema->class("Track")->load_components('DoesNotExist'); };
 
@@ -142,6 +142,8 @@ cmp_ok($or_rs->next->cdid, '==', $rel_rs->next->cdid, 'Related object ok');
 
 
 ok($schema->storage(), 'Storage available');
+
+$schema->source("Artist")->{_columns}{'artistid'} = {};
 
 my $typeinfo = $schema->source("Artist")->column_info('artistid');
 is($typeinfo->{data_type}, 'INTEGER', 'column_info ok');

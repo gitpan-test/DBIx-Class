@@ -4,8 +4,9 @@ use strict;
 use warnings;
 
 use DBIx::Class::ResultSet;
+use Carp::Clan qw/^DBIx::Class/;
 
-use Carp qw/croak/;
+use Storable;
 
 use base qw/DBIx::Class/;
 __PACKAGE__->load_components(qw/AccessorGroup/);
@@ -33,9 +34,9 @@ sub new {
   $class = ref $class if ref $class;
   my $new = bless({ %{$attrs || {}} }, $class);
   $new->{resultset_class} ||= 'DBIx::Class::ResultSet';
-  $new->{_ordered_columns} ||= [];
-  $new->{_columns} ||= {};
-  $new->{_relationships} ||= {};
+  $new->{_ordered_columns} = [ @{$new->{_ordered_columns}||[]}];
+  $new->{_columns} = { %{$new->{_columns}||{}} };
+  $new->{_relationships} = { %{$new->{_relationships}||{}} };
   $new->{name} ||= "!!NAME NOT SET!!";
   return $new;
 }
@@ -107,7 +108,8 @@ Returns the column metadata hashref for a column.
 
 sub column_info {
   my ($self, $column) = @_;
-  croak "No such column $column" unless exists $self->_columns->{$column};
+  $self->throw_exception("No such column $column") 
+    unless exists $self->_columns->{$column};
   if ( (! $self->_columns->{$column}->{data_type})
        && $self->schema && $self->storage() ){
       my $info;
@@ -135,8 +137,9 @@ Returns all column names in the order they were declared to add_columns
 =cut
 
 sub columns {
-  croak "columns() is a read-only accessor, did you mean add_columns()?" if (@_ > 1);
-  return @{shift->{_ordered_columns}||[]};
+  my $self=shift;
+  $self->throw_exception("columns() is a read-only accessor, did you mean add_columns()?") if (@_ > 1);
+  return @{$self->{_ordered_columns}||[]};
 }
 
 =head2 set_primary_key(@cols)
@@ -152,7 +155,7 @@ sub set_primary_key {
   my ($self, @cols) = @_;
   # check if primary key columns are valid columns
   for (@cols) {
-    $self->throw("No such column $_ on table ".$self->name)
+    $self->throw_exception("No such column $_ on table ".$self->name)
       unless $self->has_column($_);
   }
   $self->_primaries(\@cols);
@@ -184,7 +187,7 @@ sub add_unique_constraint {
   my ($self, $name, $cols) = @_;
 
   for (@$cols) {
-    $self->throw("No such column $_ on table ".$self->name)
+    $self->throw_exception("No such column $_ on table ".$self->name)
       unless $self->has_column($_);
   }
 
@@ -276,7 +279,7 @@ created, which calls C<create_related> for the relationship.
 
 sub add_relationship {
   my ($self, $rel, $f_source_name, $cond, $attrs) = @_;
-  croak "Can't create relationship without join condition" unless $cond;
+  $self->throw_exception("Can't create relationship without join condition") unless $cond;
   $attrs ||= {};
 
   my %rels = %{ $self->_relationships };
@@ -309,7 +312,7 @@ sub add_relationship {
   if ($@) { # If the resolve failed, back out and re-throw the error
     delete $rels{$rel}; # 
     $self->_relationships(\%rels);
-    croak "Error creating relationship $rel: $@";
+    $self->throw_exception("Error creating relationship $rel: $@");
   }
   1;
 }
@@ -361,10 +364,10 @@ sub resolve_join {
                  $self->related_source($_)->resolve_join($join->{$_}, $_) }
            keys %$join;
   } elsif (ref $join) {
-    croak ("No idea how to resolve join reftype ".ref $join);
+    $self->throw_exception("No idea how to resolve join reftype ".ref $join);
   } else {
     my $rel_info = $self->relationship_info($join);
-    croak("No such relationship ${join}") unless $rel_info;
+    $self->throw_exception("No such relationship ${join}") unless $rel_info;
     my $type = $rel_info->{attrs}{join_type} || '';
     return [ { $join => $self->related_source($join)->from,
                -join_type => $type },
@@ -387,8 +390,8 @@ sub resolve_condition {
     my %ret;
     while (my ($k, $v) = each %{$cond}) {
       # XXX should probably check these are valid columns
-      $k =~ s/^foreign\.// || croak "Invalid rel cond key ${k}";
-      $v =~ s/^self\.// || croak "Invalid rel cond val ${v}";
+      $k =~ s/^foreign\.// || $self->throw_exception("Invalid rel cond key ${k}");
+      $v =~ s/^self\.// || $self->throw_exception("Invalid rel cond val ${v}");
       if (ref $for) { # Object
         #warn "$self $k $for $v";
         $ret{$k} = $for->get_column($v);
@@ -405,6 +408,79 @@ sub resolve_condition {
   }
 }
 
+=head2 resolve_prefetch (hashref/arrayref/scalar)
+ 
+Accepts one or more relationships for the current source and returns an
+array of column names for each of those relationships. Column names are
+prefixed relative to the current source, in accordance with where they appear
+in the supplied relationships. Examples:
+
+  my $source = $schema->$resultset('Tag')->source;
+  @columns = $source->resolve_prefetch( { cd => 'artist' } );
+
+  # @columns =
+  #(
+  #  'cd.cdid',
+  #  'cd.artist',
+  #  'cd.title',
+  #  'cd.year',
+  #  'cd.artist.artistid',
+  #  'cd.artist.name'
+  #)
+
+  @columns = $source->resolve_prefetch( qw[/ cd /] );
+
+  # @columns =
+  #(
+  #   'cd.cdid',
+  #   'cd.artist',
+  #   'cd.title',
+  #   'cd.year'
+  #)
+
+  $source = $schema->resultset('CD')->source;
+  @columns = $source->resolve_prefetch( qw[/ artist producer /] );
+
+  # @columns =
+  #(
+  #  'artist.artistid',
+  #  'artist.name',
+  #  'producer.producerid',
+  #  'producer.name'
+  #)  
+  
+=cut
+
+sub resolve_prefetch {
+  my( $self, $pre, $alias ) = @_;
+  use Data::Dumper;
+  #$alias ||= $self->name;
+  #warn $alias, Dumper $pre;
+  if( ref $pre eq 'ARRAY' ) {
+    return map { $self->resolve_prefetch( $_, $alias ) } @$pre;
+  }
+  elsif( ref $pre eq 'HASH' ) {
+    my @ret =
+    map {
+      $self->resolve_prefetch($_, $alias),
+      $self->related_source($_)->resolve_prefetch( $pre->{$_}, $_ )
+    }
+    keys %$pre;
+    #die Dumper \@ret;
+    return @ret;
+  }
+  elsif( ref $pre ) {
+    $self->throw_exception( "don't know how to resolve prefetch reftype " . ref $pre);
+  }
+  else {
+    my $rel_info = $self->relationship_info( $pre );
+    $self->throw_exception( $self->name . " has no such relationship '$pre'" ) unless $rel_info;
+    my $prefix = $alias && $alias ne 'me' ? "$alias.$pre" : $pre;
+    my @ret = map { "$prefix.$_" } $self->related_source($pre)->columns;
+    #warn $alias, Dumper (\@ret);
+    return @ret;
+  }
+}
 
 =head2 related_source($relname)
 
@@ -414,10 +490,29 @@ Returns the result source for the given relationship
 
 sub related_source {
   my ($self, $rel) = @_;
+  if( !$self->has_relationship( $rel ) ) {
+    $self->throw_exception("No such relationship '$rel'");
+  }
   return $self->schema->source($self->relationship_info($rel)->{source});
 }
 
 1;
+
+=head2 throw_exception
+
+See schema's throw_exception
+
+=cut
+
+sub throw_exception {
+  my $self = shift;
+  if (defined $self->schema) { 
+    $self->schema->throw_exception(@_);
+  } else {
+    croak(@_);
+  }
+}
+
 
 =head1 AUTHORS
 

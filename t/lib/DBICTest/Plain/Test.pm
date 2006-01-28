@@ -1,10 +1,10 @@
-package DBICTest::Schema::Producer;
+package DBICTest::Plain::Test;
 
 use base 'DBIx::Class::Core';
 
-__PACKAGE__->table('producer');
+__PACKAGE__->table('test');
 __PACKAGE__->add_columns(
-  'producerid' => {
+  'id' => {
     data_type => 'integer',
     is_auto_increment => 1
   },
@@ -12,6 +12,6 @@ __PACKAGE__->add_columns(
     data_type => 'varchar',
   },
 );
-__PACKAGE__->set_primary_key('producerid');
+__PACKAGE__->set_primary_key('id');
 
 1;

@@ -3,12 +3,10 @@ package DBIx::Class::Schema;
 use strict;
 use warnings;
 
-use Carp qw/croak/;
-use UNIVERSAL::require;
+use Carp::Clan qw/^DBIx::Class/;
 
 use base qw/DBIx::Class/;
 
-__PACKAGE__->load_components(qw/Exception/);
 __PACKAGE__->mk_classdata('class_mappings' => {});
 __PACKAGE__->mk_classdata('source_registrations' => {});
 __PACKAGE__->mk_classdata('storage_type' => '::DBI');
@@ -116,7 +114,7 @@ sub source {
 
   # if we got here, they probably passed a full class name
   my $mapped = $self->class_mappings->{$moniker};
-  croak "Can't find source for ${moniker}"
+  $self->throw_exception("Can't find source for ${moniker}")
     unless $mapped && exists $sreg->{$mapped};
   return $sreg->{$mapped};
 }
@@ -185,7 +183,7 @@ sub load_classes {
     }
   } else {
     eval "require Module::Find;";
-    $class->throw("No arguments to load_classes and couldn't load".
+    $class->throw_exception("No arguments to load_classes and couldn't load".
       " Module::Find ($@)") if $@;
     my @comp = map { substr $_, length "${class}::"  } Module::Find::findallmod($class);
     $comps_for{$class} = \@comp;
@@ -199,6 +197,7 @@ sub load_classes {
         die $@ unless $@ =~ /Can't locate/;
       }
       $class->register_class($comp => $comp_class);
+      #  if $class->can('result_source_instance');
     }
   }
 }
@@ -230,7 +229,23 @@ you expect.
 sub compose_connection {
   my ($self, $target, @info) = @_;
   my $base = 'DBIx::Class::ResultSetProxy';
-  $base->require;
+  eval "require ${base};";
+  $self->throw_exception("No arguments to load_classes and couldn't load".
+      " ${base} ($@)") if $@;
+
+  if ($self eq $target) {
+    # Pathological case, largely caused by the docs on early C::M::DBIC::Plain
+    foreach my $moniker ($self->sources) {
+      my $source = $self->source($moniker);
+      my $class = $source->result_class;
+      $self->inject_base($class, $base);
+      $class->mk_classdata(resultset_instance => $source->resultset);
+      $class->mk_classdata(class_resolver => $self);
+    }
+    $self->connection(@info);
+    return $self;
+  }
+
   my $schema = $self->compose_namespace($target, $base);
   $schema->connection(@info);
   foreach my $moniker ($schema->sources) {
@@ -287,7 +302,7 @@ sub setup_connection_class {
 =head2 connection(@args)
 
 Instantiates a new Storage object of type storage_type and passes the
-arguments to $storage->connection_info. Sets the connection in-place on
+arguments to $storage->connect_info. Sets the connection in-place on
 the schema.
 
 =cut
@@ -297,7 +312,9 @@ sub connection {
   my $storage_class = $self->storage_type;
   $storage_class = 'DBIx::Class::Storage'.$storage_class
     if $storage_class =~ m/^::/;
-  $storage_class->require;
+  eval "require ${storage_class};";
+  $self->throw_exception("No arguments to load_classes and couldn't load".
+      " ${storage_class} ($@)") if $@;
   my $storage = $storage_class->new;
   $storage->connect_info(\@info);
   $self->storage($storage);
@@ -328,6 +345,43 @@ sub clone {
     $clone->register_source($moniker => $new);
   }
   return $clone;
+}
+
+=item populate($moniker, \@data);
+
+Populates the source registered with the given moniker with the supplied data.
+@data should be a list of listrefs, the first containing column names, the
+second matching values - i.e.
+
+$schema->populate('Foo', [
+  [ qw/foo_id foo_string/ ],
+  [ 1, 'One' ],
+  [ 2, 'Two' ],
+  ...
+]);
+
+=cut
+
+sub populate {
+  my ($self, $name, $data) = @_;
+  my $rs = $self->resultset($name);
+  my @names = @{shift(@$data)};
+  foreach my $item (@$data) {
+    my %create;
+    @create{@names} = @$item;
+    $rs->create(\%create);
+  }
+}
+
+=item throw_exception
+
+Defaults to using Carp::Clan to report errors from user perspective.
+
+=cut
+
+sub throw_exception {
+  my ($self) = shift;
+  croak @_;
 }
 
 1;

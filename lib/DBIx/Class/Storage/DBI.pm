@@ -5,6 +5,8 @@ use warnings;
 use DBI;
 use SQL::Abstract::Limit;
 use DBIx::Class::Storage::DBI::Cursor;
+use IO::File;
+use Carp::Clan qw/DBIx::Class/;
 
 BEGIN {
 
@@ -131,6 +133,16 @@ sub _quote {
   return $self->SUPER::_quote($label);
 }
 
+# Accessor for setting limit dialect. This is useful
+# for JDBC-bridge among others where the remote SQL-dialect cannot
+# be determined by the name of the driver alone.
+#
+sub limit_dialect {
+    my $self = shift;
+    $self->{limit_dialect} = shift if @_;
+    return $self->{limit_dialect};
+}
+
 } # End of BEGIN block
 
 use base qw/DBIx::Class/;
@@ -138,13 +150,18 @@ use base qw/DBIx::Class/;
 __PACKAGE__->load_components(qw/Exception AccessorGroup/);
 
 __PACKAGE__->mk_group_accessors('simple' =>
-  qw/connect_info _dbh _sql_maker debug cursor on_connect_do/);
-
-our $TRANSACTION = 0;
+  qw/connect_info _dbh _sql_maker debug debugfh cursor on_connect_do transaction_depth/);
 
 sub new {
   my $new = bless({}, ref $_[0] || $_[0]);
   $new->cursor("DBIx::Class::Storage::DBI::Cursor");
+  $new->transaction_depth(0);
+  if (defined($ENV{DBIX_CLASS_STORAGE_DBI_DEBUG}) &&
+     ($ENV{DBIX_CLASS_STORAGE_DBI_DEBUG} =~ /=(.+)$/)) {
+    $new->debugfh(IO::File->new($1, 'w')||croak "Cannot open trace file $1");
+  } else {
+    $new->debugfh(IO::File->new('>&STDERR'));
+  }
   $new->debug(1) if $ENV{DBIX_CLASS_STORAGE_DBI_DEBUG};
   return $new;
 }
@@ -167,14 +184,45 @@ This class represents the connection to the database
 
 Executes the sql statements given as a listref on every db connect.
 
+=head2 debug
+
+Causes SQL trace information to be emitted on C<debugfh> filehandle
+(or C<STDERR> if C<debugfh> has not specifically been set).
+
+=head2 debugfh
+
+Sets or retrieves the filehandle used for trace/debug output.  This
+should be an IO::Handle compatible object (only the C<print> method is
+used).  Initially set to be STDERR - although see information on the
+L<DBIX_CLASS_STORAGE_DBI_DEBUG> environment variable.
+
 =cut
+
+sub disconnect {
+  my ($self) = @_;
+
+  $self->_dbh->disconnect if $self->_dbh;
+}
+
+sub connected {
+  my ($self) = @_;
+
+  my $dbh;
+  (($dbh = $self->_dbh) && $dbh->FETCH('Active') && $dbh->ping)
+}
+
+sub ensure_connected {
+  my ($self) = @_;
+
+  unless ($self->connected) {
+    $self->_populate_dbh;
+  }
+}
 
 sub dbh {
   my ($self) = @_;
-  my $dbh;
-  unless (($dbh = $self->_dbh) && $dbh->FETCH('Active') && $dbh->ping) {
-    $self->_populate_dbh;
-  }
+
+  $self->ensure_connected;
   return $self->_dbh;
 }
 
@@ -209,7 +257,8 @@ Calls begin_work on the current dbh.
 =cut
 
 sub txn_begin {
-  $_[0]->dbh->begin_work if $TRANSACTION++ == 0 and $_[0]->dbh->{AutoCommit};
+  my $self = shift;
+  $self->dbh->begin_work if $self->{transaction_depth}++ == 0 and $self->dbh->{AutoCommit};
 }
 
 =head2 txn_commit
@@ -219,11 +268,12 @@ Issues a commit against the current dbh.
 =cut
 
 sub txn_commit {
-  if ($TRANSACTION == 0) {
-    $_[0]->dbh->commit;
+  my $self = shift;
+  if ($self->{transaction_depth} == 0) {
+    $self->dbh->commit unless $self->dbh->{AutoCommit};
   }
   else {
-    $_[0]->dbh->commit if --$TRANSACTION == 0;    
+    $self->dbh->commit if --$self->{transaction_depth} == 0;    
   }
 }
 
@@ -234,11 +284,12 @@ Issues a rollback against the current dbh.
 =cut
 
 sub txn_rollback {
-  if ($TRANSACTION == 0) {
-    $_[0]->dbh->rollback;
+  my $self = shift;
+  if ($self->{transaction_depth} == 0) {
+    $self->dbh->rollback unless $self->dbh->{AutoCommit};
   }
   else {
-    --$TRANSACTION == 0 ? $_[0]->dbh->rollback : die $@;    
+    --$self->{transaction_depth} == 0 ? $self->dbh->rollback : die $@;    
   }
 }
 
@@ -246,16 +297,21 @@ sub _execute {
   my ($self, $op, $extra_bind, $ident, @args) = @_;
   my ($sql, @bind) = $self->sql_maker->$op($ident, @args);
   unshift(@bind, @$extra_bind) if $extra_bind;
-  warn "$sql: @bind" if $self->debug;
+  $self->debugfh->print("$sql: @bind\n") if $self->debug;
   my $sth = $self->sth($sql,$op);
   @bind = map { ref $_ ? ''.$_ : $_ } @bind; # stringify args
-  my $rv = $sth->execute(@bind);
+  my $rv;
+  if ($sth) {  
+    $rv = $sth->execute(@bind);
+  } else { 
+    croak "'$sql' did not generate a statement.";
+  }
   return (wantarray ? ($rv, $sth, @bind) : $rv);
 }
 
 sub insert {
   my ($self, $ident, $to_insert) = @_;
-  $self->throw( "Couldn't insert ".join(', ', map "$_ => $to_insert->{$_}", keys %$to_insert)." into ${ident}" )
+  croak( "Couldn't insert ".join(', ', map "$_ => $to_insert->{$_}", keys %$to_insert)." into ${ident}" )
     unless ($self->_execute('insert' => [], $ident, $to_insert));
   return $to_insert;
 }
@@ -294,10 +350,14 @@ sub select {
   return $self->cursor->new($self, \@_, $attrs);
 }
 
+# Need to call finish() to work round broken DBDs
+
 sub select_single {
   my $self = shift;
   my ($rv, $sth, @bind) = $self->_select(@_);
-  return $sth->fetchrow_array;
+  my @row = $sth->fetchrow_array;
+  $sth->finish();
+  return @row;
 }
 
 sub sth {
@@ -337,6 +397,16 @@ sub columns_info_for {
 }
 
 1;
+
+=head1 ENVIRONMENT VARIABLES
+
+=head2 DBIX_CLASS_STORAGE_DBI_DEBUG
+
+If C<DBIX_CLASS_STORAGE_DBI_DEBUG> is set then SQL trace information
+is produced (as when the L<debug> method is set).
+
+If the value is of the form C<1=/path/name> then the trace output is
+written to the file C</path/name>.
 
 =head1 AUTHORS
 
