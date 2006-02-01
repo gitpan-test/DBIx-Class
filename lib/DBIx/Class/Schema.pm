@@ -247,6 +247,11 @@ sub compose_connection {
   }
 
   my $schema = $self->compose_namespace($target, $base);
+  {
+    no strict 'refs';
+    *{"${target}::schema"} = sub { $schema };
+  }
+
   $schema->connection(@info);
   foreach my $moniker ($schema->sources) {
     my $source = $schema->source($moniker);
@@ -275,8 +280,6 @@ sub compose_namespace {
   }
   {
     no strict 'refs';
-    *{"${target}::schema"} =
-      sub { $schema };
     foreach my $meth (qw/class source resultset/) {
       *{"${target}::${meth}"} =
         sub { shift->schema->$meth(@_) };
@@ -347,7 +350,7 @@ sub clone {
   return $clone;
 }
 
-=item populate($moniker, \@data);
+=head2 populate($moniker, \@data);
 
 Populates the source registered with the given moniker with the supplied data.
 @data should be a list of listrefs, the first containing column names, the
@@ -373,7 +376,7 @@ sub populate {
   }
 }
 
-=item throw_exception
+=head2 throw_exception
 
 Defaults to using Carp::Clan to report errors from user perspective.
 

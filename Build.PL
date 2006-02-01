@@ -14,10 +14,10 @@ my %arguments = (
         'Storable'                  => 0,
         'Class::Data::Accessor'     => 0.01,
 	'Carp::Clan'		    => 0,
+        'DBI'                       => 1.40,
     },
     build_requires      => {
-        'DBD::SQLite'               => 1.08,
-        'DBI'                       => 1.40,
+        'DBD::SQLite'               => 1.11,
     },
     recommends          => {
         'Data::UUID'                => 0,
