@@ -13,7 +13,7 @@ my %arguments = (
         'Class::C3'                 => 0.07,
         'Storable'                  => 0,
         'Class::Data::Accessor'     => 0.01,
-	'Carp::Clan'		    => 0,
+     	'Carp::Clan'		    => 0,
         'DBI'                       => 1.40,
     },
     build_requires      => {
@@ -22,6 +22,7 @@ my %arguments = (
     recommends          => {
         'Data::UUID'                => 0,
         'Module::Find'              => 0,
+        'Class::Inspector'          => 0,
     },
     create_makefile_pl => 'passthrough',
     create_readme      => 1,

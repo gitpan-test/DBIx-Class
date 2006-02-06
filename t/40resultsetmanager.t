@@ -5,9 +5,17 @@ use warnings;
 use Test::More;
 
 use lib qw(t/lib);
-use DBICTest::Extra;
 
-plan tests => 4;
+BEGIN {
+  eval { require Class::Inspector; require Module::Find };
+  if ($@ =~ m{Can.t locate Class/Inspector.pm}) {
+    plan skip_all => "ResultSetManager requires Class::Inspector and Module::Find";
+  } else {
+    plan tests => 4;
+  }
+}
+
+use DBICTest::Extra; # uses Class::Inspector
 
 my $schema = DBICTest::Extra->compose_connection('DB', 'foo');
 my $rs = $schema->resultset('Foo');
