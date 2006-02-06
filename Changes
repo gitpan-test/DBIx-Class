@@ -1,5 +1,18 @@
 Revision history for DBIx::Class
 
+0.05001
+        - debug output now prints NULL for undef params
+        - multi-step prefetch along the same rel (e.g. for trees) now works
+        - added multi-join (join => [ 'foo', 'foo' ]), aliases second to foo_2
+        - hack PK::Auto::Pg for "table" names referencing a schema
+        - find() with attributes works
+        - added experimental Serialize and ResultSetManager components
+        - added code attribute recording to DBIx::Class
+        - fix to find() for complex resultsets
+        - added of $storage->debugcb(sub { ... })
+        - added $source->resultset_attributes accessor
+        - added include_columns rs attr
+
 0.05000 2006-02-01 16:48:30
         - assorted doc fixes
         - remove ObjectCache, not yet working in 0.05

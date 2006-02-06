@@ -13,7 +13,18 @@ sub component_base_class { 'DBIx::Class' }
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
 
-$VERSION = '0.05000';
+$VERSION = '0.05001';
+
+sub MODIFY_CODE_ATTRIBUTES {
+    my ($class,$code,@attrs) = @_;
+    unless ($class->can('_attr_cache')) {
+        $class->mk_classdata('_attr_cache');
+        $class->_attr_cache({});
+    }
+    my $cache = $class->_attr_cache;
+    $class->_attr_cache->{$code} = [@attrs];
+    return ();
+}
 
 1;
 
@@ -83,23 +94,27 @@ manual below.
 
 =head1 SEE ALSO
 
-=head2 L<DBIx::Class::Core> - DBIC Core Classes
+=over 4
 
-=head2 L<DBIx::Class::Manual> - User's manual
+=item L<DBIx::Class::Core> - DBIC Core Classes
 
-=head2 L<DBIx::Class::CDBICompat> - L<Class::DBI> Compat layer
+=item L<DBIx::Class::Manual> - User's manual
 
-=head2 L<DBIx::Class::DB> - database-level methods
+=item L<DBIx::Class::CDBICompat> - L<Class::DBI> Compat layer
 
-=head2 L<DBIx::Class::Table> - table-level methods
+=item L<DBIx::Class::Schema>
 
-=head2 L<DBIx::Class::Row> - row-level methods
+=item L<DBIx::Class::ResultSet>
 
-=head2 L<DBIx::Class::PK> - primary key methods
+=item L<DBIx::Class::ResultSource>
 
-=head2 L<DBIx::Class::ResultSet> - search result-set methods
+=item L<DBIx::Class::Row> - row-level methods
 
-=head2 L<DBIx::Class::Relationship> - relationships between tables
+=item L<DBIx::Class::PK> - primary key methods
+
+=item L<DBIx::Class::Relationship> - relationships between tables
+
+=back
 
 =head1 AUTHOR
 

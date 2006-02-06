@@ -78,6 +78,10 @@ sub new {
     $attrs->{select} = [ map { m/\./ ? $_ : "${alias}.$_" } @cols ];
   }
   $attrs->{as} ||= [ map { m/^$alias\.(.*)$/ ? $1 : $_ } @{$attrs->{select}} ];
+  if (my $include = delete $attrs->{include_columns}) {
+    push(@{$attrs->{select}}, @$include);
+    push(@{$attrs->{as}}, map { m/([^\.]+)$/; $1; } @$include);
+  }
   #use Data::Dumper; warn Dumper(@{$attrs}{qw/select as/});
   $attrs->{from} ||= [ { $alias => $source->from } ];
   if (my $join = delete $attrs->{join}) {
@@ -106,11 +110,10 @@ sub new {
         push(@{$attrs->{from}}, $source->resolve_join($p, $attrs->{alias}))
             unless $seen{$p};
       }
-      my @cols = ();
-      push @cols, $source->resolve_prefetch($p, $attrs->{alias});
+      my @prefetch = $source->resolve_prefetch($p, $attrs->{alias});
       #die Dumper \@cols;
-      push(@{$attrs->{select}}, @cols);
-      push(@{$attrs->{as}}, @cols);
+      push(@{$attrs->{select}}, map { $_->[0] } @prefetch);
+      push(@{$attrs->{as}}, map { $_->[1] } @prefetch);
     }
   }
 
@@ -224,15 +227,19 @@ sub find {
 
   my $query;
   if (ref $vals[0] eq 'HASH') {
-    $query = $vals[0];
+    $query = { %{$vals[0]} };
   } elsif (@cols == @vals) {
     $query = {};
     @{$query}{@cols} = @vals;
   } else {
     $query = {@vals};
   }
+  foreach (keys %$query) {
+    next if m/\./;
+    $query->{$self->{attrs}{alias}.'.'.$_} = delete $query->{$_};
+  }
   #warn Dumper($query);
-  return $self->search($query)->next;
+  return $self->search($query,$attrs)->next;
 }
 
 =head2 search_related
@@ -716,6 +723,14 @@ Shortcut to request a particular set of columns to be retrieved.  Adds
 C<me.> onto the start of any column without a C<.> in it and sets C<select>
 from that, then auto-populates C<as> from C<select> as normal.
 
+=head2 include_columns (arrayref)
+
+Shortcut to include additional columns in the returned results - for example
+
+  { include_columns => ['foo.name'], join => ['foo'] }
+
+would add a 'name' column to the information passed to object inflation
+
 =head2 select (arrayref)
 
 Indicates which columns should be selected from the storage. You can use
@@ -801,7 +816,18 @@ For example:
     }
   );
 
-If you want to fetch columns from related tables as well, see C<prefetch>
+If the same join is supplied twice, it will be aliased to <rel>_2 (and
+similarly for a third time). For e.g.
+
+  my $rs = $schema->resultset('Artist')->search(
+    { 'cds.title'   => 'Foo',
+      'cds_2.title' => 'Bar' },
+    { join => [ qw/cds cds/ ] });
+
+will return a set of all artists that have both a cd with title Foo and a cd
+with title Bar.
+
+If you want to fetch related objects from other tables as well, see C<prefetch>
 below.
 
 =head2 prefetch arrayref/hashref
@@ -830,11 +856,14 @@ L<DBIx::Class> has no need to go back to the database when we access the
 C<cd> or C<artist> relationships, which saves us two SQL statements in this
 case.
 
-Any prefetched relationship will be joined automatically, so there is no need
-for a C<join> attribute in the above search.
+Simple prefetches will be joined automatically, so there is no need
+for a C<join> attribute in the above search. If you're prefetching to
+depth (e.g. { cd => { artist => 'label' } or similar), you'll need to
+specify the join as well.
 
 C<prefetch> can be used with the following relationship types: C<belongs_to>,
-C<has_one>.
+C<has_one> (or if you're using C<add_relationship>, any relationship declared
+with an accessor type of 'single' or 'filter').
 
 =head2 from (arrayref)
 

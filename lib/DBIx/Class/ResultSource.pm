@@ -12,7 +12,7 @@ use base qw/DBIx::Class/;
 __PACKAGE__->load_components(qw/AccessorGroup/);
 
 __PACKAGE__->mk_group_accessors('simple' =>
-  qw/_ordered_columns _columns _primaries _unique_constraints name resultset_class result_class schema from _relationships/);
+  qw/_ordered_columns _columns _primaries _unique_constraints name resultset_class resultset_attributes result_class schema from _relationships/);
 
 =head1 NAME 
 
@@ -34,12 +34,30 @@ sub new {
   $class = ref $class if ref $class;
   my $new = bless({ %{$attrs || {}} }, $class);
   $new->{resultset_class} ||= 'DBIx::Class::ResultSet';
+  $new->{resultset_attributes} = { %{$new->{resultset_attributes} || {}} };
   $new->{_ordered_columns} = [ @{$new->{_ordered_columns}||[]}];
   $new->{_columns} = { %{$new->{_columns}||{}} };
   $new->{_relationships} = { %{$new->{_relationships}||{}} };
   $new->{name} ||= "!!NAME NOT SET!!";
   return $new;
 }
+
+=head2 add_columns
+
+  $table->add_columns(qw/col1 col2 col3/);
+
+  $table->add_columns('col1' => \%col1_info, 'col2' => \%col2_info, ...);
+
+Adds columns to the result source. If supplied key => hashref pairs uses
+the hashref as the column_info for that column.
+
+=head2 add_column
+
+  $table->add_column('col' => \%info?);
+
+Convenience alias to add_columns
+
+=cut
 
 sub add_columns {
   my ($self, @cols) = @_;
@@ -62,28 +80,6 @@ sub add_columns {
 }
 
 *add_column = \&add_columns;
-
-=head2 add_columns
-
-  $table->add_columns(qw/col1 col2 col3/);
-
-  $table->add_columns('col1' => \%col1_info, 'col2' => \%col2_info, ...);
-
-Adds columns to the result source. If supplied key => hashref pairs uses
-the hashref as the column_info for that column.
-
-=head2 add_column
-
-  $table->add_column('col' => \%info?);
-
-Convenience alias to add_columns
-
-=cut
-
-sub resultset {
-  my $self = shift;
-  return $self->resultset_class->new($self);
-}
 
 =head2 has_column
 
@@ -356,26 +352,33 @@ Returns the join structure required for the related result source
 =cut
 
 sub resolve_join {
-  my ($self, $join, $alias) = @_;
+  my ($self, $join, $alias, $seen) = @_;
+  $seen ||= {};
   if (ref $join eq 'ARRAY') {
-    return map { $self->resolve_join($_, $alias) } @$join;
+    return map { $self->resolve_join($_, $alias, $seen) } @$join;
   } elsif (ref $join eq 'HASH') {
-    return map { $self->resolve_join($_, $alias),
-                 $self->related_source($_)->resolve_join($join->{$_}, $_) }
-           keys %$join;
+    return
+      map {
+        my $as = ($seen->{$_} ? $_.'_'.($seen->{$_}+1) : $_);
+        ($self->resolve_join($_, $alias, $seen),
+          $self->related_source($_)->resolve_join($join->{$_}, $as, $seen));
+      } keys %$join;
   } elsif (ref $join) {
     $self->throw_exception("No idea how to resolve join reftype ".ref $join);
   } else {
+    my $count = ++$seen->{$join};
+    #use Data::Dumper; warn Dumper($seen);
+    my $as = ($count > 1 ? "${join}_${count}" : $join);
     my $rel_info = $self->relationship_info($join);
     $self->throw_exception("No such relationship ${join}") unless $rel_info;
     my $type = $rel_info->{attrs}{join_type} || '';
-    return [ { $join => $self->related_source($join)->from,
+    return [ { $as => $self->related_source($join)->from,
                -join_type => $type },
-             $self->resolve_condition($rel_info->{cond}, $join, $alias) ];
+             $self->resolve_condition($rel_info->{cond}, $as, $alias) ];
   }
 }
 
-=head2 resolve_condition($cond, $rel, $alias|$object)
+=head2 resolve_condition($cond, $as, $alias|$object)
 
 Resolves the passed condition to a concrete query fragment. If given an alias,
 returns a join condition; if given an object, inverts that object to produce
@@ -384,7 +387,7 @@ a related conditional from that object.
 =cut
 
 sub resolve_condition {
-  my ($self, $cond, $rel, $for) = @_;
+  my ($self, $cond, $as, $for) = @_;
   #warn %$cond;
   if (ref $cond eq 'HASH') {
     my %ret;
@@ -397,12 +400,12 @@ sub resolve_condition {
         $ret{$k} = $for->get_column($v);
         #warn %ret;
       } else {
-        $ret{"${rel}.${k}"} = "${for}.${v}";
+        $ret{"${as}.${k}"} = "${for}.${v}";
       }
     }
     return \%ret;
   } elsif (ref $cond eq 'ARRAY') {
-    return [ map { $self->resolve_condition($_, $rel, $for) } @$cond ];
+    return [ map { $self->resolve_condition($_, $as, $for) } @$cond ];
   } else {
    die("Can't handle this yet :(");
   }
@@ -415,7 +418,7 @@ array of column names for each of those relationships. Column names are
 prefixed relative to the current source, in accordance with where they appear
 in the supplied relationships. Examples:
 
-  my $source = $schema->$resultset('Tag')->source;
+  my $source = $schema->resultset('Tag')->source;
   @columns = $source->resolve_prefetch( { cd => 'artist' } );
 
   # @columns =
@@ -452,20 +455,21 @@ in the supplied relationships. Examples:
 =cut
 
 sub resolve_prefetch {
-  my( $self, $pre, $alias ) = @_;
+  my ($self, $pre, $alias, $seen) = @_;
+  $seen ||= {};
   use Data::Dumper;
   #$alias ||= $self->name;
   #warn $alias, Dumper $pre;
   if( ref $pre eq 'ARRAY' ) {
-    return map { $self->resolve_prefetch( $_, $alias ) } @$pre;
+    return map { $self->resolve_prefetch( $_, $alias, $seen ) } @$pre;
   }
   elsif( ref $pre eq 'HASH' ) {
     my @ret =
     map {
-      $self->resolve_prefetch($_, $alias),
-      $self->related_source($_)->resolve_prefetch( $pre->{$_}, $_ )
-    }
-    keys %$pre;
+      $self->resolve_prefetch($_, $alias, $seen),
+      $self->related_source($_)->resolve_prefetch(
+                                   $pre->{$_}, "${alias}.$_", $seen)
+        } keys %$pre;
     #die Dumper \@ret;
     return @ret;
   }
@@ -473,12 +477,15 @@ sub resolve_prefetch {
     $self->throw_exception( "don't know how to resolve prefetch reftype " . ref $pre);
   }
   else {
+    my $count = ++$seen->{$pre};
+    my $as = ($count > 1 ? "${pre}_${count}" : $pre);
     my $rel_info = $self->relationship_info( $pre );
     $self->throw_exception( $self->name . " has no such relationship '$pre'" ) unless $rel_info;
-    my $prefix = $alias && $alias ne 'me' ? "$alias.$pre" : $pre;
-    my @ret = map { "$prefix.$_" } $self->related_source($pre)->columns;
+    my $as_prefix = ($alias =~ /^.*?\.(.*)$/ ? $1.'.' : '');
+    return map { [ "${as}.$_", "${as_prefix}${pre}.$_", ] }
+      $self->related_source($pre)->columns;
     #warn $alias, Dumper (\@ret);
-    return @ret;
+    #return @ret;
   }
 }
 
@@ -496,7 +503,28 @@ sub related_source {
   return $self->schema->source($self->relationship_info($rel)->{source});
 }
 
-1;
+=head2 resultset
+
+Returns a resultset for the given source created by calling
+
+$self->resultset_class->new($self, $self->resultset_attributes)
+
+=head2 resultset_class
+
+Simple accessor.
+
+=head2 resultset_attributes
+
+Simple accessor.
+
+=cut
+
+sub resultset {
+  my $self = shift;
+  return $self->resultset_class->new($self, $self->{resultset_attributes});
+}
+
+=cut
 
 =head2 throw_exception
 

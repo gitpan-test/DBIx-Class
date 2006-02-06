@@ -77,7 +77,6 @@ sub parse {
         foreach my $rel (@rels)
         {
             my $rel_info = $source->relationship_info($rel);
-            print "Accessor: $rel_info->{attrs}{accessor}\n";
             next if(!exists $rel_info->{attrs}{accessor} ||
                     $rel_info->{attrs}{accessor} eq 'multi');
             # Going by the accessor type isn't such a good idea (yes, I know
@@ -90,7 +89,7 @@ sub parse {
             # for testing is
             # $schema->storage->dbh->do($_) for split(";\n", $sql);
             #         -- mst (03:42 local time, please excuse any mistakes)
-            my $rel_table = $rel_info->{class}->table();
+            my $rel_table = $source->related_source($rel)->name;
             my $cond = (keys (%{$rel_info->{cond}}))[0];
             my ($refkey) = $cond =~ /^\w+\.(\w+)$/;
             if($rel_table && $refkey)

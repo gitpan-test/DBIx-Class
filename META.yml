@@ -1,6 +1,6 @@
 ---
 name: DBIx-Class
-version: 0.05000
+version: 0.05001
 author:
   - 'Matt S. Trout <mst@shadowcatsystems.co.uk>'
 abstract: Extensible and flexible object <-> relational mapper.
@@ -25,7 +25,7 @@ provides:
     file: lib/DBIx/Class/Storage/DBI.pm
   DBIx::Class:
     file: lib/DBIx/Class.pm
-    version: 0.05000
+    version: 0.05001
   DBIx::Class::AccessorGroup:
     file: lib/DBIx/Class/AccessorGroup.pm
   DBIx::Class::CDBICompat:
@@ -126,6 +126,8 @@ provides:
     file: lib/DBIx/Class/Relationship/ProxyMethods.pm
   DBIx::Class::ResultSet:
     file: lib/DBIx/Class/ResultSet.pm
+  DBIx::Class::ResultSetManager:
+    file: lib/DBIx/Class/ResultSetManager.pm
   DBIx::Class::ResultSetProxy:
     file: lib/DBIx/Class/ResultSetProxy.pm
   DBIx::Class::ResultSource:
@@ -140,10 +142,14 @@ provides:
     file: lib/DBIx/Class/Row.pm
   DBIx::Class::Schema:
     file: lib/DBIx/Class/Schema.pm
+  DBIx::Class::Serialize:
+    file: lib/DBIx/Class/Serialize.pm
   DBIx::Class::Storage::DBI:
     file: lib/DBIx/Class/Storage/DBI.pm
   DBIx::Class::Storage::DBI::Cursor:
     file: lib/DBIx/Class/Storage/DBI/Cursor.pm
+  DBIx::Class::Storage::DBI::DebugCallback:
+    file: lib/DBIx/Class/Storage/DBI.pm
   DBIx::Class::Test::SQLite:
     file: lib/DBIx/Class/Test/SQLite.pm
   DBIx::Class::UUIDColumns:

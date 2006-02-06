@@ -7,7 +7,7 @@ BEGIN {
     eval "use DBD::SQLite";
     plan $@
         ? ( skip_all => 'needs DBD::SQLite for testing' )
-        : ( tests => 31 );
+        : ( tests => 40 );
 }
 
 # test the abstract join => SQL generator
@@ -161,6 +161,26 @@ $trace->close;
 unlink 't/var/dbic.trace';
 is($selects, 1, 'nested prefetch ran exactly 1 select statement (excluding column_info)');
 
+# start test for prefetch on find SELECT count
+unlink 't/var/dbic.trace' if -e 't/var/dbic.trace';
+DBI->trace(1, 't/var/dbic.trace');
+
+my $cd = $schema->resultset('CD')->find(1, { prefetch => 'artist' });
+
+is($cd->{_inflated_column}{artist}->name, 'Caterwauler McCrae', 'artist prefetched correctly on find');
+
+# count the SELECTs
+DBI->trace(0, undef);
+$selects = 0;
+$trace = IO::File->new('t/var/dbic.trace', '<') 
+    or die "Unable to read trace file";
+while (<$trace>) {
+    $selects++ if /SELECT(?!.*WHERE 1=0.*)/;
+}
+$trace->close;
+unlink 't/var/dbic.trace';
+is($selects, 1, 'find with prefetch ran exactly 1 select statement (excluding column_info)');
+
 $rs = $schema->resultset('Tag')->search(
   {},
   {
@@ -205,6 +225,36 @@ $rs = $schema->resultset("CD")->search(
 cmp_ok( $rs->count, '==', 3, "count() ok after group_by on related column" );
 
 cmp_ok( scalar $rs->all, '==', 3, "all() returns same count as count() after group_by on related column" );
-}
+
+$rs = $schema->resultset("Artist")->search(
+        { 'cds.title' => 'Spoonful of bees',
+          'cds_2.title' => 'Forkful of bees' },
+        { join => [ 'cds', 'cds' ] });
+
+cmp_ok($rs->count, '==', 1, "single artist returned from multi-join");
+is($rs->next->name, 'Caterwauler McCrae', "Correct artist returned");
+
+my $queries;
+$schema->storage->debugcb(sub { $queries++ });
+$schema->storage->debug(1);
+
+my $tree_like =
+     $schema->resultset('TreeLike')->find(4,
+       { join     => { parent => { parent => 'parent' } },
+         prefetch => { parent => { parent => 'parent' } } });
+
+is($tree_like->name, 'quux', 'Bottom of tree ok');
+$tree_like = $tree_like->parent;
+is($tree_like->name, 'baz', 'First level up ok');
+$tree_like = $tree_like->parent;
+is($tree_like->name, 'bar', 'Second level up ok');
+$tree_like = $tree_like->parent;
+is($tree_like->name, 'foo', 'Third level up ok');
+
+$schema->storage->debug(0);
+
+cmp_ok($queries, '==', 1, 'Only one query run');
+
+} # end run_tests
 
 1;
