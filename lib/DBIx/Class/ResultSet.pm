@@ -84,6 +84,7 @@ sub new {
   }
   #use Data::Dumper; warn Dumper(@{$attrs}{qw/select as/});
   $attrs->{from} ||= [ { $alias => $source->from } ];
+  $attrs->{seen_join} ||= {};
   if (my $join = delete $attrs->{join}) {
     foreach my $j (ref $join eq 'ARRAY'
               ? (@{$join}) : ($join)) {
@@ -93,7 +94,7 @@ sub new {
         $seen{$j} = 1;
       }
     }
-    push(@{$attrs->{from}}, $source->resolve_join($join, $attrs->{alias}));
+    push(@{$attrs->{from}}, $source->resolve_join($join, $attrs->{alias}, $attrs->{seen_join}));
   }
   $attrs->{group_by} ||= $attrs->{select} if delete $attrs->{distinct};
 
@@ -258,10 +259,13 @@ sub search_related {
     "No such relationship ${rel} in search_related")
       unless $rel_obj;
   my $rs = $self->search(undef, { join => $rel });
+  my $alias = ($rs->{attrs}{seen_join}{$rel} > 1
+                ? join('_', $rel, $rs->{attrs}{seen_join}{$rel})
+                : $rel);
   return $self->result_source->schema->resultset($rel_obj->{class}
            )->search( undef,
              { %{$rs->{attrs}},
-               alias => $rel,
+               alias => $alias,
                select => undef(),
                as => undef() }
            )->search(@rest);
@@ -506,7 +510,28 @@ Deletes the contents of the resultset from its result source.
 
 sub delete {
   my ($self) = @_;
-  $self->result_source->storage->delete($self->result_source->from, $self->{cond});
+  my $del = {};
+  $self->throw_exception("Can't delete on resultset with condition unless hash or array")
+    unless (ref($self->{cond}) eq 'HASH' || ref($self->{cond}) eq 'ARRAY');
+  if (ref $self->{cond} eq 'ARRAY') {
+    $del = [ map { my %hash;
+      foreach my $key (keys %{$_}) {
+        $key =~ /([^\.]+)$/;
+        $hash{$1} = $_->{$key};
+      }; \%hash; } @{$self->{cond}} ];
+  } elsif ((keys %{$self->{cond}})[0] eq '-and') {
+    $del->{-and} = [ map { my %hash;
+      foreach my $key (keys %{$_}) {
+        $key =~ /([^\.]+)$/;
+        $hash{$1} = $_->{$key};
+      }; \%hash; } @{$self->{cond}{-and}} ];
+  } else {
+    foreach my $key (keys %{$self->{cond}}) {
+      $key =~ /([^\.]+)$/;
+      $del->{$1} = $self->{cond}{$key};
+    }
+  }
+  $self->result_source->storage->delete($self->result_source->from, $del);
   return 1;
 }
 
