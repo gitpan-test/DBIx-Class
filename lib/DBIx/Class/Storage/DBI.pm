@@ -130,7 +130,16 @@ sub _join_condition {
 sub _quote {
   my ($self, $label) = @_;
   return '' unless defined $label;
+  return $label unless $self->{quote_char};
   return $self->SUPER::_quote($label);
+}
+
+sub _RowNum {
+   my $self = shift;
+   my $c;
+   $_[0] =~ s/SELECT (.*?) FROM/
+     'SELECT '.join(', ', map { $_.' AS col'.++$c } split(', ', $1)).' FROM'/e;
+   $self->SUPER::_RowNum(@_);
 }
 
 # Accessor for setting limit dialect. This is useful
@@ -327,6 +336,7 @@ sub _execute {
       $self->debugfh->print("$sql: @debug_bind\n");
   }
   my $sth = $self->sth($sql,$op);
+  croak "no sth generated via sql: $sql" unless $sth;
   @bind = map { ref $_ ? ''.$_ : $_ } @bind; # stringify args
   my $rv;
   if ($sth) {  

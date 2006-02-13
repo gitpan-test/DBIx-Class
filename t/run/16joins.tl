@@ -2,13 +2,17 @@ sub run_tests {
 my $schema = shift;
 
 use IO::File;
+use version;
 
 BEGIN {
     eval "use DBD::SQLite";
     plan $@
         ? ( skip_all => 'needs DBD::SQLite for testing' )
-        : ( tests => 40 );
+        : ( tests => 41 );
 }
+
+my $is_broken_sqlite = version->new($schema->storage->dbh->get_info(18)) lt '3.2.6' &&
+                       $schema->storage->dbh->get_info(17) eq 'SQLite';
 
 # test the abstract join => SQL generator
 my $sa = new DBIC::SQL::Abstract;
@@ -132,6 +136,15 @@ $trace->close;
 unlink 't/var/dbic.trace';
 is($selects, 1, 'prefetch ran only 1 select statement');
 
+# test for partial prefetch via cols attr
+my $cd = $schema->resultset('CD')->find(1,
+    {
+      cols => [qw/title artist.name/], 
+      join => 'artist'
+    }
+);
+ok(eval { $cd->artist->name eq 'Caterwauler McCrae' }, 'single related column prefetched');
+
 # start test for nested prefetch SELECT count
 unlink 't/var/dbic.trace' if -e 't/var/dbic.trace';
 DBI->trace(1, 't/var/dbic.trace');
@@ -165,7 +178,7 @@ is($selects, 1, 'nested prefetch ran exactly 1 select statement (excluding colum
 unlink 't/var/dbic.trace' if -e 't/var/dbic.trace';
 DBI->trace(1, 't/var/dbic.trace');
 
-my $cd = $schema->resultset('CD')->find(1, { prefetch => 'artist' });
+$cd = $schema->resultset('CD')->find(1, { prefetch => 'artist' });
 
 is($cd->{_inflated_column}{artist}->name, 'Caterwauler McCrae', 'artist prefetched correctly on find');
 
@@ -213,7 +226,11 @@ $rs = $schema->resultset("CD")->search(
   { group_by => [qw/ title me.cdid /] }
 );
 
-cmp_ok( $rs->count, '==', 5, "count() ok after group_by on main pk" );
+SKIP: {
+    skip "SQLite < 3.2.6 doesn't understand COUNT(DISTINCT())", 1
+        if $is_broken_sqlite;
+    cmp_ok( $rs->count, '==', 5, "count() ok after group_by on main pk" );
+}
 
 cmp_ok( scalar $rs->all, '==', 5, "all() returns same count as count() after group_by on main pk" );
 
@@ -222,7 +239,11 @@ $rs = $schema->resultset("CD")->search(
   { join => [qw/ artist /], group_by => [qw/ artist.name /] }
 );
 
-cmp_ok( $rs->count, '==', 3, "count() ok after group_by on related column" );
+SKIP: {
+    skip "SQLite < 3.2.6 doesn't understand COUNT(DISTINCT())", 1
+        if $is_broken_sqlite;
+    cmp_ok( $rs->count, '==', 3, "count() ok after group_by on related column" );
+}
 
 cmp_ok( scalar $rs->all, '==', 3, "all() returns same count as count() after group_by on related column" );
 
@@ -231,7 +252,12 @@ $rs = $schema->resultset("Artist")->search(
           'cds_2.title' => 'Forkful of bees' },
         { join => [ 'cds', 'cds' ] });
 
-cmp_ok($rs->count, '==', 1, "single artist returned from multi-join");
+SKIP: {
+    skip "SQLite < 3.2.6 doesn't understand COUNT(DISTINCT())", 1
+        if $is_broken_sqlite;
+    cmp_ok($rs->count, '==', 1, "single artist returned from multi-join");
+}
+
 is($rs->next->name, 'Caterwauler McCrae', "Correct artist returned");
 
 my $queries;
