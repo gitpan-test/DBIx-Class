@@ -1,11 +1,18 @@
 Revision history for DBIx::Class
 
+0.05006 2006-02-17 15:32:40
+        - storage fix for fork() and workaround for Apache::DBI
+        - made update(\%hash) work on row as well as rs
+        - another fix for count with scalar group_by
+        - remove dependency on Module::Find in 40resultsetmanager.t (RT #17598)
+
 0.05005 2006-02-13 21:24:51
         - remove build dependency on version.pm
 
 0.05004 2006-02-13 20:59:00
         - allow specification of related columns via cols attr when primary 
-        - fix count for group_by as scalar keys of the related table are not fetched
+          keys of the related table are not fetched
+        - fix count for group_by as scalar
         - add horrific fix to make Oracle's retarded limit syntax work
         - remove Carp require
 
