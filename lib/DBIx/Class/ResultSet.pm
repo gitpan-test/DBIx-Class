@@ -11,7 +11,7 @@ use Storable;
 
 use base qw/DBIx::Class/;
 __PACKAGE__->load_components(qw/AccessorGroup/);
-__PACKAGE__->mk_group_accessors('simple' => 'result_source');
+__PACKAGE__->mk_group_accessors('simple' => qw/result_source result_class/);
 
 =head1 NAME
 
@@ -55,7 +55,7 @@ In the examples below, the following table classes are used:
 =head3 Arguments: ($source, \%$attrs)
 
 The resultset constructor. Takes a source object (usually a
-L<DBIx::Class::ResultSourceProxy::Table>) and an attribute hash (see L</ATRRIBUTES>
+L<DBIx::Class::ResultSourceProxy::Table>) and an attribute hash (see L</ATTRIBUTES>
 below).  Does not perform any queries -- these are executed as needed by the
 other methods.
 
@@ -69,29 +69,29 @@ automatically get one from e.g. a L</search> called in scalar context:
 sub new {
   my $class = shift;
   return $class->new_result(@_) if ref $class;
+  
   my ($source, $attrs) = @_;
   #use Data::Dumper; warn Dumper($attrs);
   $attrs = Storable::dclone($attrs || {}); # { %{ $attrs || {} } };
-  my %seen;
   my $alias = ($attrs->{alias} ||= 'me');
-  if ($attrs->{cols} || !$attrs->{select}) {
-    delete $attrs->{as} if $attrs->{cols};
-    my @cols = ($attrs->{cols}
-                 ? @{delete $attrs->{cols}}
-                 : $source->columns);
-    $attrs->{select} = [ map { m/\./ ? $_ : "${alias}.$_" } @cols ];
-  }
-  $attrs->{as} ||= [ map { m/^$alias\.(.*)$/ ? $1 : $_ } @{$attrs->{select}} ];
+  
+  $attrs->{columns} ||= delete $attrs->{cols} if $attrs->{cols};
+  delete $attrs->{as} if $attrs->{columns};
+  $attrs->{columns} ||= [ $source->columns ] unless $attrs->{select};
+  $attrs->{select} = [ map { m/\./ ? $_ : "${alias}.$_" } @{delete $attrs->{columns}} ]
+    if $attrs->{columns};
+  $attrs->{as} ||= [ map { m/^\Q$alias.\E(.+)$/ ? $1 : $_ } @{$attrs->{select}} ];
   if (my $include = delete $attrs->{include_columns}) {
     push(@{$attrs->{select}}, @$include);
-    push(@{$attrs->{as}}, map { m/([^\.]+)$/; $1; } @$include);
+    push(@{$attrs->{as}}, map { m/([^.]+)$/; $1; } @$include);
   }
   #use Data::Dumper; warn Dumper(@{$attrs}{qw/select as/});
+
   $attrs->{from} ||= [ { $alias => $source->from } ];
   $attrs->{seen_join} ||= {};
+  my %seen;
   if (my $join = delete $attrs->{join}) {
-    foreach my $j (ref $join eq 'ARRAY'
-              ? (@{$join}) : ($join)) {
+    foreach my $j (ref $join eq 'ARRAY' ? @$join : ($join)) {
       if (ref $j eq 'HASH') {
         $seen{$_} = 1 foreach keys %$j;
       } else {
@@ -100,43 +100,51 @@ sub new {
     }
     push(@{$attrs->{from}}, $source->resolve_join($join, $attrs->{alias}, $attrs->{seen_join}));
   }
+  
   $attrs->{group_by} ||= $attrs->{select} if delete $attrs->{distinct};
+  $attrs->{order_by} = [ $attrs->{order_by} ] if $attrs->{order_by} and !ref($attrs->{order_by});
+  $attrs->{order_by} ||= [];
 
+  my $collapse = $attrs->{collapse} || {};
   if (my $prefetch = delete $attrs->{prefetch}) {
-    foreach my $p (ref $prefetch eq 'ARRAY'
-              ? (@{$prefetch}) : ($prefetch)) {
-      if( ref $p eq 'HASH' ) {
+    my @pre_order;
+    foreach my $p (ref $prefetch eq 'ARRAY' ? @$prefetch : ($prefetch)) {
+      if ( ref $p eq 'HASH' ) {
         foreach my $key (keys %$p) {
           push(@{$attrs->{from}}, $source->resolve_join($p, $attrs->{alias}))
             unless $seen{$key};
         }
-      }
-      else {
+      } else {
         push(@{$attrs->{from}}, $source->resolve_join($p, $attrs->{alias}))
             unless $seen{$p};
       }
-      my @prefetch = $source->resolve_prefetch($p, $attrs->{alias});
-      #die Dumper \@cols;
+      my @prefetch = $source->resolve_prefetch(
+           $p, $attrs->{alias}, {}, \@pre_order, $collapse);
       push(@{$attrs->{select}}, map { $_->[0] } @prefetch);
       push(@{$attrs->{as}}, map { $_->[1] } @prefetch);
     }
+    push(@{$attrs->{order_by}}, @pre_order);
   }
+  $attrs->{collapse} = $collapse;
+#  use Data::Dumper; warn Dumper($collapse) if keys %{$collapse};
 
   if ($attrs->{page}) {
     $attrs->{rows} ||= 10;
     $attrs->{offset} ||= 0;
     $attrs->{offset} += ($attrs->{rows} * ($attrs->{page} - 1));
   }
-  my $new = {
+
+  bless {
     result_source => $source,
+    result_class => $attrs->{result_class} || $source->result_class,
     cond => $attrs->{where},
     from => $attrs->{from},
+    collapse => $collapse,
     count => undef,
     page => delete $attrs->{page},
     pager => undef,
-    attrs => $attrs };
-  bless ($new, $class);
-  return $new;
+    attrs => $attrs
+  }, $class;
 }
 
 =head2 search
@@ -145,35 +153,53 @@ sub new {
   my $new_rs = $rs->search({ foo => 3 });
 
 If you need to pass in additional attributes but no additional condition,
-call it as C<search({}, \%attrs);>.
+call it as C<search(undef, \%attrs);>.
 
   # "SELECT foo, bar FROM $class_table"
-  my @all = $class->search({}, { cols => [qw/foo bar/] });
+  my @all = $class->search(undef, { columns => [qw/foo bar/] });
 
 =cut
 
 sub search {
   my $self = shift;
 
-  #use Data::Dumper;warn Dumper(@_);
+  my $rs;
+  if( @_ ) {
+    
+    my $attrs = { %{$self->{attrs}} };
+    my $having = delete $attrs->{having};
+    $attrs = { %$attrs, %{ pop(@_) } } if @_ > 1 and ref $_[$#_] eq 'HASH';
 
-  my $attrs = { %{$self->{attrs}} };
-  if (@_ > 1 && ref $_[$#_] eq 'HASH') {
-    $attrs = { %$attrs, %{ pop(@_) } };
-  }
-
-  my $where = (@_ ? ((@_ == 1 || ref $_[0] eq "HASH") ? shift : {@_}) : undef());
-  if (defined $where) {
-    $where = (defined $attrs->{where}
+    my $where = (@_
+                  ? ((@_ == 1 || ref $_[0] eq "HASH")
+                      ? shift
+                      : ((@_ % 2)
+                          ? $self->throw_exception(
+                              "Odd number of arguments to search")
+                          : {@_}))
+                  : undef());
+    if (defined $where) {
+      $attrs->{where} = (defined $attrs->{where}
                 ? { '-and' =>
                     [ map { ref $_ eq 'ARRAY' ? [ -or => $_ ] : $_ }
                         $where, $attrs->{where} ] }
                 : $where);
-    $attrs->{where} = $where;
+    }
+
+    if (defined $having) {
+      $attrs->{having} = (defined $attrs->{having}
+                ? { '-and' =>
+                    [ map { ref $_ eq 'ARRAY' ? [ -or => $_ ] : $_ }
+                        $having, $attrs->{having} ] }
+                : $having);
+    }
+
+    $rs = (ref $self)->new($self->result_source, $attrs);
   }
-
-  my $rs = (ref $self)->new($self->result_source, $attrs);
-
+  else {
+    $rs = $self;
+    $rs->reset;
+  }
   return (wantarray ? $rs->all : $rs);
 }
 
@@ -186,7 +212,7 @@ Pass a literal chunk of SQL to be added to the conditional part of the
 resultset.
 
 =cut
-                                                         
+
 sub search_literal {
   my ($self, $cond, @vals) = @_;
   my $attrs = (ref $vals[$#vals] eq 'HASH' ? { %{ pop(@vals) } } : {});
@@ -205,7 +231,7 @@ Finds a row based on its primary key or unique constraint. For example:
 Also takes an optional C<key> attribute, to search by a specific key or unique
 constraint. For example:
 
-  my $cd = $schema->resultset('CD')->find_or_create(
+  my $cd = $schema->resultset('CD')->find(
     {
       artist => 'Massive Attack',
       title  => 'Mezzanine',
@@ -224,7 +250,7 @@ sub find {
   my @cols = $self->result_source->primary_columns;
   if (exists $attrs->{key}) {
     my %uniq = $self->result_source->unique_constraints;
-    $self->( "Unknown key " . $attrs->{key} . " on " . $self->name )
+    $self->throw_exception( "Unknown key $attrs->{key} on $self->name" )
       unless exists $uniq{$attrs->{key}};
     @cols = @{ $uniq{$attrs->{key}} };
   }
@@ -241,12 +267,17 @@ sub find {
   } else {
     $query = {@vals};
   }
-  foreach (keys %$query) {
-    next if m/\./;
-    $query->{$self->{attrs}{alias}.'.'.$_} = delete $query->{$_};
+  foreach my $key (grep { ! m/\./ } keys %$query) {
+    $query->{"$self->{attrs}{alias}.$key"} = delete $query->{$key};
   }
   #warn Dumper($query);
-  return $self->search($query,$attrs)->next;
+  
+  if (keys %$attrs) {
+      my $rs = $self->search($query,$attrs);
+      return keys %{$rs->{collapse}} ? $rs->next : $rs->single;
+  } else {
+      return keys %{$self->{collapse}} ? $self->search($query)->next : $self->single($query);
+  }
 }
 
 =head2 search_related
@@ -259,22 +290,7 @@ records.
 =cut
 
 sub search_related {
-  my ($self, $rel, @rest) = @_;
-  my $rel_obj = $self->result_source->relationship_info($rel);
-  $self->throw_exception(
-    "No such relationship ${rel} in search_related")
-      unless $rel_obj;
-  my $rs = $self->search(undef, { join => $rel });
-  my $alias = ($rs->{attrs}{seen_join}{$rel} > 1
-                ? join('_', $rel, $rs->{attrs}{seen_join}{$rel})
-                : $rel);
-  return $self->result_source->schema->resultset($rel_obj->{class}
-           )->search( undef,
-             { %{$rs->{attrs}},
-               alias => $alias,
-               select => undef(),
-               as => undef() }
-           )->search(@rest);
+  return shift->related_resultset(shift)->search(@_);
 }
 
 =head2 cursor
@@ -285,12 +301,38 @@ Returns a storage-driven cursor to the given resultset.
 
 sub cursor {
   my ($self) = @_;
-  my ($attrs) = $self->{attrs};
-  $attrs = { %$attrs };
+  my $attrs = { %{$self->{attrs}} };
   return $self->{cursor}
     ||= $self->result_source->storage->select($self->{from}, $attrs->{select},
           $attrs->{where},$attrs);
 }
+
+=head2 single
+
+Inflates the first result without creating a cursor
+
+=cut
+
+sub single {
+  my ($self, $where) = @_;
+  my $attrs = { %{$self->{attrs}} };
+  if ($where) {
+    if (defined $attrs->{where}) {
+      $attrs->{where} = {
+        '-and' => 
+            [ map { ref $_ eq 'ARRAY' ? [ -or => $_ ] : $_ }
+               $where, delete $attrs->{where} ]
+      };
+    } else {
+      $attrs->{where} = $where;
+    }
+  }
+  my @data = $self->result_source->storage->select_single(
+          $self->{from}, $attrs->{select},
+          $attrs->{where},$attrs);
+  return (@data ? $self->_construct_object(@data) : ());
+}
+
 
 =head2 search_like
 
@@ -303,12 +345,9 @@ For more information, see L<DBIx::Class::Manual::Cookbook>.
 =cut
 
 sub search_like {
-  my $class    = shift;
-  my $attrs = { };
-  if (@_ > 1 && ref $_[$#_] eq 'HASH') {
-    $attrs = pop(@_);
-  }
-  my $query    = ref $_[0] eq "HASH" ? { %{shift()} }: {@_};
+  my $class = shift;
+  my $attrs = (@_ > 1 && ref $_[$#_] eq 'HASH' ? pop(@_) : {});
+  my $query = ref $_[0] eq 'HASH' ? { %{shift()} }: {@_};
   $query->{$_} = { 'like' => $query->{$_} } for keys %$query;
   return $class->search($query, { %$attrs });
 }
@@ -337,7 +376,7 @@ Returns the next element in the resultset (C<undef> is there is none).
 
 Can be used to efficiently iterate over records in the resultset:
 
-  my $rs = $schema->resultset('CD')->search({});
+  my $rs = $schema->resultset('CD')->search;
   while (my $cd = $rs->next) {
     print $cd->title;
   }
@@ -346,7 +385,17 @@ Can be used to efficiently iterate over records in the resultset:
 
 sub next {
   my ($self) = @_;
-  my @row = $self->cursor->next;
+  if (@{$self->{all_cache} || []}) {
+    $self->{all_cache_position} ||= 0;
+    return $self->{all_cache}->[$self->{all_cache_position}++];
+  }
+  if ($self->{attrs}{cache}) {
+    $self->{all_cache_position} = 1;
+    return ($self->all)[0];
+  }
+  my @row = (exists $self->{stashed_row}
+               ? @{delete $self->{stashed_row}}
+               : $self->cursor->next);
 #  warn Dumper(\@row); use Data::Dumper;
   return unless (@row);
   return $self->_construct_object(@row);
@@ -355,23 +404,79 @@ sub next {
 sub _construct_object {
   my ($self, @row) = @_;
   my @as = @{ $self->{attrs}{as} };
-  #warn "@cols -> @row";
-  my $info = [ {}, {} ];
-  foreach my $as (@as) {
-    my $target = $info;
-    my @parts = split(/\./, $as);
-    my $col = pop(@parts);
-    foreach my $p (@parts) {
-      $target = $target->[1]->{$p} ||= [];
-    }
-    $target->[0]->{$col} = shift @row;
-  }
-  #use Data::Dumper; warn Dumper(\@as, $info);
-  my $new = $self->result_source->result_class->inflate_result(
-              $self->result_source, @$info);
+  
+  my $info = $self->_collapse_result(\@as, \@row);
+  
+  my $new = $self->result_class->inflate_result($self->result_source, @$info);
+  
   $new = $self->{attrs}{record_filter}->($new)
     if exists $self->{attrs}{record_filter};
   return $new;
+}
+
+sub _collapse_result {
+  my ($self, $as, $row, $prefix) = @_;
+
+  my %const;
+
+  my @copy = @$row;
+  foreach my $this_as (@$as) {
+    my $val = shift @copy;
+    if (defined $prefix) {
+      if ($this_as =~ m/^\Q${prefix}.\E(.+)$/) {
+        my $remain = $1;
+        $remain =~ /^(?:(.*)\.)?([^.]+)$/;
+        $const{$1||''}{$2} = $val;
+      }
+    } else {
+      $this_as =~ /^(?:(.*)\.)?([^.]+)$/;
+      $const{$1||''}{$2} = $val;
+    }
+  }
+
+  my $info = [ {}, {} ];
+  foreach my $key (keys %const) {
+    if (length $key) {
+      my $target = $info;
+      my @parts = split(/\./, $key);
+      foreach my $p (@parts) {
+        $target = $target->[1]->{$p} ||= [];
+      }
+      $target->[0] = $const{$key};
+    } else {
+      $info->[0] = $const{$key};
+    }
+  }
+
+  my @collapse = (defined($prefix)
+                   ? (map { (m/^\Q${prefix}.\E(.+)$/ ? ($1) : ()); }
+                       keys %{$self->{collapse}})
+                   : keys %{$self->{collapse}});
+  if (@collapse) {
+    my ($c) = sort { length $a <=> length $b } @collapse;
+    my $target = $info;
+    foreach my $p (split(/\./, $c)) {
+      $target = $target->[1]->{$p} ||= [];
+    }
+    my $c_prefix = (defined($prefix) ? "${prefix}.${c}" : $c);
+    my @co_key = @{$self->{collapse}{$c_prefix}};
+    my %co_check = map { ($_, $target->[0]->{$_}); } @co_key;
+    my $tree = $self->_collapse_result($as, $row, $c_prefix);
+    my (@final, @raw);
+    while ( !(grep {
+                !defined($tree->[0]->{$_})
+                || $co_check{$_} ne $tree->[0]->{$_}
+              } @co_key) ) {
+      push(@final, $tree);
+      last unless (@raw = $self->cursor->next);
+      $row = $self->{stashed_row} = \@raw;
+      $tree = $self->_collapse_result($as, $row, $c_prefix);
+      #warn Data::Dumper::Dumper($tree, $row);
+    }
+    @$target = @final;
+  }
+
+  return $info;
 }
 
 =head2 result_source
@@ -397,44 +502,41 @@ clause.
 
 sub count {
   my $self = shift;
-  return $self->search(@_)->count if @_ && defined $_[0];
+  return $self->search(@_)->count if @_ and defined $_[0];
   unless (defined $self->{count}) {
-    my $group_by;
-    my $select = { 'count' => '*' };
-    if( $group_by = delete $self->{attrs}{group_by} ) {
+    return scalar @{ $self->get_cache } if @{ $self->get_cache };
+    my $select = { count => '*' };
+    my $attrs = { %{ $self->{attrs} } };
+    if (my $group_by = delete $attrs->{group_by}) {
+      delete $attrs->{having};
       my @distinct = (ref $group_by ?  @$group_by : ($group_by));
       # todo: try CONCAT for multi-column pk
       my @pk = $self->result_source->primary_columns;
-      if( scalar(@pk) == 1 ) {
-        my $pk = shift(@pk);
-        my $alias = $self->{attrs}{alias};
-        my $re = qr/^($alias\.)?$pk$/;
-        foreach my $column ( @distinct) {
-          if( $column =~ $re ) {
-            @distinct = ( $column );
+      if (@pk == 1) {
+        foreach my $column (@distinct) {
+          if ($column =~ qr/^(?:\Q$attrs->{alias}.\E)?$pk[0]$/) {
+            @distinct = ($column);
             last;
           }
         } 
       }
 
-      $select = { count => { 'distinct' => \@distinct } };
+      $select = { count => { distinct => \@distinct } };
       #use Data::Dumper; die Dumper $select;
     }
 
-    my $attrs = { %{ $self->{attrs} },
-                  select => $select,
-                  as => [ 'count' ] };
+    $attrs->{select} = $select;
+    $attrs->{as} = [qw/count/];
     # offset, order by and page are not needed to count. record_filter is cdbi
     delete $attrs->{$_} for qw/rows offset order_by page pager record_filter/;
         
     ($self->{count}) = (ref $self)->new($self->result_source, $attrs)->cursor->next;
-    $self->{attrs}{group_by} = $group_by;
   }
   return 0 unless $self->{count};
   my $count = $self->{count};
   $count -= $self->{attrs}{offset} if $self->{attrs}{offset};
   $count = $self->{attrs}{rows} if
-    ($self->{attrs}{rows} && $self->{attrs}{rows} < $count);
+    $self->{attrs}{rows} and $self->{attrs}{rows} < $count;
   return $count;
 }
 
@@ -455,8 +557,26 @@ is returned in list context.
 
 sub all {
   my ($self) = @_;
-  return map { $self->_construct_object(@$_); }
-           $self->cursor->all;
+  return @{ $self->get_cache } if @{ $self->get_cache };
+
+  my @obj;
+
+  if (keys %{$self->{collapse}}) {
+      # Using $self->cursor->all is really just an optimisation.
+      # If we're collapsing has_many prefetches it probably makes
+      # very little difference, and this is cleaner than hacking
+      # _construct_object to survive the approach
+    my @row;
+    $self->cursor->reset;
+    while (@row = $self->cursor->next) {
+      push(@obj, $self->_construct_object(@row));
+    }
+  } else {
+    @obj = map { $self->_construct_object(@$_) } $self->cursor->all;
+  }
+
+  $self->set_cache(\@obj) if $self->{attrs}{cache};
+  return @obj;
 }
 
 =head2 reset
@@ -467,6 +587,7 @@ Resets the resultset's cursor, so you can iterate through the elements again.
 
 sub reset {
   my ($self) = @_;
+  $self->{all_cache_position} = 0;
   $self->cursor->reset;
   return $self;
 }
@@ -528,18 +649,18 @@ sub delete {
   if (ref $self->{cond} eq 'ARRAY') {
     $del = [ map { my %hash;
       foreach my $key (keys %{$_}) {
-        $key =~ /([^\.]+)$/;
+        $key =~ /([^.]+)$/;
         $hash{$1} = $_->{$key};
       }; \%hash; } @{$self->{cond}} ];
   } elsif ((keys %{$self->{cond}})[0] eq '-and') {
     $del->{-and} = [ map { my %hash;
       foreach my $key (keys %{$_}) {
-        $key =~ /([^\.]+)$/;
+        $key =~ /([^.]+)$/;
         $hash{$1} = $_->{$key};
       }; \%hash; } @{$self->{cond}{-and}} ];
   } else {
     foreach my $key (keys %{$self->{cond}}) {
-      $key =~ /([^\.]+)$/;
+      $key =~ /([^.]+)$/;
       $del->{$1} = $self->{cond}{$key};
     }
   }
@@ -609,11 +730,11 @@ sub new_result {
   my %new = %$values;
   my $alias = $self->{attrs}{alias};
   foreach my $key (keys %{$self->{cond}||{}}) {
-    $new{$1} = $self->{cond}{$key} if ($key =~ m/^(?:$alias\.)?([^\.]+)$/);
+    $new{$1} = $self->{cond}{$key} if ($key =~ m/^(?:\Q${alias}.\E)?([^.]+)$/);
   }
-  my $obj = $self->result_source->result_class->new(\%new);
+  my $obj = $self->result_class->new(\%new);
   $obj->result_source($self->result_source) if $obj->can('result_source');
-  $obj;
+  return $obj;
 }
 
 =head2 create
@@ -638,8 +759,8 @@ sub create {
 
   $class->find_or_create({ key => $val, ... });
 
-Searches for a record matching the search condition; if it doesn't find one,    
-creates one and returns that instead.                                       
+Searches for a record matching the search condition; if it doesn't find one,
+creates one and returns that instead.
 
   my $cd = $schema->resultset('CD')->find_or_create({
     cdid   => 5,
@@ -666,9 +787,9 @@ See also L</find> and L</update_or_create>.
 sub find_or_create {
   my $self     = shift;
   my $attrs    = (@_ > 1 && ref $_[$#_] eq 'HASH' ? pop(@_) : {});
-  my $hash     = ref $_[0] eq "HASH" ? shift : {@_};
+  my $hash     = ref $_[0] eq 'HASH' ? shift : {@_};
   my $exists   = $self->find($hash, $attrs);
-  return defined($exists) ? $exists : $self->create($hash);
+  return defined $exists ? $exists : $self->create($hash);
 }
 
 =head2 update_or_create
@@ -704,9 +825,8 @@ See also L</find> and L</find_or_create>.
 
 sub update_or_create {
   my $self = shift;
-
   my $attrs = (@_ > 1 && ref $_[$#_] eq 'HASH' ? pop(@_) : {});
-  my $hash  = ref $_[0] eq "HASH" ? shift : {@_};
+  my $hash = ref $_[0] eq 'HASH' ? shift : {@_};
 
   my %unique_constraints = $self->result_source->unique_constraints;
   my @constraint_names   = (exists $attrs->{key}
@@ -725,20 +845,89 @@ sub update_or_create {
       if (scalar keys %unique_hash == scalar @unique_cols);
   }
 
-  my $row;
   if (@unique_hashes) {
-    $row = $self->search(\@unique_hashes, { rows => 1 })->first;
-    if ($row) {
+    my $row = $self->single(\@unique_hashes);
+    if (defined $row) {
       $row->set_columns($hash);
       $row->update;
+      return $row;
     }
   }
 
-  unless ($row) {
-    $row = $self->create($hash);
-  }
+  return $self->create($hash);
+}
 
-  return $row;
+=head2 get_cache
+
+Gets the contents of the cache for the resultset.
+
+=cut
+
+sub get_cache {
+  shift->{all_cache} || [];
+}
+
+=head2 set_cache
+
+Sets the contents of the cache for the resultset. Expects an arrayref of objects of the same class as those produced by the resultset.
+
+=cut
+
+sub set_cache {
+  my ( $self, $data ) = @_;
+  $self->throw_exception("set_cache requires an arrayref")
+    if ref $data ne 'ARRAY';
+  my $result_class = $self->result_class;
+  foreach( @$data ) {
+    $self->throw_exception("cannot cache object of type '$_', expected '$result_class'")
+      if ref $_ ne $result_class;
+  }
+  $self->{all_cache} = $data;
+}
+
+=head2 clear_cache
+
+Clears the cache for the resultset.
+
+=cut
+
+sub clear_cache {
+  shift->set_cache([]);
+}
+
+=head2 related_resultset
+
+Returns a related resultset for the supplied relationship name.
+
+  $rs = $rs->related_resultset('foo');
+
+=cut
+
+sub related_resultset {
+  my ( $self, $rel, @rest ) = @_;
+  $self->{related_resultsets} ||= {};
+  return $self->{related_resultsets}{$rel} ||= do {
+      #warn "fetching related resultset for rel '$rel'";
+      my $rel_obj = $self->result_source->relationship_info($rel);
+      $self->throw_exception(
+        "search_related: result source '" . $self->result_source->name .
+        "' has no such relationship ${rel}")
+        unless $rel_obj; #die Dumper $self->{attrs};
+
+      my $rs = $self->search(undef, { join => $rel });
+      my $alias = defined $rs->{attrs}{seen_join}{$rel}
+                    && $rs->{attrs}{seen_join}{$rel} > 1
+                  ? join('_', $rel, $rs->{attrs}{seen_join}{$rel})
+                  : $rel;
+
+      $self->result_source->schema->resultset($rel_obj->{class}
+           )->search( undef,
+             { %{$rs->{attrs}},
+               alias => $alias,
+               select => undef,
+               as => undef }
+           )->search(@rest);      
+  };
 }
 
 =head2 throw_exception
@@ -762,13 +951,14 @@ overview of them:
 Which column(s) to order the results by. This is currently passed through
 directly to SQL, so you can give e.g. C<foo DESC> for a descending order.
 
-=head2 cols
+=head2 columns
 
 =head3 Arguments: (arrayref)
 
 Shortcut to request a particular set of columns to be retrieved.  Adds
 C<me.> onto the start of any column without a C<.> in it and sets C<select>
-from that, then auto-populates C<as> from C<select> as normal.
+from that, then auto-populates C<as> from C<select> as normal. (You may also
+use the C<cols> attribute, as in earlier versions of DBIC.)
 
 =head2 include_columns
 
@@ -789,7 +979,7 @@ column names, or in the case of RDBMS back ends, function or stored procedure
 names:
 
   $rs = $schema->resultset('Foo')->search(
-    {},
+    undef,
     {
       select => [
         'column_name',
@@ -812,7 +1002,7 @@ C<select>, usually when C<select> contains one or more function or stored
 procedure names:
 
   $rs = $schema->resultset('Foo')->search(
-    {},
+    undef,
     {
       select => [
         'column1',
@@ -893,7 +1083,7 @@ query (when they are accessed afterwards they will have already been
 objects, because it saves at least one query:
 
   my $rs = $schema->resultset('Tag')->search(
-    {},
+    undef,
     {
       prefetch => {
         cd => 'artist'
@@ -960,7 +1150,7 @@ C<from> can be used to nest joins. Here we return all children with a father,
 then search against all mothers of those children:
 
   $rs = $schema->resultset('Person')->search(
-      {},
+      undef,
       {
           alias => 'mother', # alias columns in accordance with "from"
           from => [
@@ -974,7 +1164,7 @@ then search against all mothers of those children:
                       ]
                   ],
                   { 'mother.person_id' => 'child.mother_id' }
-              ],                
+              ],
           ]
       },
   );
@@ -992,7 +1182,7 @@ The type of any join can be controlled manually. To search against only people
 with a father in the person table, we could explicitly use C<INNER JOIN>:
 
     $rs = $schema->resultset('Person')->search(
-        {},
+        undef,
         {
             alias => 'child', # alias columns in accordance with "from"
             from => [

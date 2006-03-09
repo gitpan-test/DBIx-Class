@@ -12,7 +12,7 @@ When you expect a large number of results, you can ask L<DBIx::Class> for a
 paged resultset, which will fetch only a small number of records at a time:
 
   my $rs = $schema->resultset('Artist')->search(
-    {},
+    undef,
     {
       page => 1,  # page to return (defaults to 1)
       rows => 10, # number of results per page
@@ -24,7 +24,7 @@ paged resultset, which will fetch only a small number of records at a time:
 The C<page> attribute does not have to be specified in your search:
 
   my $rs = $schema->resultset('Artist')->search(
-    {},
+    undef,
     {
       rows => 10,
     }
@@ -76,9 +76,9 @@ When you only want selected columns from a table, you can use C<cols> to
 specify which ones you need:
 
   my $rs = $schema->resultset('Artist')->search(
-    {},
+    undef,
     {
-      cols => [qw/ name /]
+      columns => [qw/ name /]
     }
   );
 
@@ -94,7 +94,7 @@ stored procedure name). You then use C<as> to set the column name you will use
 to access the returned value:
 
   my $rs = $schema->resultset('Artist')->search(
-    {},
+    undef,
     {
       select => [ 'name', { LENGTH => 'name' } ],
       as     => [qw/ name name_length /],
@@ -129,7 +129,7 @@ any of your aliases using either of these:
 =head3 SELECT DISTINCT with multiple columns
 
   my $rs = $schema->resultset('Foo')->search(
-    {},
+    undef,
     {
       select => [
         { distinct => [ $source->columns ] }
@@ -141,7 +141,7 @@ any of your aliases using either of these:
 =head3 SELECT COUNT(DISTINCT colname)
 
   my $rs = $schema->resultset('Foo')->search(
-    {},
+    undef,
     {
       select => [
         { count => { distinct => 'colname' } }
@@ -155,7 +155,7 @@ any of your aliases using either of these:
 L<DBIx::Class> supports C<GROUP BY> as follows:
 
   my $rs = $schema->resultset('Artist')->search(
-    {},
+    undef,
     {
       join     => [qw/ cds /],
       select   => [ 'name', { count => 'cds.cdid' } ],
@@ -330,7 +330,7 @@ From 0.04999_05 onwards, C<prefetch> can be nested more than one relationship
 deep using the same syntax as a multi-step join:
 
   my $rs = $schema->resultset('Tag')->search(
-    {},
+    undef,
     {
       prefetch => {
         cd => 'artist'
@@ -352,29 +352,42 @@ SQL statements:
 =head2 Transactions
 
 As of version 0.04001, there is improved transaction support in
-L<DBIx::Class::Storage::DBI>.  Here is an example of the recommended
-way to use it:
+L<DBIx::Class::Storage::DBI> and L<DBIx::Class::Schema>.  Here is an
+example of the recommended way to use it:
 
-  my $genus = Genus->find(12);
-  eval {
-    MyDB->txn_begin;
+  my $genus = $schema->resultset('Genus')->find(12);
+
+  my $coderef1 = sub {
+    my ($schema, $genus, $code) = @_;
     $genus->add_to_species({ name => 'troglodyte' });
     $genus->wings(2);
     $genus->update;
-    cromulate($genus); # Can have a nested transation
-    MyDB->txn_commit;
+    $schema->txn_do($code, $genus); # Can have a nested transation
+    return $genus->species;
   };
-  if ($@) {
-    # Rollback might fail, too
-    eval {
-      MyDB->txn_rollback
-    };
+
+  my $coderef2 = sub {
+    my ($genus) = @_;
+    $genus->extinct(1);
+    $genus->update;
+  };
+
+  my $rs;
+  eval {
+    $rs = $schema->txn_do($coderef1, $schema, $genus, $coderef2);
+  };
+
+  if ($@) {                             # Transaction failed
+    die "the sky is falling!"           #
+      if ($@ =~ /Rollback failed/);     # Rollback failed
+
+    deal_with_failed_transaction();
   }
 
-Currently, a nested commit will do nothing and a nested rollback will
-die.  The code at each level must be sure to call rollback in the case
-of an error, to ensure that the rollback will propagate to the top
-level and be issued.  Support for savepoints and for true nested
+Nested transactions will work as expected. That is, only the outermost
+transaction will actually issue a commit to the $dbh, and a rollback
+at any level of any transaction will cause the entire nested
+transaction to fail. Support for savepoints and for true nested
 transactions (for databases that support them) will hopefully be added
 in the future.
 
@@ -483,10 +496,10 @@ instead:
       validate             => $validate       ||  0,
       parser_args          => {
          'DBIx::Schema'    => $schema,
-                              }
+                              },
       producer_args   => {
           'prefix'         => 'My::Schema',
-                         }
+                         },
   );
   
   $translator->parser('DBIx::Class');

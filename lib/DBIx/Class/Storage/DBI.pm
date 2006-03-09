@@ -1,5 +1,7 @@
 package DBIx::Class::Storage::DBI;
 
+use base 'DBIx::Class::Storage';
+
 use strict;
 use warnings;
 use DBI;
@@ -17,8 +19,10 @@ use base qw/SQL::Abstract::Limit/;
 sub select {
   my ($self, $table, $fields, $where, $order, @rest) = @_;
   @rest = (-1) unless defined $rest[0];
-  $self->SUPER::select($table, $self->_recurse_fields($fields), 
-                         $where, $order, @rest);
+  local $self->{having_bind} = [];
+  my ($sql, @ret) = $self->SUPER::select($table,
+                      $self->_recurse_fields($fields), $where, $order, @rest);
+  return wantarray ? ($sql, @ret, @{$self->{having_bind}}) : $sql;
 }
 
 sub _emulate_limit {
@@ -49,10 +53,17 @@ sub _recurse_fields {
 sub _order_by {
   my $self = shift;
   my $ret = '';
+  my @extra;
   if (ref $_[0] eq 'HASH') {
     if (defined $_[0]->{group_by}) {
       $ret = $self->_sqlcase(' group by ')
                .$self->_recurse_fields($_[0]->{group_by});
+    }
+    if (defined $_[0]->{having}) {
+      my $frag;
+      ($frag, @extra) = $self->_recurse_where($_[0]->{having});
+      push(@{$self->{having_bind}}, @extra);
+      $ret .= $self->_sqlcase(' having ').$frag;
     }
     if (defined $_[0]->{order_by}) {
       $ret .= $self->SUPER::_order_by($_[0]->{order_by});
@@ -206,12 +217,17 @@ sub new {
   $new->transaction_depth(0);
   if (defined($ENV{DBIX_CLASS_STORAGE_DBI_DEBUG}) &&
      ($ENV{DBIX_CLASS_STORAGE_DBI_DEBUG} =~ /=(.+)$/)) {
-    $new->debugfh(IO::File->new($1, 'w')||croak "Cannot open trace file $1");
+    $new->debugfh(IO::File->new($1, 'w')) || $new->throw_exception("Cannot open trace file $1");
   } else {
     $new->debugfh(IO::File->new('>&STDERR'));
   }
   $new->debug(1) if $ENV{DBIX_CLASS_STORAGE_DBI_DEBUG};
   return $new;
+}
+
+sub throw_exception {
+  my ($self, $msg) = @_;
+  croak($msg);
 }
 
 =head1 NAME 
@@ -287,8 +303,10 @@ sub ensure_connected {
 sub dbh {
   my ($self) = @_;
 
-  $self->_dbh(undef)
-    if $self->_connection_pid && $self->_connection_pid != $$;
+  if($self->_connection_pid && $self->_connection_pid != $$) {
+      $self->_dbh->{InactiveDestroy} = 1;
+      $self->_dbh(undef)
+  }
   $self->ensure_connected;
   return $self->_dbh;
 }
@@ -305,7 +323,11 @@ sub _populate_dbh {
   my ($self) = @_;
   my @info = @{$self->connect_info || []};
   $self->_dbh($self->_connect(@info));
-
+  my $driver = $self->_dbh->{Driver}->{Name};
+  eval "require DBIx::Class::Storage::DBI::${driver}";
+  unless ($@) {
+    bless $self, "DBIx::Class::Storage::DBI::${driver}";
+  }
   # if on-connect sql statements are given execute them
   foreach my $sql_statement (@{$self->on_connect_do || []}) {
     $self->_dbh->do($sql_statement);
@@ -317,26 +339,41 @@ sub _populate_dbh {
 sub _connect {
   my ($self, @info) = @_;
 
+  my ($old_connect_via, $dbh);
+
   if ($INC{'Apache/DBI.pm'} && $ENV{MOD_PERL}) {
-      my $old_connect_via = $DBI::connect_via;
+      $old_connect_via = $DBI::connect_via;
       $DBI::connect_via = 'connect';
-      my $dbh = DBI->connect(@info);
-      $DBI::connect_via = $old_connect_via;
-      return $dbh;
   }
 
-  DBI->connect(@info);
+  if(ref $info[0] eq 'CODE') {
+      $dbh = &{$info[0]};
+  }
+  else {
+      $dbh = DBI->connect(@info);
+  }
+
+  $DBI::connect_via = $old_connect_via if $old_connect_via;
+
+  $self->throw_exception("DBI Connection failed: $DBI::errstr")
+      unless $dbh;
+
+  $dbh;
 }
 
 =head2 txn_begin
 
 Calls begin_work on the current dbh.
 
+See L<DBIx::Class::Schema> for the txn_do() method, which allows for
+an entire code block to be executed transactionally.
+
 =cut
 
 sub txn_begin {
   my $self = shift;
-  $self->dbh->begin_work if $self->{transaction_depth}++ == 0 and $self->dbh->{AutoCommit};
+  $self->dbh->begin_work
+    if $self->{transaction_depth}++ == 0 and $self->dbh->{AutoCommit};
 }
 
 =head2 txn_commit
@@ -357,17 +394,32 @@ sub txn_commit {
 
 =head2 txn_rollback
 
-Issues a rollback against the current dbh.
+Issues a rollback against the current dbh. A nested rollback will
+throw a L<DBIx::Class::Storage::NESTED_ROLLBACK_EXCEPTION> exception,
+which allows the rollback to propagate to the outermost transaction.
 
 =cut
 
 sub txn_rollback {
   my $self = shift;
-  if ($self->{transaction_depth} == 0) {
-    $self->dbh->rollback unless $self->dbh->{AutoCommit};
-  }
-  else {
-    --$self->{transaction_depth} == 0 ? $self->dbh->rollback : die $@;    
+
+  eval {
+    if ($self->{transaction_depth} == 0) {
+      $self->dbh->rollback unless $self->dbh->{AutoCommit};
+    }
+    else {
+      --$self->{transaction_depth} == 0 ?
+        $self->dbh->rollback :
+	die DBIx::Class::Storage::NESTED_ROLLBACK_EXCEPTION->new;
+    }
+  };
+
+  if ($@) {
+    my $error = $@;
+    my $exception_class = "DBIx::Class::Storage::NESTED_ROLLBACK_EXCEPTION";
+    $error =~ /$exception_class/ and $self->throw_exception($error);
+    $self->{transaction_depth} = 0;          # ensure that a failed rollback
+    $self->throw_exception($error);          # resets the transaction depth
   }
 }
 
@@ -376,24 +428,24 @@ sub _execute {
   my ($sql, @bind) = $self->sql_maker->$op($ident, @args);
   unshift(@bind, @$extra_bind) if $extra_bind;
   if ($self->debug) {
-      my @debug_bind = map { defined $_ ? $_ : 'NULL' } @bind;
-      $self->debugfh->print("$sql: @debug_bind\n");
+      my @debug_bind = map { defined $_ ? qq{`$_'} : q{`NULL'} } @bind;
+      $self->debugfh->print("$sql: " . join(', ', @debug_bind) . "\n");
   }
   my $sth = $self->sth($sql,$op);
-  croak "no sth generated via sql: $sql" unless $sth;
+  $self->throw_exception("no sth generated via sql: $sql") unless $sth;
   @bind = map { ref $_ ? ''.$_ : $_ } @bind; # stringify args
   my $rv;
   if ($sth) {  
-    $rv = $sth->execute(@bind);
+    $rv = $sth->execute(@bind) or $self->throw_exception("Error executing '$sql': " . $sth->errstr);
   } else { 
-    croak "'$sql' did not generate a statement.";
+    $self->throw_exception("'$sql' did not generate a statement.");
   }
   return (wantarray ? ($rv, $sth, @bind) : $rv);
 }
 
 sub insert {
   my ($self, $ident, $to_insert) = @_;
-  croak( "Couldn't insert ".join(', ', map "$_ => $to_insert->{$_}", keys %$to_insert)." into ${ident}" )
+  $self->throw_exception( "Couldn't insert ".join(', ', map "$_ => $to_insert->{$_}", keys %$to_insert)." into ${ident}" )
     unless ($self->_execute('insert' => [], $ident, $to_insert));
   return $to_insert;
 }
@@ -412,8 +464,9 @@ sub _select {
   if (ref $condition eq 'SCALAR') {
     $order = $1 if $$condition =~ s/ORDER BY (.*)$//i;
   }
-  if (exists $attrs->{group_by}) {
+  if (exists $attrs->{group_by} || $attrs->{having}) {
     $order = { group_by => $attrs->{group_by},
+               having => $attrs->{having},
                ($order ? (order_by => $order) : ()) };
   }
   my @args = ('select', $attrs->{bind}, $ident, $select, $condition, $order);
@@ -467,7 +520,7 @@ sub columns_info_for {
             $column_info{is_nullable} = $info->{NULLABLE};
             $result{$info->{COLUMN_NAME}} = \%column_info;
         }
-    }else{
+    } else {
         my $sth = $self->dbh->prepare("SELECT * FROM $table WHERE 1=0");
         $sth->execute;
         my @columns = @{$sth->{NAME}};
@@ -476,6 +529,36 @@ sub columns_info_for {
         }
     }
     return \%result;
+}
+
+sub last_insert_id {
+  my ($self, $row) = @_;
+    
+  return $self->dbh->func('last_insert_rowid');
+
+}
+
+sub sqlt_type { shift->dbh->{Driver}->{Name} }
+
+sub deployment_statements {
+  my ($self, $schema, $type) = @_;
+  $type ||= $self->sqlt_type;
+  eval "use SQL::Translator";
+  $self->throw_exception("Can't deploy without SQL::Translator: $@") if $@;
+  eval "use SQL::Translator::Parser::DBIx::Class;";
+  $self->throw_exception($@) if $@; 
+  eval "use SQL::Translator::Producer::${type};";
+  $self->throw_exception($@) if $@;
+  my $tr = SQL::Translator->new();
+  SQL::Translator::Parser::DBIx::Class::parse( $tr, $schema );
+  return "SQL::Translator::Producer::${type}"->can('produce')->($tr);
+}
+
+sub deploy {
+  my ($self, $schema, $type) = @_;
+  foreach(split(";\n", $self->deployment_statements($schema, $type))) {
+	  $self->dbh->do($_) or warn "SQL was:\n $_";
+  } 
 }
 
 sub DESTROY { shift->disconnect }

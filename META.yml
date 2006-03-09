@@ -1,6 +1,6 @@
 ---
 name: DBIx-Class
-version: 0.05007
+version: 0.05999_01
 author:
   - 'Matt S. Trout <mst@shadowcatsystems.co.uk>'
 abstract: Extensible and flexible object <-> relational mapper.
@@ -26,7 +26,7 @@ provides:
     file: lib/DBIx/Class/Storage/DBI.pm
   DBIx::Class:
     file: lib/DBIx/Class.pm
-    version: 0.05007
+    version: 0.05999_01
   DBIx::Class::AccessorGroup:
     file: lib/DBIx/Class/AccessorGroup.pm
   DBIx::Class::CDBICompat:
@@ -143,18 +143,50 @@ provides:
     file: lib/DBIx/Class/Row.pm
   DBIx::Class::Schema:
     file: lib/DBIx/Class/Schema.pm
-  DBIx::Class::Serialize:
-    file: lib/DBIx/Class/Serialize.pm
+  DBIx::Class::Serialize::Storable:
+    file: lib/DBIx/Class/Serialize/Storable.pm
+  DBIx::Class::Storage:
+    file: lib/DBIx/Class/Storage.pm
   DBIx::Class::Storage::DBI:
     file: lib/DBIx/Class/Storage/DBI.pm
   DBIx::Class::Storage::DBI::Cursor:
     file: lib/DBIx/Class/Storage/DBI/Cursor.pm
+  DBIx::Class::Storage::DBI::DB2:
+    file: lib/DBIx/Class/Storage/DBI/DB2.pm
   DBIx::Class::Storage::DBI::DebugCallback:
     file: lib/DBIx/Class/Storage/DBI.pm
+  DBIx::Class::Storage::DBI::MSSQL:
+    file: lib/DBIx/Class/Storage/DBI/MSSQL.pm
+  DBIx::Class::Storage::DBI::Oracle:
+    file: lib/DBIx/Class/Storage/DBI/Oracle.pm
+  DBIx::Class::Storage::DBI::Pg:
+    file: lib/DBIx/Class/Storage/DBI/Pg.pm
+  DBIx::Class::Storage::DBI::SQLite:
+    file: lib/DBIx/Class/Storage/DBI/SQLite.pm
+  DBIx::Class::Storage::DBI::mysql:
+    file: lib/DBIx/Class/Storage/DBI/mysql.pm
+  DBIx::Class::Storage::NESTED_ROLLBACK_EXCEPTION:
+    file: lib/DBIx/Class/Storage.pm
   DBIx::Class::Test::SQLite:
     file: lib/DBIx/Class/Test/SQLite.pm
+  DBIx::Class::UTF8Columns:
+    file: lib/DBIx/Class/UTF8Columns.pm
   DBIx::Class::UUIDColumns:
     file: lib/DBIx/Class/UUIDColumns.pm
+  DBIx::Class::UUIDMaker:
+    file: lib/DBIx/Class/UUIDMaker.pm
+  DBIx::Class::UUIDMaker::APR::UUID:
+    file: lib/DBIx/Class/UUIDMaker/APR/UUID.pm
+  DBIx::Class::UUIDMaker::Data::UUID:
+    file: lib/DBIx/Class/UUIDMaker/Data/UUID.pm
+  DBIx::Class::UUIDMaker::Data::Uniqid:
+    file: lib/DBIx/Class/UUIDMaker/Data/Uniqid.pm
+  DBIx::Class::UUIDMaker::UUID:
+    file: lib/DBIx/Class/UUIDMaker/UUID.pm
+  DBIx::Class::UUIDMaker::Win32::Guidgen:
+    file: lib/DBIx/Class/UUIDMaker/Win32/Guidgen.pm
+  DBIx::Class::UUIDMaker::Win32API::GUID:
+    file: lib/DBIx/Class/UUIDMaker/Win32API/GUID.pm
   DBIx::Class::Validation:
     file: lib/DBIx/Class/Validation.pm
     version: 0.01

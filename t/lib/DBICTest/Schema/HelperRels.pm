@@ -10,7 +10,8 @@ DBICTest::Schema::Artist->has_many(onekeys => 'DBICTest::Schema::OneKey');
 DBICTest::Schema::CD->belongs_to('artist', 'DBICTest::Schema::Artist');
 
 DBICTest::Schema::CD->has_many(tracks => 'DBICTest::Schema::Track');
-DBICTest::Schema::CD->has_many(tags => 'DBICTest::Schema::Tag');
+DBICTest::Schema::CD->has_many(tags => 'DBICTest::Schema::Tag', undef,
+                                 { order_by => 'tag' });
 DBICTest::Schema::CD->has_many(cd_to_producer => 'DBICTest::Schema::CD_to_Producer' => 'cd');
 
 DBICTest::Schema::CD->might_have(liner_notes => 'DBICTest::Schema::LinerNotes',
@@ -42,7 +43,8 @@ DBICTest::Schema::CD_to_Producer->belongs_to(
 );
 DBICTest::Schema::Artist->has_many(
   'artist_undirected_maps', 'DBICTest::Schema::ArtistUndirectedMap',
-  [{'foreign.id1' => 'self.artistid'}, {'foreign.id2' => 'self.artistid'}]
+  [{'foreign.id1' => 'self.artistid'}, {'foreign.id2' => 'self.artistid'}],
+  { cascade_copy => 0 } # this would *so* not make sense
 );
 DBICTest::Schema::ArtistUndirectedMap->belongs_to(
   'artist1', 'DBICTest::Schema::Artist', 'id1');

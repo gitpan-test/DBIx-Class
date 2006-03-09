@@ -34,10 +34,10 @@ Creates a new row object from column => value mappings passed as a hash ref
 sub new {
   my ($class, $attrs) = @_;
   $class = ref $class if ref $class;
-  my $new = bless({ _column_data => { } }, $class);
+  my $new = bless { _column_data => {} }, $class;
   if ($attrs) {
-    $new->throw_exception("attrs must be a hashref" ) unless ref($attrs) eq 'HASH';
-    while (my ($k, $v) = each %{$attrs}) {
+    $new->throw_exception("attrs must be a hashref") unless ref($attrs) eq 'HASH';
+    while (my ($k, $v) = each %$attrs) {
       $new->throw_exception("No such column $k on $class") unless $class->has_column($k);
       $new->store_column($k => $v);
     }
@@ -61,11 +61,13 @@ sub insert {
   $self->{result_source} ||= $self->result_source_instance
     if $self->can('result_source_instance');
   my $source = $self->{result_source};
-  $self->throw_exception("No result_source set on this object; can't insert") unless $source;
+  $self->throw_exception("No result_source set on this object; can't insert")
+    unless $source;
   #use Data::Dumper; warn Dumper($self);
   $source->storage->insert($source->from, { $self->get_columns });
   $self->in_storage(1);
   $self->{_dirty_columns} = {};
+  $self->{related_resultsets} = {};
   return $self;
 }
 
@@ -110,6 +112,7 @@ sub update {
     $self->throw_exception("Can't update ${self}: updated more than one row");
   }
   $self->{_dirty_columns} = {};
+  $self->{related_resultsets} = {};
   return $self;
 }
 
@@ -130,17 +133,18 @@ sub delete {
     my $ident_cond = $self->ident_condition;
     $self->throw_exception("Cannot safely delete a row in a PK-less table")
       if ! keys %$ident_cond;
+    foreach my $column (keys %$ident_cond) {
+	    $self->throw_exception("Can't delete the object unless it has loaded the primary keys")
+	      unless exists $self->{_column_data}{$column};
+    }
     $self->result_source->storage->delete(
       $self->result_source->from, $ident_cond);
     $self->in_storage(undef);
   } else {
     $self->throw_exception("Can't do class delete without a ResultSource instance")
       unless $self->can('result_source_instance');
-    my $attrs = { };
-    if (@_ > 1 && ref $_[$#_] eq 'HASH') {
-      $attrs = { %{ pop(@_) } };
-    }
-    my $query = (ref $_[0] eq 'HASH' ? $_[0] : {@_});
+    my $attrs = @_ > 1 && ref $_[$#_] eq 'HASH' ? { %{pop(@_)} } : {};
+    my $query = ref $_[0] eq 'HASH' ? $_[0] : {@_};
     $self->result_source_instance->resultset->search(@_)->delete;
   }
   return $self;
@@ -159,10 +163,15 @@ the database and stored in the object.
 sub get_column {
   my ($self, $column) = @_;
   $self->throw_exception( "Can't fetch data as class method" ) unless ref $self;
-  return $self->{_column_data}{$column}
-    if exists $self->{_column_data}{$column};
+  return $self->{_column_data}{$column} if exists $self->{_column_data}{$column};
   $self->throw_exception( "No such column '${column}'" ) unless $self->has_column($column);
   return undef;
+}
+
+sub has_column_loaded {
+  my ($self, $column) = @_;
+  $self->throw_exception( "Can't call has_column data as class method" ) unless ref $self;
+  return exists $self->{_column_data}{$column};
 }
 
 =head2 get_columns
@@ -237,9 +246,26 @@ Inserts a new row with the specified changes.
 
 sub copy {
   my ($self, $changes) = @_;
-  my $new = bless({ _column_data => { %{$self->{_column_data}}} }, ref $self);
-  $new->set_column($_ => $changes->{$_}) for keys %$changes;
-  return $new->insert;
+  $changes ||= {};
+  my $col_data = { %{$self->{_column_data}} };
+  foreach my $col (keys %$col_data) {
+    delete $col_data->{$col}
+      if $self->result_source->column_info($col)->{is_auto_increment};
+  }
+  my $new = bless { _column_data => $col_data }, ref $self;
+  $new->set_columns($changes);
+  $new->insert;
+  foreach my $rel ($self->result_source->relationships) {
+    my $rel_info = $self->result_source->relationship_info($rel);
+    if ($rel_info->{attrs}{cascade_copy}) {
+      my $resolved = $self->result_source->resolve_condition(
+       $rel_info->{cond}, $rel, $new);
+      foreach my $related ($self->search_related($rel)) {
+        $related->copy($resolved);
+      }
+    }
+  }
+  return $new;
 }
 
 =head2 store_column
@@ -276,25 +302,40 @@ sub inflate_result {
                   },
                   ref $class || $class);
   my $schema;
-  PRE: foreach my $pre (keys %{$prefetch||{}}) {
+  foreach my $pre (keys %{$prefetch||{}}) {
+    my $pre_val = $prefetch->{$pre};
     my $pre_source = $source->related_source($pre);
-    $class->throw_exception("Can't prefetch non-existant relationship ${pre}") unless $pre_source;
-    my $fetched;
-    unless ($pre_source->primary_columns == grep { exists $prefetch->{$pre}[0]{$_} 
-       and !defined $prefetch->{$pre}[0]{$_} } $pre_source->primary_columns)
-    {
-      $fetched = $pre_source->result_class->inflate_result(
-                      $pre_source, @{$prefetch->{$pre}});      
-    }
-    my $accessor = $source->relationship_info($pre)->{attrs}{accessor};
-    $class->throw_exception("No accessor for prefetched $pre")
-      unless defined $accessor;
-    if ($accessor eq 'single') {
-      $new->{_relationship_data}{$pre} = $fetched;
-    } elsif ($accessor eq 'filter') {
-      $new->{_inflated_column}{$pre} = $fetched;
+    $class->throw_exception("Can't prefetch non-existent relationship ${pre}")
+      unless $pre_source;
+    if (ref($pre_val->[0]) eq 'ARRAY') { # multi
+      my @pre_objects;
+      foreach my $pre_rec (@$pre_val) {
+        unless ($pre_source->primary_columns == grep { exists $pre_rec->[0]{$_} 
+           and defined $pre_rec->[0]{$_} } $pre_source->primary_columns) {
+          next;
+        }
+        push(@pre_objects, $pre_source->result_class->inflate_result(
+                             $pre_source, @{$pre_rec}));
+      }
+      $new->related_resultset($pre)->set_cache(\@pre_objects);
     } else {
-      $class->throw_exception("Don't know how to store prefetched $pre");
+      my $fetched;
+      unless ($pre_source->primary_columns == grep { exists $pre_val->[0]{$_} 
+         and !defined $pre_val->[0]{$_} } $pre_source->primary_columns)
+      {
+        $fetched = $pre_source->result_class->inflate_result(
+                      $pre_source, @{$pre_val});      
+      }
+      my $accessor = $source->relationship_info($pre)->{attrs}{accessor};
+      $class->throw_exception("No accessor for prefetched $pre")
+       unless defined $accessor;
+      if ($accessor eq 'single') {
+        $new->{_relationship_data}{$pre} = $fetched;
+      } elsif ($accessor eq 'filter') {
+        $new->{_inflated_column}{$pre} = $fetched;
+      } else {
+       $class->throw_exception("Prefetch not supported with accessor '$accessor'");
+      }
     }
   }
   return $new;
