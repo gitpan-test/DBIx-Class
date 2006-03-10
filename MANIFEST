@@ -91,6 +91,7 @@ lib/SQL/Translator/Parser/DBIx/Class.pm
 lib/SQL/Translator/Producer/DBIx/Class/File.pm
 Makefile.PL
 MANIFEST			This list of files
+META.yml
 README
 t/02pod.t
 t/03podcoverage.t.disabled
@@ -111,6 +112,7 @@ t/basicrels/06relationship.t
 t/basicrels/07pager.t
 t/basicrels/08inflate.t
 t/basicrels/08inflate_has_a.t
+t/basicrels/08inflate_serialize.t
 t/basicrels/09update.t
 t/basicrels/10auto.t
 t/basicrels/11mysql.t
@@ -155,6 +157,7 @@ t/helperrels/06relationship.t
 t/helperrels/07pager.t
 t/helperrels/08inflate.t
 t/helperrels/08inflate_has_a.t
+t/helperrels/08inflate_serialize.t
 t/helperrels/09update.t
 t/helperrels/10auto.t
 t/helperrels/11mysql.t
@@ -209,6 +212,7 @@ t/run/06relationship.tl
 t/run/07pager.tl
 t/run/08inflate.tl
 t/run/08inflate_has_a.tl
+t/run/08inflate_serialize.tl
 t/run/09update.tl
 t/run/10auto.tl
 t/run/11mysql.tl
@@ -245,4 +249,3 @@ t/testlib/MyStarLinkMCPK.pm
 t/testlib/Order.pm
 t/testlib/OtherFilm.pm
 t/testlib/PgBase.pm
-META.yml
