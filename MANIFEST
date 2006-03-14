@@ -91,8 +91,6 @@ lib/SQL/Translator/Parser/DBIx/Class.pm
 lib/SQL/Translator/Producer/DBIx/Class/File.pm
 Makefile.PL
 MANIFEST			This list of files
-META.yml
-README
 t/02pod.t
 t/03podcoverage.t.disabled
 t/04dont_break_c3.t
@@ -249,3 +247,5 @@ t/testlib/MyStarLinkMCPK.pm
 t/testlib/Order.pm
 t/testlib/OtherFilm.pm
 t/testlib/PgBase.pm
+META.yml
+README

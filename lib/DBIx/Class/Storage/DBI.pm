@@ -543,7 +543,7 @@ sub last_insert_id {
 sub sqlt_type { shift->dbh->{Driver}->{Name} }
 
 sub deployment_statements {
-  my ($self, $schema, $type) = @_;
+  my ($self, $schema, $type, $sqltargs) = @_;
   $type ||= $self->sqlt_type;
   eval "use SQL::Translator";
   $self->throw_exception("Can't deploy without SQL::Translator: $@") if $@;
@@ -551,14 +551,15 @@ sub deployment_statements {
   $self->throw_exception($@) if $@; 
   eval "use SQL::Translator::Producer::${type};";
   $self->throw_exception($@) if $@;
-  my $tr = SQL::Translator->new();
+  my $tr = SQL::Translator->new(%$sqltargs);
   SQL::Translator::Parser::DBIx::Class::parse( $tr, $schema );
   return "SQL::Translator::Producer::${type}"->can('produce')->($tr);
 }
 
 sub deploy {
-  my ($self, $schema, $type) = @_;
-  foreach(split(";\n", $self->deployment_statements($schema, $type))) {
+  my ($self, $schema, $type, $sqltargs) = @_;
+  foreach(split(";\n", $self->deployment_statements($schema, $type, $sqltargs))) {
+      $self->debugfh->print("$_\n") if $self->debug;
 	  $self->dbh->do($_) or warn "SQL was:\n $_";
   } 
 }
