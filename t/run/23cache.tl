@@ -3,7 +3,7 @@ my $schema = shift;
 
 eval "use DBD::SQLite";
 plan skip_all => 'needs DBD::SQLite for testing' if $@;
-plan tests => 16;
+plan tests => 17;
 
 my $rs = $schema->resultset("Artist")->search(
   { artistid => 1 }
@@ -84,7 +84,9 @@ $rs = $schema->resultset("Artist")->search(
   }
 );
 {
+my $artist_count_before = $schema->resultset('Artist')->count;
 $schema->resultset("Artist")->create({artistid=>4,name=>qq{Humoungous Hamsters}});
+is($schema->resultset('Artist')->count, $artist_count_before + 1, 'count() reflects new artist');
 my $artist = $schema->resultset("Artist")->search(
   { artistid => 4 },{prefetch=>[qw/cds/]}
 )->first;

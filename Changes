@@ -1,5 +1,16 @@
 Revision history for DBIx::Class
 
+0.05999_04 2006-03-18 19:54:00
+        - Fix for delete on full-table resultsets
+        - Removed caching on count() and added _count for pager()
+        - ->connection does nothing if ->storage defined and no args
+          (and hence ->connect acts like ->clone under the same conditions)
+        - Storage::DBI throws better exception if no connect info
+        - columns_info_for made more robust / informative
+        - ithreads compat added, fork compat improved
+        - weaken result_source in all resultsets
+	- Make pg seq extractor less sensitive.
+
 0.05999_03 2006-03-14 01:58:10
         - has_many prefetch fixes
         - deploy now adds drop statements before creates
@@ -27,6 +38,8 @@ Revision history for DBIx::Class
           (sponsored by Airspace Software, http://www.airspace.co.uk/)
         - clean up set_from_related
         - made copy() automatically null out auto-inc columns
+        - added txn_do() method to Schema, which allows a coderef to be
+          executed atomically
 
 0.05007 2006-02-24 00:59:00
         - tweak to Componentised for Class::C3 0.11

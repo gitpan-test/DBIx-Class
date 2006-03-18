@@ -205,7 +205,9 @@ sub load_classes {
         my $comp_class = "${prefix}::${comp}";
         eval "use $comp_class"; # If it fails, assume the user fixed it
         if ($@) {
-          die $@ unless $@ =~ /Can't locate/;
+	  $comp_class =~ s/::/\//g;
+          die $@ unless $@ =~ /Can't locate.+$comp_class\.pm\sin\s\@INC/;
+	  warn $@ if $@;
         }
         push(@to_register, [ $comp, $comp_class ]);
       }
@@ -340,6 +342,7 @@ the schema.
 
 sub connection {
   my ($self, @info) = @_;
+  return $self if !@info && $self->storage;
   my $storage_class = $self->storage_type;
   $storage_class = 'DBIx::Class::Storage'.$storage_class
     if $storage_class =~ m/^::/;
@@ -518,11 +521,13 @@ sub populate {
   my ($self, $name, $data) = @_;
   my $rs = $self->resultset($name);
   my @names = @{shift(@$data)};
+  my @created;
   foreach my $item (@$data) {
     my %create;
     @create{@names} = @$item;
-    $rs->create(\%create);
+    push(@created, $rs->create(\%create));
   }
+  return @created;
 }
 
 =head2 throw_exception
