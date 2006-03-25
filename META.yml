@@ -1,8 +1,8 @@
 ---
 name: DBIx-Class
-version: 0.05999_04
+version: 0.06000
 author:
-  - 'Matt S. Trout <mst@shadowcatsystems.co.uk>'
+  - 'mst: Matt S. Trout <mst@shadowcatsystems.co.uk>'
 abstract: Extensible and flexible object <-> relational mapper.
 license: perl
 requires:
@@ -26,7 +26,7 @@ provides:
     file: lib/DBIx/Class/Storage/DBI.pm
   DBIx::Class:
     file: lib/DBIx/Class.pm
-    version: 0.05999_04
+    version: 0.06000
   DBIx::Class::AccessorGroup:
     file: lib/DBIx/Class/AccessorGroup.pm
   DBIx::Class::CDBICompat:
@@ -35,6 +35,8 @@ provides:
     file: lib/DBIx/Class/CDBICompat/ColumnGroups.pm
   DBIx::Class::Core:
     file: lib/DBIx/Class/Core.pm
+  DBIx::Class::Cursor:
+    file: lib/DBIx/Class/Cursor.pm
   DBIx::Class::DB:
     file: lib/DBIx/Class/DB.pm
   DBIx::Class::InflateColumn:
@@ -79,6 +81,8 @@ provides:
     file: lib/DBIx/Class/Serialize/Storable.pm
   DBIx::Class::Storage::DBI:
     file: lib/DBIx/Class/Storage/DBI.pm
+  DBIx::Class::Storage::DBI::Cursor:
+    file: lib/DBIx/Class/Storage/DBI/Cursor.pm
   DBIx::Class::Storage::DBI::DB2:
     file: lib/DBIx/Class/Storage/DBI/DB2.pm
   DBIx::Class::Storage::DBI::DebugCallback:
@@ -123,4 +127,4 @@ provides:
   SQL::Translator::Producer::DBIx::Class::File:
     file: lib/SQL/Translator/Producer/DBIx/Class/File.pm
     version: 0.1
-generated_by: Module::Build version 0.2607
+generated_by: Module::Build version 0.2611

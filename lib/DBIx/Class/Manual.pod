@@ -11,16 +11,13 @@ from your SQL database.
 
 =head1 SECTIONS
 
-=head2 L<DBIx::Class::Manual::SchemaIntro>
-
-Beginner guide to using DBIx::Class with the schema interface. This is the
-recommended way to use DBIx::Class.
-
 =head2 L<DBIx::Class::Manual::Intro>
 
-Beginner guide to using DBIx::Class with the older class-based interface.
-This is included for the sake of completeness - you are recommended to
-use the schema-based interface instead.
+Beginner guide to using DBIx::Class. 
+
+=head2 L<DBIx::Class::Manual::Example>
+
+An example of slightly more complex usage.
 
 =head2 L<DBIx::Class::Manual::Cookbook>
 
@@ -36,6 +33,11 @@ Got trouble? Let us shoot it for you.
 
 If you're using the CDBI Compat layer, we suggest reading the L<Class::DBI>
 documentation. It should behave the same way.
+
+=head2 L<DBIx::Class::Manual::Component>
+
+Listing of existing components, and documentation and example on how to 
+develop new ones.
 
 =cut
 

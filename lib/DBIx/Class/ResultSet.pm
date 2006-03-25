@@ -21,7 +21,7 @@ DBIx::Class::ResultSet - Responsible for fetching and creating resultset.
 =head1 SYNOPSIS
 
   my $rs   = $schema->resultset('User')->search(registered => 1);
-  my @rows = $schema->resultset('Foo')->search(bar => 'baz');
+  my @rows = $schema->resultset('CD')->search(year => 2005);
 
 =head1 DESCRIPTION
 
@@ -51,19 +51,31 @@ In the examples below, the following table classes are used:
 
 =head1 METHODS
 
-=head2 new
+=head2 new 
 
-=head3 Arguments: ($source, \%$attrs)
+=over 4
+
+=item Arguments: $source, \%$attrs
+
+=item Return Value: $rs
+
+=back
 
 The resultset constructor. Takes a source object (usually a
-L<DBIx::Class::ResultSourceProxy::Table>) and an attribute hash (see L</ATTRIBUTES>
-below).  Does not perform any queries -- these are executed as needed by the
-other methods.
+L<DBIx::Class::ResultSourceProxy::Table>) and an attribute hash (see
+L</ATTRIBUTES> below).  Does not perform any queries -- these are
+executed as needed by the other methods.
 
 Generally you won't need to construct a resultset manually.  You'll
 automatically get one from e.g. a L</search> called in scalar context:
 
   my $rs = $schema->resultset('CD')->search({ title => '100th Window' });
+
+IMPORTANT: If called on an object, proxies to new_result instead so
+
+  my $cd = $schema->resultset('CD')->new({ title => 'Spoon' });
+
+will return a CD object, not a ResultSet.
 
 =cut
 
@@ -80,9 +92,12 @@ sub new {
   $attrs->{columns} ||= delete $attrs->{cols} if $attrs->{cols};
   delete $attrs->{as} if $attrs->{columns};
   $attrs->{columns} ||= [ $source->columns ] unless $attrs->{select};
-  $attrs->{select} = [ map { m/\./ ? $_ : "${alias}.$_" } @{delete $attrs->{columns}} ]
-    if $attrs->{columns};
-  $attrs->{as} ||= [ map { m/^\Q$alias.\E(.+)$/ ? $1 : $_ } @{$attrs->{select}} ];
+  $attrs->{select} = [
+    map { m/\./ ? $_ : "${alias}.$_" } @{delete $attrs->{columns}}
+  ] if $attrs->{columns};
+  $attrs->{as} ||= [
+    map { m/^\Q$alias.\E(.+)$/ ? $1 : $_ } @{$attrs->{select}}
+  ];
   if (my $include = delete $attrs->{include_columns}) {
     push(@{$attrs->{select}}, @$include);
     push(@{$attrs->{as}}, map { m/([^.]+)$/; $1; } @$include);
@@ -100,11 +115,14 @@ sub new {
         $seen{$j} = 1;
       }
     }
-    push(@{$attrs->{from}}, $source->resolve_join($join, $attrs->{alias}, $attrs->{seen_join}));
+    push(@{$attrs->{from}}, $source->resolve_join(
+      $join, $attrs->{alias}, $attrs->{seen_join})
+    );
   }
   
   $attrs->{group_by} ||= $attrs->{select} if delete $attrs->{distinct};
-  $attrs->{order_by} = [ $attrs->{order_by} ] if $attrs->{order_by} and !ref($attrs->{order_by});
+  $attrs->{order_by} = [ $attrs->{order_by} ] if
+    $attrs->{order_by} and !ref($attrs->{order_by});
   $attrs->{order_by} ||= [];
 
   my $collapse = $attrs->{collapse} || {};
@@ -151,14 +169,27 @@ sub new {
 
 =head2 search
 
-  my @obj    = $rs->search({ foo => 3 }); # "... WHERE foo = 3"
-  my $new_rs = $rs->search({ foo => 3 });
+=over 4
+
+=item Arguments: $cond, \%attrs?
+
+=item Return Value: $resultset (scalar context), @row_objs (list context)
+
+=back
+
+  my @cds    = $cd_rs->search({ year => 2001 }); # "... WHERE year = 2001"
+  my $new_rs = $cd_rs->search({ year => 2005 });
+
+  my $new_rs = $cd_rs->search([ { year => 2005 }, { year => 2004 } ]);
+                 # year = 2005 OR year = 2004
 
 If you need to pass in additional attributes but no additional condition,
 call it as C<search(undef, \%attrs);>.
 
-  # "SELECT foo, bar FROM $class_table"
-  my @all = $class->search(undef, { columns => [qw/foo bar/] });
+  # "SELECT name, artistid FROM $artist_table"
+  my @all_artists = $schema->resultset('Artist')->search(undef, {
+    columns => [qw/name artistid/],
+  });
 
 =cut
 
@@ -207,11 +238,19 @@ sub search {
 
 =head2 search_literal
 
-  my @obj    = $rs->search_literal($literal_where_cond, @bind);
-  my $new_rs = $rs->search_literal($literal_where_cond, @bind);
+=over 4
+
+=item Arguments: $sql_fragment, @bind_values
+
+=item Return Value: $resultset (scalar context), @row_objs (list context)
+
+=back
+
+  my @cds   = $cd_rs->search_literal('year = ? AND title = ?', qw/2001 Reload/);
+  my $newrs = $artist_rs->search_literal('name = ?', 'Metallica');
 
 Pass a literal chunk of SQL to be added to the conditional part of the
-resultset.
+resultset query.
 
 =cut
 
@@ -224,7 +263,13 @@ sub search_literal {
 
 =head2 find
 
-=head3 Arguments: (@colvalues) | (\%cols, \%attrs?)
+=over 4
+
+=item Arguments: @values | \%cols, \%attrs?
+
+=item Return Value: $row_object
+
+=back
 
 Finds a row based on its primary key or unique constraint. For example:
 
@@ -252,13 +297,15 @@ sub find {
   my @cols = $self->result_source->primary_columns;
   if (exists $attrs->{key}) {
     my %uniq = $self->result_source->unique_constraints;
-    $self->throw_exception( "Unknown key $attrs->{key} on $self->name" )
-      unless exists $uniq{$attrs->{key}};
+    $self->throw_exception(
+      "Unknown key $attrs->{key} on '" . $self->result_source->name . "'"
+    ) unless exists $uniq{$attrs->{key}};
     @cols = @{ $uniq{$attrs->{key}} };
   }
   #use Data::Dumper; warn Dumper($attrs, @vals, @cols);
-  $self->throw_exception( "Can't find unless a primary key or unique constraint is defined" )
-    unless @cols;
+  $self->throw_exception(
+    "Can't find unless a primary key or unique constraint is defined"
+  ) unless @cols;
 
   my $query;
   if (ref $vals[0] eq 'HASH') {
@@ -278,16 +325,28 @@ sub find {
       my $rs = $self->search($query,$attrs);
       return keys %{$rs->{collapse}} ? $rs->next : $rs->single;
   } else {
-      return keys %{$self->{collapse}} ? $self->search($query)->next : $self->single($query);
+      return keys %{$self->{collapse}} ?
+	$self->search($query)->next :
+	$self->single($query);
   }
 }
 
 =head2 search_related
 
-  $rs->search_related('relname', $cond?, $attrs?);
+=over 4
 
-Search the specified relationship. Optionally specify a condition for matching
-records.
+=item Arguments: $cond, \%attrs?
+
+=item Return Value: $new_resultset
+
+=back
+
+  $new_rs = $cd_rs->search_related('artist', {
+    name => 'Emo-R-Us',
+  });
+
+Search the specified relationship, optionally specify a condition and
+attributes for matching records. See L</ATTRIBUTES> for more information.
 
 =cut
 
@@ -297,7 +356,16 @@ sub search_related {
 
 =head2 cursor
 
-Returns a storage-driven cursor to the given resultset.
+=over 4
+
+=item Arguments: none
+
+=item Return Value: $cursor
+
+=back
+
+Returns a storage-driven cursor to the given resultset. See
+L<DBIx::Class::Cursor> for more information.
 
 =cut
 
@@ -311,7 +379,18 @@ sub cursor {
 
 =head2 single
 
-Inflates the first result without creating a cursor
+=over 4
+
+=item Arguments: $cond?
+
+=item Return Value: $row_object?
+
+=back
+
+  my $cd = $schema->resultset('CD')->single({ year => 2001 });
+
+Inflates the first result without creating a cursor if the resultset has
+any records in it; if not returns nothing. Used by find() as an optimisation.
 
 =cut
 
@@ -338,8 +417,19 @@ sub single {
 
 =head2 search_like
 
-Perform a search, but use C<LIKE> instead of equality as the condition. Note
-that this is simply a convenience method; you most likely want to use
+=over 4
+
+=item Arguments: $cond, \%attrs?
+
+=item Return Value: $resultset (scalar context), @row_objs (list context)
+
+=back
+
+  # WHERE title LIKE '%blue%'
+  $cd_rs = $rs->search_like({ title => '%blue%'});
+
+Perform a search, but use C<LIKE> instead of C<=> as the condition. Note
+that this is simply a convenience method. You most likely want to use
 L</search> with specific operators.
 
 For more information, see L<DBIx::Class::Manual::Cookbook>.
@@ -356,9 +446,19 @@ sub search_like {
 
 =head2 slice
 
-=head3 Arguments: ($first, $last)
+=over 4
 
-Returns a subset of elements from the resultset.
+=item Arguments: $first, $last
+
+=item Return Value: $resultset (scalar context), @row_objs (list context)
+
+=back
+
+Returns a resultset or object list representing a subset of elements from the
+resultset slice is called on.  Indexes are from 0 - i.e. to get the first
+three records, call
+
+  my ($one, $two, $three) = $rs->slice(0, 2);
 
 =cut
 
@@ -373,6 +473,14 @@ sub slice {
 }
 
 =head2 next
+
+=over 4
+
+=item Arguments: none
+
+=item Return Value: $result?
+
+=back
 
 Returns the next element in the resultset (C<undef> is there is none).
 
@@ -395,9 +503,10 @@ sub next {
     $self->{all_cache_position} = 1;
     return ($self->all)[0];
   }
-  my @row = (exists $self->{stashed_row}
-               ? @{delete $self->{stashed_row}}
-               : $self->cursor->next);
+  my @row = (exists $self->{stashed_row} ?
+	       @{delete $self->{stashed_row}} :
+	       $self->cursor->next
+  );
 #  warn Dumper(\@row); use Data::Dumper;
   return unless (@row);
   return $self->_construct_object(@row);
@@ -450,10 +559,15 @@ sub _collapse_result {
     }
   }
 
-  my @collapse = (defined($prefix)
-                   ? (map { (m/^\Q${prefix}.\E(.+)$/ ? ($1) : ()); }
-                       keys %{$self->{collapse}})
-                   : keys %{$self->{collapse}});
+  my @collapse;
+  if (defined $prefix) {
+    @collapse = map {
+	m/^\Q${prefix}.\E(.+)$/ ? ($1) : ()
+    } keys %{$self->{collapse}}
+  } else {
+    @collapse = keys %{$self->{collapse}};
+  };
+
   if (@collapse) {
     my ($c) = sort { length $a <=> length $b } @collapse;
     my $target = $info;
@@ -466,8 +580,8 @@ sub _collapse_result {
     my $tree = $self->_collapse_result($as, $row, $c_prefix);
     my (@final, @raw);
     while ( !(grep {
-                !defined($tree->[0]->{$_})
-                || $co_check{$_} ne $tree->[0]->{$_}
+                !defined($tree->[0]->{$_}) ||
+		$co_check{$_} ne $tree->[0]->{$_}
               } @co_key) ) {
       push(@final, $tree);
       last unless (@raw = $self->cursor->next);
@@ -483,12 +597,29 @@ sub _collapse_result {
 
 =head2 result_source
 
-Returns a reference to the result source for this recordset.
+=over 4
+
+=item Arguments: $result_source?
+
+=item Return Value: $result_source
+
+=back
+
+An accessor for the primary ResultSource object from which this ResultSet
+is derived.
 
 =cut
 
 
 =head2 count
+
+=over 4
+
+=item Arguments: $cond, \%attrs??
+
+=item Return Value: $count
+
+=back
 
 Performs an SQL C<COUNT> with the same query as the resultset was built
 with to find the number of elements. If passed arguments, does a search
@@ -550,7 +681,16 @@ sub _count { # Separated out so pager can get the full count
 
 =head2 count_literal
 
-Calls L</search_literal> with the passed arguments, then L</count>.
+=over 4
+
+=item Arguments: $sql_fragment, @bind_values
+
+=item Return Value: $count
+
+=back
+
+Counts the results in a literal query. Equivalent to calling L</search_literal>
+with the passed arguments, then L</count>.
 
 =cut
 
@@ -558,7 +698,15 @@ sub count_literal { shift->search_literal(@_)->count; }
 
 =head2 all
 
-Returns all elements in the resultset. Called implictly if the resultset
+=over 4
+
+=item Arguments: none
+
+=item Return Value: @objects
+
+=back
+
+Returns all elements in the resultset. Called implicitly if the resultset
 is returned in list context.
 
 =cut
@@ -592,6 +740,14 @@ sub all {
 
 =head2 reset
 
+=over 4
+
+=item Arguments: none
+
+=item Return Value: $self
+
+=back
+
 Resets the resultset's cursor, so you can iterate through the elements again.
 
 =cut
@@ -605,7 +761,16 @@ sub reset {
 
 =head2 first
 
-Resets the resultset and returns the first element.
+=over 4
+
+=item Arguments: none
+
+=item Return Value: $object?
+
+=back
+
+Resets the resultset and returns an object for the first result (if the
+resultset contains anything).
 
 =cut
 
@@ -615,22 +780,38 @@ sub first {
 
 =head2 update
 
-=head3 Arguments: (\%values)
+=over 4
 
-Sets the specified columns in the resultset to the supplied values.
+=item Arguments: \%values
+
+=item Return Value: $storage_rv
+
+=back
+
+Sets the specified columns in the resultset to the supplied values in a
+single query. Return value will be true if the update succeeded or false
+if no records were updated; exact type of success value is storage-dependent.
 
 =cut
 
 sub update {
   my ($self, $values) = @_;
-  $self->throw_exception("Values for update must be a hash") unless ref $values eq 'HASH';
+  $self->throw_exception("Values for update must be a hash")
+    unless ref $values eq 'HASH';
   return $self->result_source->storage->update(
-           $self->result_source->from, $values, $self->{cond});
+    $self->result_source->from, $values, $self->{cond}
+  );
 }
 
 =head2 update_all
 
-=head3 Arguments: (\%values)
+=over 4
+
+=item Arguments: \%values
+
+=item Return Value: 1
+
+=back
 
 Fetches all objects and updates them one at a time.  Note that C<update_all>
 will run cascade triggers while L</update> will not.
@@ -639,7 +820,8 @@ will run cascade triggers while L</update> will not.
 
 sub update_all {
   my ($self, $values) = @_;
-  $self->throw_exception("Values for update must be a hash") unless ref $values eq 'HASH';
+  $self->throw_exception("Values for update must be a hash")
+    unless ref $values eq 'HASH';
   foreach my $obj ($self->all) {
     $obj->set_columns($values)->update;
   }
@@ -648,7 +830,16 @@ sub update_all {
 
 =head2 delete
 
-Deletes the contents of the resultset from its result source.
+=over 4
+
+=item Arguments: none
+
+=item Return Value: 1
+
+=back
+
+Deletes the contents of the resultset from its result source. Note that this
+will not run cascade triggers. See L</delete_all> if you need triggers to run.
 
 =cut
 
@@ -685,9 +876,11 @@ sub delete {
         $del->{$1} = $self->{cond}{$key};
       }
     }
+
   } else {
     $self->throw_exception(
-      "Can't delete on resultset with condition unless hash or array");
+      "Can't delete on resultset with condition unless hash or array"
+    );
   }
 
   $self->result_source->storage->delete($self->result_source->from, $del);
@@ -695,6 +888,14 @@ sub delete {
 }
 
 =head2 delete_all
+
+=over 4
+
+=item Arguments: none
+
+=item Return Value: 1
+
+=back
 
 Fetches all objects and deletes them one at a time.  Note that C<delete_all>
 will run cascade triggers while L</delete> will not.
@@ -709,7 +910,15 @@ sub delete_all {
 
 =head2 pager
 
-Returns a L<Data::Page> object for the current resultset. Only makes
+=over 4
+
+=item Arguments: none
+
+=item Return Value: $pager
+
+=back
+
+Return Value a L<Data::Page> object for the current resultset. Only makes
 sense for queries with a C<page> attribute.
 
 =cut
@@ -717,7 +926,8 @@ sense for queries with a C<page> attribute.
 sub pager {
   my ($self) = @_;
   my $attrs = $self->{attrs};
-  $self->throw_exception("Can't create pager for non-paged rs") unless $self->{page};
+  $self->throw_exception("Can't create pager for non-paged rs")
+    unless $self->{page};
   $attrs->{rows} ||= 10;
   return $self->{pager} ||= Data::Page->new(
     $self->_count, $attrs->{rows}, $self->{page});
@@ -725,9 +935,17 @@ sub pager {
 
 =head2 page
 
-=head3 Arguments: ($page_num)
+=over 4
 
-Returns a new resultset for the specified page.
+=item Arguments: $page_number
+
+=item Return Value: $rs
+
+=back
+
+Returns a resultset for the $page_number page of the resultset on which page
+is called, where each page contains a number of rows equal to the 'rows'
+attribute set on the resultset, or 10 by default
 
 =cut
 
@@ -740,9 +958,15 @@ sub page {
 
 =head2 new_result
 
-=head3 Arguments: (\%vals)
+=over 4
 
-Creates a result in the resultset's result class.
+=item Arguments: \%vals
+
+=item Return Value: $object
+
+=back
+
+Creates an object in the resultset's result class and returns it.
 
 =cut
 
@@ -750,8 +974,9 @@ sub new_result {
   my ($self, $values) = @_;
   $self->throw_exception( "new_result needs a hash" )
     unless (ref $values eq 'HASH');
-  $self->throw_exception( "Can't abstract implicit construct, condition not a hash" )
-    if ($self->{cond} && !(ref $self->{cond} eq 'HASH'));
+  $self->throw_exception(
+    "Can't abstract implicit construct, condition not a hash"
+  ) if ($self->{cond} && !(ref $self->{cond} eq 'HASH'));
   my %new = %$values;
   my $alias = $self->{attrs}{alias};
   foreach my $key (keys %{$self->{cond}||{}}) {
@@ -764,9 +989,15 @@ sub new_result {
 
 =head2 create
 
-=head3 Arguments: (\%vals)
+=over 4
 
-Inserts a record into the resultset and returns the object.
+=item Arguments: \%vals
+
+=item Return Value: $object
+
+=back
+
+Inserts a record into the resultset and returns the object representing it.
 
 Effectively a shortcut for C<< ->new_result(\%vals)->insert >>.
 
@@ -774,13 +1005,20 @@ Effectively a shortcut for C<< ->new_result(\%vals)->insert >>.
 
 sub create {
   my ($self, $attrs) = @_;
-  $self->throw_exception( "create needs a hashref" ) unless ref $attrs eq 'HASH';
+  $self->throw_exception( "create needs a hashref" )
+    unless ref $attrs eq 'HASH';
   return $self->new_result($attrs)->insert;
 }
 
 =head2 find_or_create
 
-=head3 Arguments: (\%vals, \%attrs?)
+=over 4
+
+=item Arguments: \%vals, \%attrs?
+
+=item Return Value: $object
+
+=back
 
   $class->find_or_create({ key => $val, ... });
 
@@ -819,7 +1057,15 @@ sub find_or_create {
 
 =head2 update_or_create
 
-  $class->update_or_create({ key => $val, ... });
+=over 4
+
+=item Arguments: \%col_values, { key => $unique_constraint }?
+
+=item Return Value: $object
+
+=back
+
+  $class->update_or_create({ col => $val, ... });
 
 First, search for an existing row matching one of the unique constraints
 (including the primary key) on the source of this resultset.  If a row is
@@ -884,7 +1130,15 @@ sub update_or_create {
 
 =head2 get_cache
 
-Gets the contents of the cache for the resultset.
+=over 4
+
+=item Arguments: none
+
+=item Return Value: \@cache_objects?
+
+=back
+
+Gets the contents of the cache for the resultset if the cache is set
 
 =cut
 
@@ -894,7 +1148,18 @@ sub get_cache {
 
 =head2 set_cache
 
-Sets the contents of the cache for the resultset. Expects an arrayref of objects of the same class as those produced by the resultset.
+=over 4
+
+=item Arguments: \@cache_objects
+
+=item Return Value: \@cache_objects
+
+=back
+
+Sets the contents of the cache for the resultset. Expects an arrayref
+of objects of the same class as those produced by the resultset. Note that
+if the cache is set the resultset will return the cached objects rather
+than re-querying the database even if the cache attr is not set.
 
 =cut
 
@@ -904,13 +1169,22 @@ sub set_cache {
     if ref $data ne 'ARRAY';
   my $result_class = $self->result_class;
   foreach( @$data ) {
-    $self->throw_exception("cannot cache object of type '$_', expected '$result_class'")
-      if ref $_ ne $result_class;
+    $self->throw_exception(
+      "cannot cache object of type '$_', expected '$result_class'"
+    ) if ref $_ ne $result_class;
   }
   $self->{all_cache} = $data;
 }
 
 =head2 clear_cache
+
+=over 4
+
+=item Arguments: none
+
+=item Return Value: []
+
+=back
 
 Clears the cache for the resultset.
 
@@ -922,14 +1196,22 @@ sub clear_cache {
 
 =head2 related_resultset
 
+=over 4
+
+=item Arguments: $relationship_name
+
+=item Return Value: $resultset
+
+=back
+
 Returns a related resultset for the supplied relationship name.
 
-  $rs = $rs->related_resultset('foo');
+  $artist_rs = $schema->resultset('CD')->related_resultset('Artist');
 
 =cut
 
 sub related_resultset {
-  my ( $self, $rel, @rest ) = @_;
+  my ( $self, $rel ) = @_;
   $self->{related_resultsets} ||= {};
   return $self->{related_resultsets}{$rel} ||= do {
       #warn "fetching related resultset for rel '$rel'";
@@ -951,13 +1233,13 @@ sub related_resultset {
                alias => $alias,
                select => undef,
                as => undef }
-           )->search(@rest);      
+           );
   };
 }
 
 =head2 throw_exception
 
-See Schema's throw_exception
+See L<DBIx::Class::Schema/throw_exception> for details.
 
 =cut
 
@@ -966,6 +1248,8 @@ sub throw_exception {
   $self->result_source->schema->throw_exception(@_);
 }
 
+# XXX: FIXME: Attributes docs need clearing up
+
 =head1 ATTRIBUTES
 
 The resultset takes various attributes that modify its behavior. Here's an
@@ -973,12 +1257,23 @@ overview of them:
 
 =head2 order_by
 
-Which column(s) to order the results by. This is currently passed through
-directly to SQL, so you can give e.g. C<foo DESC> for a descending order.
+=over 4
+
+=item Value: ($order_by | \@order_by)
+
+=back
+
+Which column(s) to order the results by. This is currently passed
+through directly to SQL, so you can give e.g. C<year DESC> for a
+descending order on the column `year'.
 
 =head2 columns
 
-=head3 Arguments: (arrayref)
+=over 4
+
+=item Value: \@columns
+
+=back
 
 Shortcut to request a particular set of columns to be retrieved.  Adds
 C<me.> onto the start of any column without a C<.> in it and sets C<select>
@@ -987,73 +1282,89 @@ use the C<cols> attribute, as in earlier versions of DBIC.)
 
 =head2 include_columns
 
-=head3 Arguments: (arrayref)
+=over 4
+
+=item Value: \@columns
+
+=back
 
 Shortcut to include additional columns in the returned results - for example
 
-  { include_columns => ['foo.name'], join => ['foo'] }
+  $schema->resultset('CD')->search(undef, {
+    include_columns => ['artist.name'],
+    join => ['artist']
+  });
 
-would add a 'name' column to the information passed to object inflation
+would return all CDs and include a 'name' column to the information
+passed to object inflation
 
 =head2 select
 
-=head3 Arguments: (arrayref)
+=over 4
+
+=item Value: \@select_columns
+
+=back
 
 Indicates which columns should be selected from the storage. You can use
 column names, or in the case of RDBMS back ends, function or stored procedure
 names:
 
-  $rs = $schema->resultset('Foo')->search(
-    undef,
-    {
-      select => [
-        'column_name',
-        { count => 'column_to_count' },
-        { sum => 'column_to_sum' }
-      ]
-    }
-  );
+  $rs = $schema->resultset('Employee')->search(undef, {
+    select => [
+      'name',
+      { count => 'employeeid' },
+      { sum => 'salary' }
+    ]
+  });
 
 When you use function/stored procedure names and do not supply an C<as>
 attribute, the column names returned are storage-dependent. E.g. MySQL would
-return a column named C<count(column_to_count)> in the above example.
+return a column named C<count(employeeid)> in the above example.
 
 =head2 as
 
-=head3 Arguments: (arrayref)
+=over 4
+
+=item Value: \@inflation_names
+
+=back
 
 Indicates column names for object inflation. This is used in conjunction with
 C<select>, usually when C<select> contains one or more function or stored
 procedure names:
 
-  $rs = $schema->resultset('Foo')->search(
-    undef,
-    {
-      select => [
-        'column1',
-        { count => 'column2' }
-      ],
-      as => [qw/ column1 column2_count /]
-    }
-  );
+  $rs = $schema->resultset('Employee')->search(undef, {
+    select => [
+      'name',
+      { count => 'employeeid' }
+    ],
+    as => ['name', 'employee_count'],
+  });
 
-  my $foo = $rs->first(); # get the first Foo
+  my $employee = $rs->first(); # get the first Employee
 
 If the object against which the search is performed already has an accessor
 matching a column name specified in C<as>, the value can be retrieved using
 the accessor as normal:
 
-  my $column1 = $foo->column1();
+  my $name = $employee->name();
 
 If on the other hand an accessor does not exist in the object, you need to
 use C<get_column> instead:
 
-  my $column2_count = $foo->get_column('column2_count');
+  my $employee_count = $employee->get_column('employee_count');
 
 You can create your own accessors if required - see
 L<DBIx::Class::Manual::Cookbook> for details.
 
 =head2 join
+
+=over 4
+
+=item Value: ($rel_name | \@rel_names | \%rel_names)
+
+=back
 
 Contains a list of relationships that should be joined for this query.  For
 example:
@@ -1087,20 +1398,26 @@ For example:
 If the same join is supplied twice, it will be aliased to <rel>_2 (and
 similarly for a third time). For e.g.
 
-  my $rs = $schema->resultset('Artist')->search(
-    { 'cds.title'   => 'Foo',
-      'cds_2.title' => 'Bar' },
-    { join => [ qw/cds cds/ ] });
+  my $rs = $schema->resultset('Artist')->search({
+    'cds.title'   => 'Down to Earth',
+    'cds_2.title' => 'Popular',
+  }, {
+    join => [ qw/cds cds/ ],
+  });
 
-will return a set of all artists that have both a cd with title Foo and a cd
-with title Bar.
+will return a set of all artists that have both a cd with title 'Down
+to Earth' and a cd with title 'Popular'.
 
 If you want to fetch related objects from other tables as well, see C<prefetch>
 below.
 
 =head2 prefetch
 
-=head3 Arguments: arrayref/hashref
+=over 4
+
+=item Value: ($rel_name | \@rel_names | \%rel_names)
+
+=back
 
 Contains one or more relationships that should be fetched along with the main 
 query (when they are accessed afterwards they will have already been
@@ -1137,7 +1454,11 @@ with an accessor type of 'single' or 'filter').
 
 =head2 from
 
-=head3 Arguments: (arrayref)
+=over 4
+
+=item Value: \@from_clause
+
+=back
 
 The C<from> attribute gives you manual control over the C<FROM> clause of SQL
 statements generated by L<DBIx::Class>, allowing you to express custom C<JOIN>
@@ -1152,7 +1473,7 @@ In simple terms, C<from> works as follows:
     [
         { <alias> => <table>, -join-type => 'inner|left|right' }
         [] # nested JOIN (optional)
-        { <table.column> = <foreign_table.foreign_key> }
+        { <table.column> => <foreign_table.foreign_key> }
     ]
 
     JOIN
@@ -1226,20 +1547,34 @@ with a father in the person table, we could explicitly use C<INNER JOIN>:
 
 =head2 page
 
-For a paged resultset, specifies which page to retrieve.  Leave unset
-for an unpaged resultset.
+=over 4
+
+=item Value: $page
+
+=back
+
+Makes the resultset paged and specifies the page to retrieve. Effectively
+identical to creating a non-pages resultset and then calling ->page($page)
+on it.
 
 =head2 rows
 
-For a paged resultset, how many rows per page:
+=over 4
 
-  rows => 10
+=item Value: $rows
 
-Can also be used to simulate an SQL C<LIMIT>.
+=back
+
+Specifes the maximum number of rows for direct retrieval or the number of
+rows per page if the page attribute or method is used.
 
 =head2 group_by
 
-=head3 Arguments: (arrayref)
+=over 4
+
+=item Value: \@columns
+
+=back
 
 A arrayref of columns to group by. Can include columns of joined tables.
 
@@ -1247,7 +1582,28 @@ A arrayref of columns to group by. Can include columns of joined tables.
 
 =head2 distinct
 
+=over 4
+
+=item Value: (0 | 1)
+
+=back
+
 Set to 1 to group by all columns.
+
+=head2 cache
+
+Set to 1 to cache search results. This prevents extra SQL queries if you
+revisit rows in your ResultSet:
+
+  my $resultset = $schema->resultset('Artist')->search( undef, { cache => 1 } );
+  
+  while( my $artist = $resultset->next ) {
+    ... do stuff ...
+  }
+
+  $rs->first; # without cache, this would issue a query 
+
+By default, searches are not cached.
 
 For more examples of using these attributes, see
 L<DBIx::Class::Manual::Cookbook>.

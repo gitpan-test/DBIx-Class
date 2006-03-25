@@ -18,30 +18,30 @@ DBIx::Class::Schema - composable schemas
 
 =head1 SYNOPSIS
 
-  package My::Schema;
+  package Library::Schema;
   use base qw/DBIx::Class::Schema/;
   
-  # load My::Schema::Foo, My::Schema::Bar, My::Schema::Baz
-  __PACKAGE__->load_classes(qw/Foo Bar Baz/);
+  # load Library::Schema::CD, Library::Schema::Book, Library::Schema::DVD
+  __PACKAGE__->load_classes(qw/CD Book DVD/);
 
-  package My::Schema::Foo;
+  package Library::Schema::CD;
   use base qw/DBIx::Class/;
-  __PACKAGE__->load_components(qw/PK::Auto::Pg Core/); # for example
-  __PACKAGE__->table('foo');
+  __PACKAGE__->load_components(qw/PK::Auto Core/); # for example
+  __PACKAGE__->table('cd');
 
   # Elsewhere in your code:
-  my $schema1 = My::Schema->connect(
+  my $schema1 = Library::Schema->connect(
     $dsn,
     $user,
     $password,
-    $attrs
+    { AutoCommit => 0 },
   );
   
-  my $schema2 = My::Schema->connect($coderef_returning_dbh);
+  my $schema2 = Library::Schema->connect($coderef_returning_dbh);
 
-  # fetch objects using My::Schema::Foo
-  my $resultset = $schema1->resultset('Foo')->search( ... );
-  my @objects = $schema2->resultset('Foo')->search( ... );
+  # fetch objects using Library::Schema::DVD
+  my $resultset = $schema1->resultset('DVD')->search( ... );
+  my @dvd_objects = $schema2->resultset('DVD')->search( ... );
 
 =head1 DESCRIPTION
 
@@ -57,9 +57,14 @@ particular which module inherits off which.
 
 =head2 register_class
 
-=head3 Arguments: <moniker> <component_class>
+=over 4
 
-Registers a class which isa ResultSourceProxy; equivalent to calling
+=item Arguments: $moniker, $component_class
+
+=back
+
+Registers a class which isa L<DBIx::Class::ResultSourceProxy>. Equivalent to
+calling
 
   $schema->register_source($moniker, $component_class->result_source_instance);
 
@@ -72,9 +77,14 @@ sub register_class {
 
 =head2 register_source
 
-=head3 Arguments: <moniker> <result source>
+=over 4
 
-Registers the result source in the schema with the given moniker
+=item Arguments: $moniker, $result_source
+
+=back
+
+Registers the L<DBIx::Class::ResultSource> in the schema with the given
+moniker.
 
 =cut
 
@@ -93,9 +103,19 @@ sub register_source {
 
 =head2 class
 
-  my $class = $schema->class('Foo');
+=over 4
 
-Retrieves the result class name for a given result source
+=item Arguments: $moniker
+
+=item Return Value: $classname
+
+=back
+
+Retrieves the result class name for the given moniker.
+
+e.g.,
+
+  my $class = $schema->class('CD');
 
 =cut
 
@@ -106,9 +126,17 @@ sub class {
 
 =head2 source
 
-  my $source = $schema->source('Foo');
+=over 4
 
-Returns the result source object for the registered name
+=item Arguments: $moniker
+
+=item Return Value: $result_source
+
+=back
+
+  my $source = $schema->source('Book');
+
+Returns the L<DBIx::Class::ResultSource> object for the registered moniker.
 
 =cut
 
@@ -126,9 +154,17 @@ sub source {
 
 =head2 sources
 
-  my @source_monikers = $schema->sources;
+=over 4
 
-Returns the source monikers of all source registrations on this schema
+=item Return Value: @source_monikers
+
+=back
+
+Returns the source monikers of all source registrations on this schema.
+
+e.g.,
+
+  my @source_monikers = $schema->sources;
 
 =cut
 
@@ -136,9 +172,17 @@ sub sources { return keys %{shift->source_registrations}; }
 
 =head2 resultset
 
-  my $rs = $schema->resultset('Foo');
+=over 4
 
-Returns the resultset for the registered moniker
+=item Arguments: $moniker
+
+=item Return Value: $result_set
+
+=back
+
+  my $rs = $schema->resultset('DVD');
+
+Returns the L<DBIx::Class::ResultSet> object for the registered moniker.
 
 =cut
 
@@ -149,15 +193,30 @@ sub resultset {
 
 =head2 load_classes
 
-=head3 Arguments: [<classes>, (<class>, <class>), {<namespace> => [<classes>]}]
+=over 4
 
-Uses L<Module::Find> to find all classes under the database class' namespace,
-or uses the classes you select.  Then it loads the component (using L<use>), 
-and registers them (using B<register_class>);
+=item Arguments: @classes?, { $namespace => [ @classes ] }+
+
+=back
+
+With no arguments, this method uses L<Module::Find> to find all classes under
+the schema's namespace. Otherwise, this method loads the classes you specify
+(using L<use>), and registers them (using L</"register_class">).
 
 It is possible to comment out classes with a leading '#', but note that perl
 will think it's a mistake (trying to use a comment in a qw list) so you'll
 need to add "no warnings 'qw';" before your load_classes call.
+
+e.g.,
+
+  My::Schema->load_classes(); # loads My::Schema::CD, My::Schema::Artist,
+			      # etc. (anything under the My::Schema namespace)
+
+  # loads My::Schema::CD, My::Schema::Artist, Other::Namespace::Producer but
+  # not Other::Namespace::LinerNotes nor My::Schema::Track
+  My::Schema->load_classes(qw/ CD Artist #Track /, {
+    Other::Namespace => [qw/ Producer #LinerNotes /],
+  });
 
 =cut
 
@@ -190,9 +249,11 @@ sub load_classes {
     }
   } else {
     eval "require Module::Find;";
-    $class->throw_exception("No arguments to load_classes and couldn't load".
-      " Module::Find ($@)") if $@;
-    my @comp = map { substr $_, length "${class}::"  } Module::Find::findallmod($class);
+    $class->throw_exception(
+      "No arguments to load_classes and couldn't load Module::Find ($@)"
+    ) if $@;
+    my @comp = map { substr $_, length "${class}::"  }
+                 Module::Find::findallmod($class);
     $comps_for{$class} = \@comp;
   }
 
@@ -223,27 +284,25 @@ sub load_classes {
 
 =head2 compose_connection
 
-=head3 Arguments: <target> <@db_info>
+=over 4
 
-This is the most important method in this class. it takes a target namespace,
-as well as dbh connection info, and creates a L<DBIx::Class::DB> class as
-well as subclasses for each of your database classes in this namespace, using
-this connection.
+=item Arguments: $target_namespace, @db_info
 
-It will also setup a ->class method on the target class, which lets you
-resolve database classes based on the schema component name, for example
+=item Return Value: $new_schema
 
-  MyApp::DB->class('Foo') # returns MyApp::DB::Foo, 
-                          # which ISA MyApp::Schema::Foo
+=back
 
-This is the recommended API for accessing Schema generated classes, and 
-using it might give you instant advantages with future versions of DBIC.
+Calls L<DBIx::Class::schema/"compose_namespace"> to the target namespace,
+calls L<DBIx::Class::Schema/connection>(@db_info) on the new schema, then
+injects the L<DBix::Class::ResultSetProxy> component and a resultset_instance
+classdata entry on all the new classes in order to support
+$target_namespaces::$class->search(...) method calls.
 
-WARNING: Loading components into Schema classes after compose_connection
-may not cause them to be seen by the classes in your target namespace due
-to the dispatch table approach used by Class::C3. If you do this you may find
-you need to call Class::C3->reinitialize() afterwards to get the behaviour
-you expect.
+This is primarily useful when you have a specific need for class method access
+to a connection. In normal usage it is preferred to call
+L<DBIx::Class::Schema/connect> and use the resulting schema object to operate
+on L<DBIx::Class::ResultSet> objects with L<DBIx::Class::Schema/resultset> for
+more information.
 
 =cut
 
@@ -251,8 +310,9 @@ sub compose_connection {
   my ($self, $target, @info) = @_;
   my $base = 'DBIx::Class::ResultSetProxy';
   eval "require ${base};";
-  $self->throw_exception("No arguments to load_classes and couldn't load".
-      " ${base} ($@)") if $@;
+  $self->throw_exception
+    ("No arguments to load_classes and couldn't load ${base} ($@)")
+      if $@;
 
   if ($self eq $target) {
     # Pathological case, largely caused by the docs on early C::M::DBIC::Plain
@@ -285,6 +345,39 @@ sub compose_connection {
   return $schema;
 }
 
+=head2 compose_namespace
+
+=over 4
+
+=item Arguments: $target_namespace, $additional_base_class?
+
+=item Return Value: $new_schema
+
+=back
+
+For each L<DBIx::Class::ResultSource> in the schema, this method creates a
+class in the target namespace (e.g. $target_namespace::CD,
+$target_namespace::Artist) that inherits from the corresponding classes
+attached to the current schema.
+
+It also attaches a corresponding L<DBIx::Class::ResultSource> object to the
+new $schema object. If C<$additional_base_class> is given, the new composed
+classes will inherit from first the corresponding classe from the current
+schema then the base class.
+
+e.g. (for a schema with My::Schema::CD and My::Schema::Artist classes),
+
+  $schema->compose_namespace('My::DB', 'Base::Class');
+  print join (', ', @My::DB::CD::ISA) . "\n";
+  print join (', ', @My::DB::Artist::ISA) ."\n";
+
+Will produce the output
+
+  My::Schema::CD, Base::Class
+  My::Schema::Artist, Base::Class
+
+=cut
+
 sub compose_namespace {
   my ($self, $target, $base) = @_;
   my %reg = %{ $self->source_registrations };
@@ -316,10 +409,14 @@ sub compose_namespace {
 
 =head2 setup_connection_class
 
-=head3 Arguments: <$target> <@info>
+=over 4
 
-Sets up a database connection class to inject between the schema
-and the subclasses the schema creates.
+=item Arguments: $target, @info
+
+=back
+
+Sets up a database connection class to inject between the schema and the
+subclasses that the schema creates.
 
 =cut
 
@@ -332,11 +429,18 @@ sub setup_connection_class {
 
 =head2 connection
 
-=head3 Arguments: (@args)
+=over 4
 
-Instantiates a new Storage object of type storage_type and passes the
-arguments to $storage->connect_info. Sets the connection in-place on
-the schema.
+=item Arguments: @args
+
+=item Return Value: $new_schema
+
+=back
+
+Instantiates a new Storage object of type
+L<DBIx::Class::Schema/"storage_type"> and passes the arguments to
+$storage->connect_info. Sets the connection in-place on the schema. See
+L<DBIx::Class::Storage::DBI/"connect_info"> for more information.
 
 =cut
 
@@ -347,8 +451,9 @@ sub connection {
   $storage_class = 'DBIx::Class::Storage'.$storage_class
     if $storage_class =~ m/^::/;
   eval "require ${storage_class};";
-  $self->throw_exception("No arguments to load_classes and couldn't load".
-      " ${storage_class} ($@)") if $@;
+  $self->throw_exception(
+    "No arguments to load_classes and couldn't load ${storage_class} ($@)"
+  ) if $@;
   my $storage = $storage_class->new;
   $storage->connect_info(\@info);
   $self->storage($storage);
@@ -357,9 +462,17 @@ sub connection {
 
 =head2 connect
 
-=head3 Arguments: (@info)
+=over 4
 
-Conveneience method, equivalent to $schema->clone->connection(@info)
+=item Arguments: @info
+
+=item Return Value: $new_schema
+
+=back
+
+This is a convenience method. It is equivalent to calling
+$schema->clone->connection(@info). See L</connection> and L</clone> for more
+information.
 
 =cut
 
@@ -367,7 +480,9 @@ sub connect { shift->clone->connection(@_) }
 
 =head2 txn_begin
 
-Begins a transaction (does nothing if AutoCommit is off).
+Begins a transaction (does nothing if AutoCommit is off). Equivalent to
+calling $schema->storage->txn_begin. See
+L<DBIx::Class::Storage::DBI/"txn_begin"> for more information.
 
 =cut
 
@@ -375,7 +490,9 @@ sub txn_begin { shift->storage->txn_begin }
 
 =head2 txn_commit
 
-Commits the current transaction.
+Commits the current transaction. Equivalent to calling
+$schema->storage->txn_commit. See L<DBIx::Class::Storage::DBI/"txn_commit">
+for more information.
 
 =cut
 
@@ -383,7 +500,9 @@ sub txn_commit { shift->storage->txn_commit }
 
 =head2 txn_rollback
 
-Rolls back the current transaction.
+Rolls back the current transaction. Equivalent to calling
+$schema->storage->txn_rollback. See
+L<DBIx::Class::Storage::DBI/"txn_rollback"> for more information.
 
 =cut
 
@@ -391,32 +510,37 @@ sub txn_rollback { shift->storage->txn_rollback }
 
 =head2 txn_do
 
-=head3 Arguments: <$coderef>, [@coderef_args]
+=over 4
 
-Executes C<$coderef> with (optional) arguments C<@coderef_args>
-transactionally, returning its result (if any). If an exception is
-caught, a rollback is issued and the exception is rethrown. If the
-rollback fails, (i.e. throws an exception) an exception is thrown that
-includes a "Rollback failed" message.
+=item Arguments: C<$coderef>, @coderef_args?
+
+=item Return Value: The return value of $coderef
+
+=back
+
+Executes C<$coderef> with (optional) arguments C<@coderef_args> atomically,
+returning its result (if any). If an exception is caught, a rollback is issued
+and the exception is rethrown. If the rollback fails, (i.e. throws an
+exception) an exception is thrown that includes a "Rollback failed" message.
 
 For example,
 
-  my $foo = $schema->resultset('foo')->find(1);
+  my $author_rs = $schema->resultset('Author')->find(1);
 
   my $coderef = sub {
-    my ($foo, @bars) = @_;
+    my ($author, @titles) = @_;
 
     # If any one of these fails, the entire transaction fails
-    $foo->create_related('bars', {
-      col => $_
-    }) foreach (@bars);
+    $author->create_related('books', {
+      title => $_
+    }) foreach (@titles);
 
-    return $foo->bars;
+    return $author->books;
   };
 
   my $rs;
   eval {
-    $rs = $schema->txn_do($coderef, $foo, qw/foo bar baz/);
+    $rs = $schema->txn_do($coderef, $author_rs, qw/Night Day It/);
   };
 
   if ($@) {
@@ -425,12 +549,13 @@ For example,
       die "something terrible has happened!";
     } else {
       deal_with_failed_transaction();
-      die $error;
     }
   }
 
-Nested transactions work as expected (i.e. only the outermost
-transaction will issue a txn_commit on the Schema's storage)
+In a nested transaction (calling txn_do() from within a txn_do() coderef) only
+the outermost transaction will issue a L<DBIx::Class::Schema/"txn_commit"> on
+the Schema's storage, and txn_do() can be called in void, scalar and list
+context and it will behave as expected.
 
 =cut
 
@@ -446,15 +571,22 @@ sub txn_do {
 
   $self->txn_begin; # If this throws an exception, no rollback is needed
 
-  my $wantarray = wantarray; # Need to save this since it's reset in eval{}
-
+  my $wantarray = wantarray; # Need to save this since the context
+			     # inside the eval{} block is independent
+			     # of the context that called txn_do()
   eval {
-    # Need to differentiate between scalar/list context to allow for returning
-    # a list in scalar context to get the size of the list
+
+    # Need to differentiate between scalar/list context to allow for
+    # returning a list in scalar context to get the size of the list
     if ($wantarray) {
+      # list context
       @return_values = $coderef->(@args);
-    } else {
+    } elsif (defined $wantarray) {
+      # scalar context
       $return_value = $coderef->(@args);
+    } else {
+      # void context
+      $coderef->(@args);
     }
     $self->txn_commit;
   };
@@ -472,8 +604,9 @@ sub txn_do {
       $self->throw_exception($error)  # propagate nested rollback
 	if $rollback_error =~ /$exception_class/;
 
-      $self->throw_exception("Transaction aborted: $error. Rollback failed: ".
-                             $rollback_error);
+      $self->throw_exception(
+        "Transaction aborted: $error. Rollback failed: ${rollback_error}"
+      );
     } else {
       $self->throw_exception($error); # txn failed but rollback succeeded
     }
@@ -483,6 +616,12 @@ sub txn_do {
 }
 
 =head2 clone
+
+=over 4
+
+=item Return Value: $new_schema
+
+=back
 
 Clones the schema and its associated result_source objects and returns the
 copy.
@@ -502,16 +641,22 @@ sub clone {
 
 =head2 populate
 
-=head3 Arguments: ($moniker, \@data);
+=over 4
+
+=item Arguments: $moniker, \@data;
+
+=back
 
 Populates the source registered with the given moniker with the supplied data.
-@data should be a list of listrefs, the first containing column names, the
-second matching values - i.e.
+@data should be a list of listrefs -- the first containing column names, the
+second matching values.
 
-  $schema->populate('Foo', [
-    [ qw/foo_id foo_string/ ],
-    [ 1, 'One' ],
-    [ 2, 'Two' ],
+i.e.,
+
+  $schema->populate('Artist', [
+    [ qw/artistid name/ ],
+    [ 1, 'Popular Band' ],
+    [ 2, 'Indie Band' ],
     ...
   ]);
 
@@ -532,7 +677,14 @@ sub populate {
 
 =head2 throw_exception
 
-Defaults to using Carp::Clan to report errors from user perspective.
+=over 4 
+
+=item Arguments: $message
+
+=back
+
+Throws an exception. Defaults to using L<Carp::Clan> to report errors from
+user's perspective.
 
 =cut
 
@@ -541,9 +693,18 @@ sub throw_exception {
   croak @_;
 }
 
-=head2 deploy
+=head2 deploy (EXPERIMENTAL)
 
-Attempts to deploy the schema to the current storage
+=over 4
+
+=item Arguments: $sqlt_args
+
+=back
+
+Attempts to deploy the schema to the current storage using L<SQL::Translator>.
+
+Note that this feature is currently EXPERIMENTAL and may not work correctly
+across all databases, or fully handle complex relationships.
 
 =cut
 

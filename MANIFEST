@@ -32,12 +32,11 @@ lib/DBIx/Class/Cursor.pm
 lib/DBIx/Class/DB.pm
 lib/DBIx/Class/InflateColumn.pm
 lib/DBIx/Class/Manual.pod
+lib/DBIx/Class/Manual/Component.pod
 lib/DBIx/Class/Manual/Cookbook.pod
-lib/DBIx/Class/Manual/ExampleSchema.pod
-lib/DBIx/Class/Manual/FAQ.pod
+lib/DBIx/Class/Manual/Example.pod
 lib/DBIx/Class/Manual/Glossary.pod
 lib/DBIx/Class/Manual/Intro.pod
-lib/DBIx/Class/Manual/SchemaIntro.pod
 lib/DBIx/Class/Manual/Troubleshooting.pod
 lib/DBIx/Class/PK.pm
 lib/DBIx/Class/PK/Auto.pm
@@ -91,10 +90,7 @@ lib/SQL/Translator/Parser/DBIx/Class.pm
 lib/SQL/Translator/Producer/DBIx/Class/File.pm
 Makefile.PL
 MANIFEST			This list of files
-META.yml
-README
 t/02pod.t
-t/03podcoverage.t.disabled
 t/04dont_break_c3.t
 t/05components.t
 t/18inserterror.t
@@ -250,3 +246,5 @@ t/testlib/MyStarLinkMCPK.pm
 t/testlib/Order.pm
 t/testlib/OtherFilm.pm
 t/testlib/PgBase.pm
+META.yml
+README

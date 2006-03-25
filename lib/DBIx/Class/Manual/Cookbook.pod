@@ -169,6 +169,37 @@ L<DBIx::Class> supports C<GROUP BY> as follows:
   # LEFT JOIN cd cds ON ( cds.artist = me.artistid )
   # GROUP BY name
 
+=head3 Predefined searches
+
+You can write your own DBIx::Class::ResultSet class by inheriting from it
+and define often used searches as methods:
+
+  package My::DBIC::ResultSet::CD;
+  use strict;
+  use warnings;
+  use base 'DBIx::Class::ResultSet';
+
+  sub search_cds_ordered {
+      my ($self) = @_;
+
+      return $self->search(
+          {},
+          { order_by => 'name DESC' },
+      );
+  }
+
+  1;
+
+To use your resultset, first tell DBIx::Class to create an instance of it
+for you, in your My::DBIC::Schema::CD class:
+
+  __PACKAGE__->resultset_class('My::DBIC::ResultSet::CD');
+
+Then call your new method in your code:
+
+   my $ordered_cds = $schema->resultset('CD')->search_cds_ordered();
+
+
 =head2 Using joins and prefetch
 
 You can use the C<join> attribute to allow searching on, or sorting your
@@ -362,7 +393,7 @@ example of the recommended way to use it:
     $genus->add_to_species({ name => 'troglodyte' });
     $genus->wings(2);
     $genus->update;
-    $schema->txn_do($code, $genus); # Can have a nested transation
+    $schema->txn_do($code, $genus); # Can have a nested transaction
     return $genus->species;
   };
 
@@ -511,7 +542,7 @@ instead:
   print $output;
 
 You could use L<Module::Find> to search for all subclasses in the MyDB::*
-namespace, which is currently left as an excercise for the reader.
+namespace, which is currently left as an exercise for the reader.
 
 =head2 Schema versioning
 
@@ -626,7 +657,7 @@ The first sets the quotesymbols. If the quote i "symmetric" as " or '
   
   __PACKAGE__->storage->sql_maker->quote_char('"');
 
-is enough. If the left qoute differs form the right quote, the first 
+is enough. If the left quote differs form the right quote, the first 
 notation should be used. name_sep needs to be set to allow the 
 SQL generator to put the quotes the correct place. 
 
