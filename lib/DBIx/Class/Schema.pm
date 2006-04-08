@@ -50,7 +50,7 @@ use L<DBIx::Class> and allows you to use more than one concurrent connection
 with your classes.
 
 NB: If you're used to L<Class::DBI> it's worth reading the L</SYNOPSIS>
-carefully as DBIx::Class does things a little differently. Note in
+carefully, as DBIx::Class does things a little differently. Note in
 particular which module inherits off which.
 
 =head1 METHODS
@@ -64,7 +64,7 @@ particular which module inherits off which.
 =back
 
 Registers a class which isa L<DBIx::Class::ResultSourceProxy>. Equivalent to
-calling
+calling:
 
   $schema->register_source($moniker, $component_class->result_source_instance);
 
@@ -99,7 +99,7 @@ sub register_source {
     $map{$source->result_class} = $moniker;
     $self->class_mappings(\%map);
   }
-} 
+}
 
 =head2 class
 
@@ -111,9 +111,7 @@ sub register_source {
 
 =back
 
-Retrieves the result class name for the given moniker.
-
-e.g.,
+Retrieves the result class name for the given moniker. For example:
 
   my $class = $schema->class('CD');
 
@@ -161,8 +159,7 @@ sub source {
 =back
 
 Returns the source monikers of all source registrations on this schema.
-
-e.g.,
+For example:
 
   my @source_monikers = $schema->sources;
 
@@ -203,14 +200,14 @@ With no arguments, this method uses L<Module::Find> to find all classes under
 the schema's namespace. Otherwise, this method loads the classes you specify
 (using L<use>), and registers them (using L</"register_class">).
 
-It is possible to comment out classes with a leading '#', but note that perl
-will think it's a mistake (trying to use a comment in a qw list) so you'll
-need to add "no warnings 'qw';" before your load_classes call.
+It is possible to comment out classes with a leading C<#>, but note that perl
+will think it's a mistake (trying to use a comment in a qw list), so you'll
+need to add C<no warnings 'qw';> before your load_classes call.
 
-e.g.,
+Example:
 
   My::Schema->load_classes(); # loads My::Schema::CD, My::Schema::Artist,
-			      # etc. (anything under the My::Schema namespace)
+                              # etc. (anything under the My::Schema namespace)
 
   # loads My::Schema::CD, My::Schema::Artist, Other::Namespace::Producer but
   # not Other::Namespace::LinerNotes nor My::Schema::Track
@@ -266,9 +263,9 @@ sub load_classes {
         my $comp_class = "${prefix}::${comp}";
         eval "use $comp_class"; # If it fails, assume the user fixed it
         if ($@) {
-	  $comp_class =~ s/::/\//g;
+          $comp_class =~ s/::/\//g;
           die $@ unless $@ =~ /Can't locate.+$comp_class\.pm\sin\s\@INC/;
-	  warn $@ if $@;
+          warn $@ if $@;
         }
         push(@to_register, [ $comp, $comp_class ]);
       }
@@ -292,10 +289,10 @@ sub load_classes {
 
 =back
 
-Calls L<DBIx::Class::schema/"compose_namespace"> to the target namespace,
-calls L<DBIx::Class::Schema/connection>(@db_info) on the new schema, then
-injects the L<DBix::Class::ResultSetProxy> component and a resultset_instance
-classdata entry on all the new classes in order to support
+Calls L<DBIx::Class::Schema/"compose_namespace"> to the target namespace,
+calls L<DBIx::Class::Schema/connection> with @db_info on the new schema,
+then injects the L<DBix::Class::ResultSetProxy> component and a
+resultset_instance classdata entry on all the new classes, in order to support
 $target_namespaces::$class->search(...) method calls.
 
 This is primarily useful when you have a specific need for class method access
@@ -365,13 +362,13 @@ new $schema object. If C<$additional_base_class> is given, the new composed
 classes will inherit from first the corresponding classe from the current
 schema then the base class.
 
-e.g. (for a schema with My::Schema::CD and My::Schema::Artist classes),
+For example, for a schema with My::Schema::CD and My::Schema::Artist classes,
 
   $schema->compose_namespace('My::DB', 'Base::Class');
   print join (', ', @My::DB::CD::ISA) . "\n";
   print join (', ', @My::DB::Artist::ISA) ."\n";
 
-Will produce the output
+will produce the output
 
   My::Schema::CD, Base::Class
   My::Schema::Artist, Base::Class
@@ -572,8 +569,8 @@ sub txn_do {
   $self->txn_begin; # If this throws an exception, no rollback is needed
 
   my $wantarray = wantarray; # Need to save this since the context
-			     # inside the eval{} block is independent
-			     # of the context that called txn_do()
+                             # inside the eval{} block is independent
+                             # of the context that called txn_do()
   eval {
 
     # Need to differentiate between scalar/list context to allow for
@@ -602,7 +599,7 @@ sub txn_do {
       my $rollback_error = $@;
       my $exception_class = "DBIx::Class::Storage::NESTED_ROLLBACK_EXCEPTION";
       $self->throw_exception($error)  # propagate nested rollback
-	if $rollback_error =~ /$exception_class/;
+        if $rollback_error =~ /$exception_class/;
 
       $self->throw_exception(
         "Transaction aborted: $error. Rollback failed: ${rollback_error}"
@@ -677,7 +674,7 @@ sub populate {
 
 =head2 throw_exception
 
-=over 4 
+=over 4
 
 =item Arguments: $message
 

@@ -18,12 +18,34 @@ use base qw/SQL::Abstract::Limit/;
 
 sub select {
   my ($self, $table, $fields, $where, $order, @rest) = @_;
+  $table = $self->_quote($table) unless ref($table);
   @rest = (-1) unless defined $rest[0];
   local $self->{having_bind} = [];
   my ($sql, @ret) = $self->SUPER::select(
     $table, $self->_recurse_fields($fields), $where, $order, @rest
   );
   return wantarray ? ($sql, @ret, @{$self->{having_bind}}) : $sql;
+}
+
+sub insert {
+  my $self = shift;
+  my $table = shift;
+  $table = $self->_quote($table) unless ref($table);
+  $self->SUPER::insert($table, @_);
+}
+
+sub update {
+  my $self = shift;
+  my $table = shift;
+  $table = $self->_quote($table) unless ref($table);
+  $self->SUPER::update($table, @_);
+}
+
+sub delete {
+  my $self = shift;
+  my $table = shift;
+  $table = $self->_quote($table) unless ref($table);
+  $self->SUPER::delete($table, @_);
 }
 
 sub _emulate_limit {
@@ -90,7 +112,12 @@ sub _table {
   } elsif (ref $from eq 'HASH') {
     return $self->_make_as($from);
   } else {
-    return $from;
+    return $from; # would love to quote here but _table ends up getting called
+                  # twice during an ->select without a limit clause due to
+                  # the way S::A::Limit->select works. should maybe consider
+                  # bypassing this and doing S::A::select($self, ...) in
+                  # our select method above. meantime, quoting shims have
+                  # been added to select/insert/update/delete here
   }
 }
 
@@ -236,7 +263,7 @@ sub throw_exception {
   croak($msg);
 }
 
-=head1 NAME 
+=head1 NAME
 
 DBIx::Class::Storage::DBI - DBI storage handler
 
@@ -364,17 +391,20 @@ sub _connect {
       $DBI::connect_via = 'connect';
   }
 
-  if(ref $info[0] eq 'CODE') {
-      $dbh = &{$info[0]};
-  }
-  else {
-      $dbh = DBI->connect(@info);
-  }
+  eval {
+    if(ref $info[0] eq 'CODE') {
+        $dbh = &{$info[0]};
+    }
+    else {
+        $dbh = DBI->connect(@info);
+    }
+  };
 
   $DBI::connect_via = $old_connect_via if $old_connect_via;
 
-  $self->throw_exception("DBI Connection failed: $DBI::errstr")
-      unless $dbh;
+  if (!$dbh || $@) {
+    $self->throw_exception("DBI Connection failed: " . ($@ || $DBI::errstr));
+  }
 
   $dbh;
 }
@@ -390,8 +420,11 @@ an entire code block to be executed transactionally.
 
 sub txn_begin {
   my $self = shift;
-  $self->dbh->begin_work
-    if $self->{transaction_depth}++ == 0 and $self->dbh->{AutoCommit};
+  if (($self->{transaction_depth}++ == 0) and ($self->dbh->{AutoCommit})) {
+    $self->debugfh->print("BEGIN WORK\n")
+      if ($self->debug);
+    $self->dbh->begin_work;
+  }
 }
 
 =head2 txn_commit
@@ -403,10 +436,18 @@ Issues a commit against the current dbh.
 sub txn_commit {
   my $self = shift;
   if ($self->{transaction_depth} == 0) {
-    $self->dbh->commit unless $self->dbh->{AutoCommit};
+    unless ($self->dbh->{AutoCommit}) {
+      $self->debugfh->print("COMMIT\n")
+        if ($self->debug);
+      $self->dbh->commit;
+    }
   }
   else {
-    $self->dbh->commit if --$self->{transaction_depth} == 0;    
+    if (--$self->{transaction_depth} == 0) {
+      $self->debugfh->print("COMMIT\n")
+        if ($self->debug);
+      $self->dbh->commit;
+    }
   }
 }
 
@@ -423,12 +464,21 @@ sub txn_rollback {
 
   eval {
     if ($self->{transaction_depth} == 0) {
-      $self->dbh->rollback unless $self->dbh->{AutoCommit};
+      unless ($self->dbh->{AutoCommit}) {
+        $self->debugfh->print("ROLLBACK\n")
+          if ($self->debug);
+        $self->dbh->rollback;
+      }
     }
     else {
-      --$self->{transaction_depth} == 0 ?
-        $self->dbh->rollback :
+      if (--$self->{transaction_depth} == 0) {
+        $self->debugfh->print("ROLLBACK\n")
+          if ($self->debug);
+        $self->dbh->rollback;
+      }
+      else {
         die DBIx::Class::Storage::NESTED_ROLLBACK_EXCEPTION->new;
+      }
     }
   };
 
@@ -449,14 +499,21 @@ sub _execute {
       my @debug_bind = map { defined $_ ? qq{`$_'} : q{`NULL'} } @bind;
       $self->debugfh->print("$sql: " . join(', ', @debug_bind) . "\n");
   }
-  my $sth = $self->sth($sql,$op);
-  $self->throw_exception("no sth generated via sql: $sql") unless $sth;
+  my $sth = eval { $self->sth($sql,$op) };
+
+  if (!$sth || $@) {
+    $self->throw_exception('no sth generated via sql (' . ($@ || $self->_dbh->errstr) . "): $sql");
+  }
+
   @bind = map { ref $_ ? ''.$_ : $_ } @bind; # stringify args
   my $rv;
-  if ($sth) {  
-    $rv = $sth->execute(@bind)
-      or $self->throw_exception("Error executing '$sql': " . $sth->errstr);
-  } else { 
+  if ($sth) {
+    $rv = eval { $sth->execute(@bind) };
+
+    if ($@ || !$rv) {
+      $self->throw_exception("Error executing '$sql': ".($@ || $sth->errstr));
+    }
+  } else {
     $self->throw_exception("'$sql' did not generate a statement.");
   }
   return (wantarray ? ($rv, $sth, @bind) : $rv);
@@ -600,7 +657,7 @@ sub deployment_statements {
   eval "use SQL::Translator";
   $self->throw_exception("Can't deploy without SQL::Translator: $@") if $@;
   eval "use SQL::Translator::Parser::DBIx::Class;";
-  $self->throw_exception($@) if $@; 
+  $self->throw_exception($@) if $@;
   eval "use SQL::Translator::Producer::${type};";
   $self->throw_exception($@) if $@;
   my $tr = SQL::Translator->new(%$sqltargs);
@@ -610,11 +667,12 @@ sub deployment_statements {
 
 sub deploy {
   my ($self, $schema, $type, $sqltargs) = @_;
-  my @statements = $self->deployment_statements($schema, $type, $sqltargs);
-  foreach(split(";\n", @statements)) {
-    $self->debugfh->print("$_\n") if $self->debug;
-    $self->dbh->do($_) or warn "SQL was:\n $_";
-  } 
+  foreach my $statement ( $self->deployment_statements($schema, $type, $sqltargs) ) {
+    for ( split(";\n", $statement)) {
+      $self->debugfh->print("$_\n") if $self->debug;
+      $self->dbh->do($_) or warn "SQL was:\n $_";
+    }
+  }
 }
 
 sub DESTROY { shift->disconnect }

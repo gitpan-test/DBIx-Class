@@ -37,7 +37,7 @@ __PACKAGE__->load_own_components(qw/
             #DBIx::Class::ObjIndexStubs
 1;
 
-=head1 NAME 
+=head1 NAME
 
 DBIx::Class::CDBICompat - Class::DBI Compatibility layer.
 
@@ -51,12 +51,12 @@ DBIx::Class::CDBICompat - Class::DBI Compatibility layer.
 DBIx::Class features a fully featured compatibility layer with L<Class::DBI>
 to ease transition for existing CDBI users. In fact, this class is just a
 receipe containing all the features emulated. If you like, you can choose
-which features to emulate by building your own class and loading it like 
+which features to emulate by building your own class and loading it like
 this:
 
   __PACKAGE__->load_own_components(qw/CDBICompat/);
 
-this will automatically load the features included in My::DB::CDBICompat, 
+this will automatically load the features included in My::DB::CDBICompat,
 provided it looks something like this:
 
   package My::DB::CDBICompat;
@@ -68,7 +68,7 @@ provided it looks something like this:
     CDBICompat::MightHave
   /);
 
-=head1 Components
+=head1 COMPONENTS
 
 =over 4
 
@@ -94,11 +94,7 @@ Allows you to turn on automatic updates for column values.
 
 =item HasA
 
-Responsible for HasA relationships. 
-
 =item HasMany
-
-Responsible for HasMany relationships. 
 
 =item ImaDBI
 
@@ -111,8 +107,6 @@ in the perl interpreter.
 
 =item MightHave
 
-Responsible for MightHave relationships. 
-
 =item ObjIndexStubs
 
 =item ReadOnly
@@ -124,8 +118,6 @@ Responsible for MightHave relationships.
 =item TempColumns
 
 =item Triggers
-
-This class implements the trigger functionality.
 
 =item PassThrough
 
