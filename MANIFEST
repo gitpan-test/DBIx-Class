@@ -92,7 +92,8 @@ lib/SQL/Translator/Parser/DBIx/Class.pm
 lib/SQL/Translator/Producer/DBIx/Class/File.pm
 Makefile.PL
 MANIFEST			This list of files
-out.png
+META.yml
+README
 t/02pod.t
 t/03podcoverage.t.disabled
 t/04dont_break_c3.t
@@ -100,6 +101,7 @@ t/05components.t
 t/18inserterror.t
 t/19quotes.t
 t/20setuperrors.t
+t/26dumper.t
 t/30dbicplain.t
 t/40resultsetmanager.t
 t/41orrible.t
@@ -252,5 +254,3 @@ t/testlib/MyStarLinkMCPK.pm
 t/testlib/Order.pm
 t/testlib/OtherFilm.pm
 t/testlib/PgBase.pm
-META.yml
-README

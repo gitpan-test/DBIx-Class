@@ -195,44 +195,44 @@ call it as C<search(undef, \%attrs)>.
 
 sub search {
   my $self = shift;
-
-  my $rs;
-  if( @_ ) {
     
-    my $attrs = { %{$self->{attrs}} };
-    my $having = delete $attrs->{having};
-    $attrs = { %$attrs, %{ pop(@_) } } if @_ > 1 and ref $_[$#_] eq 'HASH';
+  my $attrs = { %{$self->{attrs}} };
+  my $having = delete $attrs->{having};
+  $attrs = { %$attrs, %{ pop(@_) } } if @_ > 1 and ref $_[$#_] eq 'HASH';
 
-    my $where = (@_
-                  ? ((@_ == 1 || ref $_[0] eq "HASH")
-                      ? shift
-                      : ((@_ % 2)
-                          ? $self->throw_exception(
-                              "Odd number of arguments to search")
-                          : {@_}))
-                  : undef());
-    if (defined $where) {
-      $attrs->{where} = (defined $attrs->{where}
-                ? { '-and' =>
-                    [ map { ref $_ eq 'ARRAY' ? [ -or => $_ ] : $_ }
-                        $where, $attrs->{where} ] }
-                : $where);
-    }
-
-    if (defined $having) {
-      $attrs->{having} = (defined $attrs->{having}
-                ? { '-and' =>
-                    [ map { ref $_ eq 'ARRAY' ? [ -or => $_ ] : $_ }
-                        $having, $attrs->{having} ] }
-                : $having);
-    }
-
-    $rs = (ref $self)->new($self->result_source, $attrs);
+  my $where = (@_
+                ? ((@_ == 1 || ref $_[0] eq "HASH")
+                    ? shift
+                    : ((@_ % 2)
+                        ? $self->throw_exception(
+                            "Odd number of arguments to search")
+                        : {@_}))
+                : undef());
+  if (defined $where) {
+    $attrs->{where} = (defined $attrs->{where}
+              ? { '-and' =>
+                  [ map { ref $_ eq 'ARRAY' ? [ -or => $_ ] : $_ }
+                      $where, $attrs->{where} ] }
+              : $where);
   }
-  else {
-    $rs = $self;
-    $rs->reset;
+
+  if (defined $having) {
+    $attrs->{having} = (defined $attrs->{having}
+              ? { '-and' =>
+                  [ map { ref $_ eq 'ARRAY' ? [ -or => $_ ] : $_ }
+                      $having, $attrs->{having} ] }
+              : $having);
   }
+
+  my $rs = (ref $self)->new($self->result_source, $attrs);
+
+  unless (@_) { # no search, effectively just a clone
+    my $rows = $self->get_cache;
+    if( @{$rows} ) {
+      $rs->set_cache($rows);
+    }
+  }
+  
   return (wantarray ? $rs->all : $rs);
 }
 
@@ -787,14 +787,14 @@ sub first {
 #
 # update/delete require the condition to be modified to handle
 # the differing SQL syntax available.  This transforms the $self->{cond}
-# appropriately, returning the new condition
+# appropriately, returning the new condition.
 
 sub _cond_for_update_delete {
   my ($self) = @_;
   my $cond = {};
 
   if (!ref($self->{cond})) {
-    # No-op. No condition, we're update/deleting everything
+    # No-op. No condition, we're updating/deleting everything
   }
   elsif (ref $self->{cond} eq 'ARRAY') {
     $cond = [
@@ -805,21 +805,31 @@ sub _cond_for_update_delete {
           $hash{$1} = $_->{$key};
         }
         \%hash;
-        } @{$self->{cond}}
+      } @{$self->{cond}}
     ];
   }
   elsif (ref $self->{cond} eq 'HASH') {
     if ((keys %{$self->{cond}})[0] eq '-and') {
-      $cond->{-and} = [
-        map {
-          my %hash;
-          foreach my $key (keys %{$_}) {
+      $cond->{-and} = [];
+
+      my @cond = @{$self->{cond}{-and}};
+      for (my $i = 0; $i < @cond - 1; $i++) {
+        my $entry = $cond[$i];
+
+        my %hash;
+        if (ref $entry eq 'HASH') {
+          foreach my $key (keys %{$entry}) {
             $key =~ /([^.]+)$/;
-            $hash{$1} = $_->{$key};
+            $hash{$1} = $entry->{$key};
           }
-          \%hash;
-          } @{$self->{cond}{-and}}
-      ];
+        }
+        else {
+          $entry =~ /([^.]+)$/;
+          $hash{$entry} = $cond[++$i];
+        }
+
+        push @{$cond->{-and}}, \%hash;
+      }
     }
     else {
       foreach my $key (keys %{$self->{cond}}) {
@@ -830,8 +840,10 @@ sub _cond_for_update_delete {
   }
   else {
     $self->throw_exception(
-               "Can't update/delete on resultset with condition unless hash or array");
+      "Can't update/delete on resultset with condition unless hash or array"
+    );
   }
+
   return $cond;
 }
 
