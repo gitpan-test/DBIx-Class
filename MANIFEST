@@ -108,6 +108,7 @@ t/41orrible.t
 t/42toplimit.t
 t/50fork.t
 t/51threads.t
+t/52cycle.t
 t/basicrels/01core.t
 t/basicrels/04db.t
 t/basicrels/05multipk.t
@@ -134,6 +135,7 @@ t/basicrels/22cascade_copy.t
 t/basicrels/23cache.t
 t/basicrels/24serialize.t
 t/basicrels/25utf8.t
+t/basicrels/26might_have.t
 t/cdbi-sweet-t/08pager.t
 t/cdbi-t/01-columns.t
 t/cdbi-t/02-Film.t
@@ -179,6 +181,7 @@ t/helperrels/22cascade_copy.t
 t/helperrels/23cache.t
 t/helperrels/24serialize.t
 t/helperrels/25utf8.t
+t/helperrels/26might_have.t
 t/helperrels/26sqlt.t
 t/lib/DBICTest.pm
 t/lib/DBICTest/BasicRels.pm
@@ -193,11 +196,13 @@ t/lib/DBICTest/Schema.pm
 t/lib/DBICTest/Schema/Artist.pm
 t/lib/DBICTest/Schema/ArtistUndirectedMap.pm
 t/lib/DBICTest/Schema/BasicRels.pm
+t/lib/DBICTest/Schema/Bookmark.pm
 t/lib/DBICTest/Schema/CD.pm
 t/lib/DBICTest/Schema/CD_to_Producer.pm
 t/lib/DBICTest/Schema/FourKeys.pm
 t/lib/DBICTest/Schema/HelperRels.pm
 t/lib/DBICTest/Schema/LinerNotes.pm
+t/lib/DBICTest/Schema/Link.pm
 t/lib/DBICTest/Schema/OneKey.pm
 t/lib/DBICTest/Schema/Producer.pm
 t/lib/DBICTest/Schema/SelfRef.pm
@@ -236,6 +241,7 @@ t/run/22cascade_copy.tl
 t/run/23cache.tl
 t/run/24serialize.tl
 t/run/25utf8.tl
+t/run/26might_have.tl
 t/testlib/Actor.pm
 t/testlib/ActorAlias.pm
 t/testlib/Binary.pm

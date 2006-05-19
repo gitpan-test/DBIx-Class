@@ -8,7 +8,7 @@ plan skip_all => 'SQL::Translator required' if $@;
 
 my $schema = DBICTest::Schema;
 
-plan tests => 27;
+plan tests => 29;
 
 my $translator           =  SQL::Translator->new( 
     parser_args          => {
@@ -76,6 +76,10 @@ my @constraints =
   {'display' => 'tags -> cd',
    'selftable' => 'tags', 'foreigntable' => 'cd', 
    'selfcols'  => ['cd'], 'foreigncols' => ['cdid'],
+   'needed' => 1, on_delete => '', on_update => ''},
+  {'display' => 'bookmark -> link',
+   'selftable' => 'bookmark', 'foreigntable' => 'link', 
+   'selfcols'  => ['link'], 'foreigncols' => ['id'],
    'needed' => 1, on_delete => '', on_update => ''},
  );
 

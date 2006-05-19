@@ -20,6 +20,8 @@ sub select {
   my ($self, $table, $fields, $where, $order, @rest) = @_;
   $table = $self->_quote($table) unless ref($table);
   @rest = (-1) unless defined $rest[0];
+  die "LIMIT 0 Does Not Compute" if $rest[0] == 0;
+    # and anyway, SQL::Abstract::Limit will cause a barf if we don't first
   local $self->{having_bind} = [];
   my ($sql, @ret) = $self->SUPER::select(
     $table, $self->_recurse_fields($fields), $where, $order, @rest
@@ -345,6 +347,12 @@ sub ensure_connected {
   }
 }
 
+=head2 dbh
+
+Returns the dbh - a data base handle of class L<DBI>.
+
+=cut
+
 sub dbh {
   my ($self) = @_;
 
@@ -438,8 +446,8 @@ Issues a commit against the current dbh.
 
 sub txn_commit {
   my $self = shift;
+  my $dbh = $self->dbh;
   if ($self->{transaction_depth} == 0) {
-    my $dbh = $self->dbh;
     unless ($dbh->{AutoCommit}) {
       $self->debugfh->print("COMMIT\n")
         if ($self->debug);
@@ -450,7 +458,7 @@ sub txn_commit {
     if (--$self->{transaction_depth} == 0) {
       $self->debugfh->print("COMMIT\n")
         if ($self->debug);
-      $self->dbh->commit;
+      $dbh->commit;
     }
   }
 }
@@ -467,8 +475,8 @@ sub txn_rollback {
   my $self = shift;
 
   eval {
+    my $dbh = $self->dbh;
     if ($self->{transaction_depth} == 0) {
-      my $dbh = $self->dbh;
       unless ($dbh->{AutoCommit}) {
         $self->debugfh->print("ROLLBACK\n")
           if ($self->debug);
@@ -479,7 +487,7 @@ sub txn_rollback {
       if (--$self->{transaction_depth} == 0) {
         $self->debugfh->print("ROLLBACK\n")
           if ($self->debug);
-        $self->dbh->rollback;
+        $dbh->rollback;
       }
       else {
         die DBIx::Class::Storage::NESTED_ROLLBACK_EXCEPTION->new;
@@ -501,25 +509,27 @@ sub _execute {
   my ($sql, @bind) = $self->sql_maker->$op($ident, @args);
   unshift(@bind, @$extra_bind) if $extra_bind;
   if ($self->debug) {
-      my @debug_bind = map { defined $_ ? qq{`$_'} : q{`NULL'} } @bind;
-      $self->debugfh->print("$sql: " . join(', ', @debug_bind) . "\n");
+    my $bind_str = join(', ', map {
+      defined $_ ? qq{`$_'} : q{`NULL'}
+    } @bind);
+    $self->debugfh->print("$sql ($bind_str)\n");
   }
   my $sth = eval { $self->sth($sql,$op) };
 
   if (!$sth || $@) {
-    $self->throw_exception('no sth generated via sql (' . ($@ || $self->_dbh->errstr) . "): $sql");
+    $self->throw_exception(
+      'no sth generated via sql (' . ($@ || $self->_dbh->errstr) . "): $sql"
+    );
   }
-
   @bind = map { ref $_ ? ''.$_ : $_ } @bind; # stringify args
-  my $rv;
-  if ($sth) {
-    $rv = eval { $sth->execute(@bind) };
-
-    if ($@ || !$rv) {
-      $self->throw_exception("Error executing '$sql': ".($@ || $sth->errstr));
-    }
-  } else {
-    $self->throw_exception("'$sql' did not generate a statement.");
+  my $rv = eval { $sth->execute(@bind) };
+  if ($@ || !$rv) {
+    my $bind_str = join(', ', map {
+      defined $_ ? qq{`$_'} : q{`NULL'}
+    } @bind);
+    $self->throw_exception(
+      "Error executing '$sql' ($bind_str): ".($@ || $sth->errstr)
+    );
   }
   return (wantarray ? ($rv, $sth, @bind) : $rv);
 }
@@ -560,6 +570,8 @@ sub _select {
       $self->sql_maker->_default_limit_syntax eq "GenericSubQ") {
         $attrs->{software_limit} = 1;
   } else {
+    $self->throw_exception("rows attribute must be positive if present")
+      if (defined($attrs->{rows}) && !($attrs->{rows} > 0));
     push @args, $attrs->{rows}, $attrs->{offset};
   }
   return $self->_execute(@args);
@@ -695,6 +707,11 @@ is produced (as when the L<debug> method is set).
 
 If the value is of the form C<1=/path/name> then the trace output is
 written to the file C</path/name>.
+
+This environment variable is checked when the storage object is first
+created (when you call connect on your schema).  So, run-time changes 
+to this environment variable will not take effect unless you also 
+re-connect on your schema.
 
 =head1 AUTHORS
 

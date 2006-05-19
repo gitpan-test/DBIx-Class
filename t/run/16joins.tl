@@ -7,7 +7,7 @@ BEGIN {
     eval "use DBD::SQLite";
     plan $@
         ? ( skip_all => 'needs DBD::SQLite for testing' )
-        : ( tests => 42 );
+        : ( tests => 44 );
 }
 
 # figure out if we've got a version of sqlite that is older than 3.2.6, in
@@ -101,6 +101,10 @@ $rs = $schema->resultset("CD")->search(
 );
 cmp_ok( scalar $rs->all, '==', scalar $rs->slice(0, $rs->count - 1), 'slice() with join has same count as all()' );
 
+eval { $rs->search(undef, { rows => 0, offset => 3 })->all; };
+
+ok($@, "rows => 0 errors: $@");
+
 $rs = $schema->resultset("Artist")->search(
         { 'liner_notes.notes' => 'Kill Yourself!' },
         { join => { 'cds' => 'liner_notes' } });
@@ -116,9 +120,11 @@ $rs = $schema->resultset("CD")->search(
 
 cmp_ok($rs + 0, '==', 3, 'Correct number of records returned');
 
-# start test for prefetch SELECT count
-unlink 't/var/dbic.trace' if -e 't/var/dbic.trace';
-DBI->trace(1, 't/var/dbic.trace');
+my $queries = 0;
+$schema->storage->debugcb(sub { $queries++ });
+
+$queries = 0;
+$schema->storage->debug(1);
 
 my @cd = $rs->all;
 
@@ -132,17 +138,9 @@ is(ref $cd[1]->liner_notes, 'DBICTest::LinerNotes', 'Prefetch returns correct cl
 
 is($cd[2]->{_inflated_column}{artist}->name, 'Caterwauler McCrae', 'Prefetch on parent object ok');
 
-# count the SELECTs
-DBI->trace(0, undef);
-my $selects = 0;
-my $trace = IO::File->new('t/var/dbic.trace', '<') 
-    or die "Unable to read trace file";
-while (<$trace>) {
-    $selects++ if /SELECT/;
-}
-$trace->close;
-unlink 't/var/dbic.trace';
-is($selects, 1, 'prefetch ran only 1 select statement');
+is($queries, 1, 'prefetch ran only 1 select statement');
+
+$schema->storage->debug(0);
 
 # test for partial prefetch via columns attr
 my $cd = $schema->resultset('CD')->find(1,
@@ -154,8 +152,8 @@ my $cd = $schema->resultset('CD')->find(1,
 ok(eval { $cd->artist->name eq 'Caterwauler McCrae' }, 'single related column prefetched');
 
 # start test for nested prefetch SELECT count
-unlink 't/var/dbic.trace' if -e 't/var/dbic.trace';
-DBI->trace(1, 't/var/dbic.trace');
+$queries = 0;
+$schema->storage->debug(1);
 
 $rs = $schema->resultset('Tag')->search(
   {},
@@ -171,36 +169,18 @@ is( $tag->cd->title, 'Spoonful of bees', 'step 1 ok for nested prefetch' );
 is( $tag->cd->artist->name, 'Caterwauler McCrae', 'step 2 ok for nested prefetch');
 
 # count the SELECTs
-DBI->trace(0, undef);
-$selects = 0;
-$trace = IO::File->new('t/var/dbic.trace', '<') 
-    or die "Unable to read trace file";
-while (<$trace>) {
-    $selects++ if /SELECT(?!.*WHERE 1=0.*)/;
-}
-$trace->close;
-unlink 't/var/dbic.trace';
-is($selects, 1, 'nested prefetch ran exactly 1 select statement (excluding column_info)');
+#$selects++ if /SELECT(?!.*WHERE 1=0.*)/;
+is($queries, 1, 'nested prefetch ran exactly 1 select statement (excluding column_info)');
 
-# start test for prefetch on find SELECT count
-unlink 't/var/dbic.trace' if -e 't/var/dbic.trace';
-DBI->trace(1, 't/var/dbic.trace');
+$queries = 0;
 
 $cd = $schema->resultset('CD')->find(1, { prefetch => 'artist' });
 
 is($cd->{_inflated_column}{artist}->name, 'Caterwauler McCrae', 'artist prefetched correctly on find');
 
-# count the SELECTs
-DBI->trace(0, undef);
-$selects = 0;
-$trace = IO::File->new('t/var/dbic.trace', '<') 
-    or die "Unable to read trace file";
-while (<$trace>) {
-    $selects++ if /SELECT(?!.*WHERE 1=0.*)/;
-}
-$trace->close;
-unlink 't/var/dbic.trace';
-is($selects, 1, 'find with prefetch ran exactly 1 select statement (excluding column_info)');
+is($queries, 1, 'find with prefetch ran exactly 1 select statement (excluding column_info)');
+
+$schema->storage->debug(0);
 
 $rs = $schema->resultset('Tag')->search(
   {},
@@ -277,8 +257,7 @@ SKIP: {
 
 is($rs->next->name, 'Caterwauler McCrae', "Correct artist returned");
 
-my $queries;
-$schema->storage->debugcb(sub { $queries++ });
+$queries = 0;
 $schema->storage->debug(1);
 
 my $tree_like =
@@ -297,6 +276,25 @@ is($tree_like->name, 'foo', 'Third level up ok');
 $schema->storage->debug(0);
 
 cmp_ok($queries, '==', 1, 'Only one query run');
+
+# has_many resulting in an additional select if no records available despite prefetch
+my $track = $schema->resultset("Artist")->create( {
+  artistid  => 4,
+  name      => 'Artist without CDs',
+} );
+
+$queries = 0;
+$schema->storage->debug(1);
+
+my $artist_without_cds = $schema->resultset("Artist")->find(4, {
+    join        => [qw/ cds /],
+    prefetch    => [qw/ cds /],
+});
+my @no_cds = $artist_without_cds->cds;
+
+is($queries, 1, 'prefetch ran only 1 sql statement');
+
+$schema->storage->debug(0);
 
 } # end run_tests
 

@@ -4,6 +4,7 @@ use strict;
 use warnings;
 
 use Carp::Clan qw/^DBIx::Class/;
+use Scalar::Util qw/weaken/;
 
 use base qw/DBIx::Class/;
 
@@ -63,7 +64,7 @@ particular which module inherits off which.
 
 =back
 
-Registers a class which isa L<DBIx::Class::ResultSourceProxy>. Equivalent to
+Registers a class which isa DBIx::Class::ResultSourceProxy. Equivalent to
 calling:
 
   $schema->register_source($moniker, $component_class->result_source_instance);
@@ -94,6 +95,7 @@ sub register_source {
   $reg{$moniker} = $source;
   $self->source_registrations(\%reg);
   $source->schema($self);
+  weaken($source->{schema}) if ref($self);
   if ($source->result_class) {
     my %map = %{$self->class_mappings};
     $map{$source->result_class} = $moniker;
