@@ -1,4 +1,5 @@
 package DBIx::Class::Storage::DBI;
+# -*- mode: cperl; cperl-indent-level: 2 -*-
 
 use base 'DBIx::Class::Storage';
 
@@ -7,9 +8,9 @@ use warnings;
 use DBI;
 use SQL::Abstract::Limit;
 use DBIx::Class::Storage::DBI::Cursor;
+use DBIx::Class::Storage::Statistics;
 use IO::File;
 use Carp::Clan qw/DBIx::Class/;
-
 BEGIN {
 
 package DBIC::SQL::Abstract; # Would merge upstream, but nate doesn't reply :(
@@ -224,17 +225,6 @@ sub name_sep {
     return $self->{name_sep};
 }
 
-
-
-
-package DBIx::Class::Storage::DBI::DebugCallback;
-
-sub print {
-  my ($self, $string) = @_;
-  $string =~ m/^(\w+)/;
-  ${$self}->($1, $string);
-}
-
 } # End of BEGIN block
 
 use base qw/DBIx::Class/;
@@ -242,20 +232,25 @@ use base qw/DBIx::Class/;
 __PACKAGE__->load_components(qw/AccessorGroup/);
 
 __PACKAGE__->mk_group_accessors('simple' =>
-  qw/connect_info _dbh _sql_maker _conn_pid _conn_tid debug debugfh
+  qw/_connect_info _dbh _sql_maker _conn_pid _conn_tid debug debugobj
      cursor on_connect_do transaction_depth/);
 
 sub new {
   my $new = bless({}, ref $_[0] || $_[0]);
   $new->cursor("DBIx::Class::Storage::DBI::Cursor");
   $new->transaction_depth(0);
+
+  $new->debugobj(new DBIx::Class::Storage::Statistics());
+
+  my $fh;
   if (defined($ENV{DBIX_CLASS_STORAGE_DBI_DEBUG}) &&
      ($ENV{DBIX_CLASS_STORAGE_DBI_DEBUG} =~ /=(.+)$/)) {
-    $new->debugfh(IO::File->new($1, 'w'))
+    $fh = IO::File->new($1, 'w')
       or $new->throw_exception("Cannot open trace file $1");
   } else {
-    $new->debugfh(IO::File->new('>&STDERR'));
+    $fh = IO::File->new('>&STDERR');
   }
+  $new->debugobj->debugfh($fh);
   $new->debug(1) if $ENV{DBIX_CLASS_STORAGE_DBI_DEBUG};
   return $new;
 }
@@ -279,35 +274,81 @@ This class represents the connection to the database
 
 =cut
 
+=head2 connect_info
+
+Connection information arrayref.  Can either be the same arguments
+one would pass to DBI->connect, or a code-reference which returns
+a connected database handle.  In either case, there is an optional
+final element in the arrayref, which can hold a hashref of
+connection-specific Storage::DBI options.  These include
+C<on_connect_do>, and the sql_maker options C<limit_dialect>,
+C<quote_char>, and C<name_sep>.  Examples:
+
+  ->connect_info([ 'dbi:SQLite:./foo.db' ]);
+  ->connect_info(sub { DBI->connect(...) });
+  ->connect_info([ 'dbi:Pg:dbname=foo',
+                   'postgres',
+                   '',
+                   { AutoCommit => 0 },
+                   { quote_char => q{`}, name_sep => q{@} },
+                 ]);
+
 =head2 on_connect_do
 
 Executes the sql statements given as a listref on every db connect.
 
+=head2 quote_char
+
+Specifies what characters to use to quote table and column names. If 
+you use this you will want to specify L<name_sep> as well.
+
+quote_char expectes either a single character, in which case is it is placed
+on either side of the table/column, or an array of length 2 in which case the
+table/column name is placed between the elements.
+
+For example under MySQL you'd use C<quote_char('`')>, and user SQL Server you'd 
+use C<quote_char(qw/[ ]/)>.
+
+=head2 name_sep
+
+This only needs to be used in conjunction with L<quote_char>, and is used to 
+specify the charecter that seperates elements (schemas, tables, columns) from 
+each other. In most cases this is simply a C<.>.
+
 =head2 debug
 
-Causes SQL trace information to be emitted on C<debugfh> filehandle
-(or C<STDERR> if C<debugfh> has not specifically been set).
+Causes SQL trace information to be emitted on the C<debugobj> object.
+(or C<STDERR> if C<debugobj> has not specifically been set).
 
 =head2 debugfh
 
-Sets or retrieves the filehandle used for trace/debug output.  This
-should be an IO::Handle compatible object (only the C<print> method is
-used).  Initially set to be STDERR - although see information on the
+Set or retrieve the filehandle used for trace/debug output.  This should be
+an IO::Handle compatible ojbect (only the C<print> method is used.  Initially
+set to be STDERR - although see information on the
 L<DBIX_CLASS_STORAGE_DBI_DEBUG> environment variable.
+
+=head2 debugobj
+
+Sets or retrieves the object used for metric collection. Defaults to an instance
+of L<DBIx::Class::Storage::Statistics> that is campatible with the original
+method of using a coderef as a callback.  See the aforementioned Statistics
+class for more information.
 
 =head2 debugcb
 
 Sets a callback to be executed each time a statement is run; takes a sub
-reference. Overrides debugfh. Callback is executed as $sub->($op, $info)
-where $op is SELECT/INSERT/UPDATE/DELETE and $info is what would normally
-be printed.
+reference.  Callback is executed as $sub->($op, $info) where $op is
+SELECT/INSERT/UPDATE/DELETE and $info is what would normally be printed.
+
+See L<debugobj> for a better way.
 
 =cut
-
 sub debugcb {
-  my ($self, $cb) = @_;
-  my $cb_obj = bless(\$cb, 'DBIx::Class::Storage::DBI::DebugCallback');
-  $self->debugfh($cb_obj);
+    my $self = shift();
+
+    if($self->debugobj()->can('callback')) {
+        $self->debugobj()->callback(shift());
+    }
 }
 
 sub disconnect {
@@ -360,26 +401,66 @@ sub dbh {
   return $self->_dbh;
 }
 
+sub _sql_maker_args {
+    my ($self) = @_;
+    
+    return ( limit_dialect => $self->dbh );
+}
+
 sub sql_maker {
   my ($self) = @_;
   unless ($self->_sql_maker) {
-    $self->_sql_maker(new DBIC::SQL::Abstract( limit_dialect => $self->dbh ));
+    $self->_sql_maker(new DBIC::SQL::Abstract( $self->_sql_maker_args ));
   }
   return $self->_sql_maker;
 }
 
+sub connect_info {
+    my ($self, $info_arg) = @_;
+
+    if($info_arg) {
+        my $info = [ @$info_arg ]; # copy because we can alter it
+        my $last_info = $info->[-1];
+        if(ref $last_info eq 'HASH') {
+            my $used;
+            if(my $on_connect_do = $last_info->{on_connect_do}) {
+               $used = 1;
+               $self->on_connect_do($on_connect_do);
+            }
+            for my $sql_maker_opt (qw/limit_dialect quote_char name_sep/) {
+                if(my $opt_val = $last_info->{$sql_maker_opt}) {
+                    $used = 1;
+                    $self->sql_maker->$sql_maker_opt($opt_val);
+                }
+            }
+
+            # remove our options hashref if it was there, to avoid confusing
+            #   DBI in the case the user didn't use all 4 DBI options, as in:
+            #   [ 'dbi:SQLite:foo.db', { quote_char => q{`} } ]
+            pop(@$info) if $used;
+        }
+
+        $self->_connect_info($info);
+    }
+
+    $self->_connect_info;
+}
+
 sub _populate_dbh {
   my ($self) = @_;
-  my @info = @{$self->connect_info || []};
+  my @info = @{$self->_connect_info || []};
   $self->_dbh($self->_connect(@info));
   my $driver = $self->_dbh->{Driver}->{Name};
   eval "require DBIx::Class::Storage::DBI::${driver}";
   unless ($@) {
     bless $self, "DBIx::Class::Storage::DBI::${driver}";
+    $self->_rebless() if $self->can('_rebless');
   }
   # if on-connect sql statements are given execute them
   foreach my $sql_statement (@{$self->on_connect_do || []}) {
+    $self->debugobj->query_start($sql_statement) if $self->debug();
     $self->_dbh->do($sql_statement);
+    $self->debugobj->query_end($sql_statement) if $self->debug();
   }
 
   $self->_conn_pid($$);
@@ -431,7 +512,7 @@ sub txn_begin {
   if ($self->{transaction_depth}++ == 0) {
     my $dbh = $self->dbh;
     if ($dbh->{AutoCommit}) {
-      $self->debugfh->print("BEGIN WORK\n")
+      $self->debugobj->txn_begin()
         if ($self->debug);
       $dbh->begin_work;
     }
@@ -449,14 +530,14 @@ sub txn_commit {
   my $dbh = $self->dbh;
   if ($self->{transaction_depth} == 0) {
     unless ($dbh->{AutoCommit}) {
-      $self->debugfh->print("COMMIT\n")
+      $self->debugobj->txn_commit()
         if ($self->debug);
       $dbh->commit;
     }
   }
   else {
     if (--$self->{transaction_depth} == 0) {
-      $self->debugfh->print("COMMIT\n")
+      $self->debugobj->txn_commit()
         if ($self->debug);
       $dbh->commit;
     }
@@ -478,14 +559,14 @@ sub txn_rollback {
     my $dbh = $self->dbh;
     if ($self->{transaction_depth} == 0) {
       unless ($dbh->{AutoCommit}) {
-        $self->debugfh->print("ROLLBACK\n")
+        $self->debugobj->txn_rollback()
           if ($self->debug);
         $dbh->rollback;
       }
     }
     else {
       if (--$self->{transaction_depth} == 0) {
-        $self->debugfh->print("ROLLBACK\n")
+        $self->debugobj->txn_rollback()
           if ($self->debug);
         $dbh->rollback;
       }
@@ -509,10 +590,8 @@ sub _execute {
   my ($sql, @bind) = $self->sql_maker->$op($ident, @args);
   unshift(@bind, @$extra_bind) if $extra_bind;
   if ($self->debug) {
-    my $bind_str = join(', ', map {
-      defined $_ ? qq{`$_'} : q{`NULL'}
-    } @bind);
-    $self->debugfh->print("$sql ($bind_str)\n");
+      my @debug_bind = map { defined $_ ? qq{'$_'} : q{'NULL'} } @bind;
+      $self->debugobj->query_start($sql, @debug_bind);
   }
   my $sth = eval { $self->sth($sql,$op) };
 
@@ -522,14 +601,20 @@ sub _execute {
     );
   }
   @bind = map { ref $_ ? ''.$_ : $_ } @bind; # stringify args
-  my $rv = eval { $sth->execute(@bind) };
-  if ($@ || !$rv) {
-    my $bind_str = join(', ', map {
-      defined $_ ? qq{`$_'} : q{`NULL'}
-    } @bind);
-    $self->throw_exception(
-      "Error executing '$sql' ($bind_str): ".($@ || $sth->errstr)
-    );
+  my $rv;
+  if ($sth) {
+    my $time = time();
+    $rv = eval { $sth->execute(@bind) };
+
+    if ($@ || !$rv) {
+      $self->throw_exception("Error executing '$sql': ".($@ || $sth->errstr));
+    }
+  } else {
+    $self->throw_exception("'$sql' did not generate a statement.");
+  }
+  if ($self->debug) {
+      my @debug_bind = map { defined $_ ? qq{`$_'} : q{`NULL'} } @bind;
+      $self->debugobj->query_end($sql, @debug_bind);
   }
   return (wantarray ? ($rv, $sth, @bind) : $rv);
 }
@@ -617,7 +702,8 @@ sub columns_info_for {
     $dbh->{RaiseError} = 1;
     $dbh->{PrintError} = 0;
     eval {
-      my $sth = $dbh->column_info( undef, undef, $table, '%' );
+      my ($schema,$tab) = $table =~ /^(.+?)\.(.+)$/ ? ($1,$2) : (undef,$table);
+      my $sth = $dbh->column_info( undef,$schema, $tab, '%' );
       $sth->execute();
       while ( my $info = $sth->fetchrow_hashref() ){
         my %column_info;
@@ -625,8 +711,10 @@ sub columns_info_for {
         $column_info{size}      = $info->{COLUMN_SIZE};
         $column_info{is_nullable}   = $info->{NULLABLE} ? 1 : 0;
         $column_info{default_value} = $info->{COLUMN_DEF};
+        my $col_name = $info->{COLUMN_NAME};
+        $col_name =~ s/^\"(.*)\"$/$1/;
 
-        $result{$info->{COLUMN_NAME}} = \%column_info;
+        $result{$col_name} = \%column_info;
       }
     };
     $dbh->{RaiseError} = $old_raise_err;
@@ -670,28 +758,121 @@ sub last_insert_id {
 
 sub sqlt_type { shift->dbh->{Driver}->{Name} }
 
-sub deployment_statements {
-  my ($self, $schema, $type, $sqltargs) = @_;
-  $type ||= $self->sqlt_type;
+sub create_ddl_dir
+{
+  my ($self, $schema, $databases, $version, $dir, $sqltargs) = @_;
+
+  if(!$dir || !-d $dir)
+  {
+    warn "No directory given, using ./\n";
+    $dir = "./";
+  }
+  $databases ||= ['MySQL', 'SQLite', 'PostgreSQL'];
+  $databases = [ $databases ] if(ref($databases) ne 'ARRAY');
+  $version ||= $schema->VERSION || '1.x';
+
   eval "use SQL::Translator";
   $self->throw_exception("Can't deploy without SQL::Translator: $@") if $@;
-  eval "use SQL::Translator::Parser::DBIx::Class;";
-  $self->throw_exception($@) if $@;
-  eval "use SQL::Translator::Producer::${type};";
-  $self->throw_exception($@) if $@;
-  my $tr = SQL::Translator->new(%$sqltargs);
-  SQL::Translator::Parser::DBIx::Class::parse( $tr, $schema );
-  return "SQL::Translator::Producer::${type}"->can('produce')->($tr);
+
+  my $sqlt = SQL::Translator->new({
+#      debug => 1,
+      add_drop_table => 1,
+  });
+  foreach my $db (@$databases)
+  {
+    $sqlt->reset();
+    $sqlt->parser('SQL::Translator::Parser::DBIx::Class');
+#    $sqlt->parser_args({'DBIx::Class' => $schema);
+    $sqlt->data($schema);
+    $sqlt->producer($db);
+
+    my $file;
+    my $filename = $schema->ddl_filename($db, $dir, $version);
+    if(-e $filename)
+    {
+      $self->throw_exception("$filename already exists, skipping $db");
+      next;
+    }
+    open($file, ">$filename") 
+      or $self->throw_exception("Can't open $filename for writing ($!)");
+    my $output = $sqlt->translate;
+#use Data::Dumper;
+#    print join(":", keys %{$schema->source_registrations});
+#    print Dumper($sqlt->schema);
+    if(!$output)
+    {
+      $self->throw_exception("Failed to translate to $db. (" . $sqlt->error . ")");
+      next;
+    }
+    print $file $output;
+    close($file);
+  }
+
+}
+
+sub deployment_statements {
+  my ($self, $schema, $type, $version, $dir, $sqltargs) = @_;
+  $type ||= $self->sqlt_type;
+  $version ||= $schema->VERSION || '1.x';
+  $dir ||= './';
+  eval "use SQL::Translator";
+  if(!$@)
+  {
+    eval "use SQL::Translator::Parser::DBIx::Class;";
+    $self->throw_exception($@) if $@;
+    eval "use SQL::Translator::Producer::${type};";
+    $self->throw_exception($@) if $@;
+    my $tr = SQL::Translator->new(%$sqltargs);
+    SQL::Translator::Parser::DBIx::Class::parse( $tr, $schema );
+    return "SQL::Translator::Producer::${type}"->can('produce')->($tr);
+  }
+
+  my $filename = $schema->ddl_filename($type, $dir, $version);
+  if(!-f $filename)
+  {
+#      $schema->create_ddl_dir([ $type ], $version, $dir, $sqltargs);
+      $self->throw_exception("No SQL::Translator, and no Schema file found, aborting deploy");
+      return;
+  }
+  my $file;
+  open($file, "<$filename") 
+      or $self->throw_exception("Can't open $filename ($!)");
+  my @rows = <$file>;
+  close($file);
+
+  return join('', @rows);
+  
 }
 
 sub deploy {
   my ($self, $schema, $type, $sqltargs) = @_;
-  foreach my $statement ( $self->deployment_statements($schema, $type, $sqltargs) ) {
+  foreach my $statement ( $self->deployment_statements($schema, $type, undef, undef, $sqltargs) ) {
     for ( split(";\n", $statement)) {
-      $self->debugfh->print("$_\n") if $self->debug;
+      next if($_ =~ /^--/);
+      next if(!$_);
+#      next if($_ =~ /^DROP/m);
+      next if($_ =~ /^BEGIN TRANSACTION/m);
+      next if($_ =~ /^COMMIT/m);
+      $self->debugobj->query_begin($_) if $self->debug;
       $self->dbh->do($_) or warn "SQL was:\n $_";
+      $self->debugobj->query_end($_) if $self->debug;
     }
   }
+}
+
+sub datetime_parser {
+  my $self = shift;
+  return $self->{datetime_parser} ||= $self->build_datetime_parser(@_);
+}
+
+sub datetime_parser_type { "DateTime::Format::MySQL"; }
+
+sub build_datetime_parser {
+  my $self = shift;
+  my $type = $self->datetime_parser_type(@_);
+  eval "use ${type}";
+  $self->throw_exception("Couldn't load ${type}: $@") if $@;
+  return $type;
 }
 
 sub DESTROY { shift->disconnect }

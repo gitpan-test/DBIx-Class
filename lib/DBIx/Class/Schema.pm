@@ -21,7 +21,7 @@ DBIx::Class::Schema - composable schemas
 
   package Library::Schema;
   use base qw/DBIx::Class::Schema/;
-  
+
   # load Library::Schema::CD, Library::Schema::Book, Library::Schema::DVD
   __PACKAGE__->load_classes(qw/CD Book DVD/);
 
@@ -37,7 +37,7 @@ DBIx::Class::Schema - composable schemas
     $password,
     { AutoCommit => 0 },
   );
-  
+
   my $schema2 = Library::Schema->connect($coderef_returning_dbh);
 
   # fetch objects using Library::Schema::DVD
@@ -221,15 +221,15 @@ Example:
 
 sub load_classes {
   my ($class, @params) = @_;
-  
+
   my %comps_for;
-  
+
   if (@params) {
     foreach my $param (@params) {
       if (ref $param eq 'ARRAY') {
         # filter out commented entries
         my @modules = grep { $_ !~ /^#/ } @$param;
-        
+
         push (@{$comps_for{$class}}, @modules);
       }
       elsif (ref $param eq 'HASH') {
@@ -263,13 +263,10 @@ sub load_classes {
     foreach my $prefix (keys %comps_for) {
       foreach my $comp (@{$comps_for{$prefix}||[]}) {
         my $comp_class = "${prefix}::${comp}";
-        eval "use $comp_class"; # If it fails, assume the user fixed it
-        if ($@) {
-          $comp_class =~ s/::/\//g;
-          die $@ unless $@ =~ /Can't locate.+$comp_class\.pm\sin\s\@INC/;
-          warn $@ if $@;
-        }
-        push(@to_register, [ $comp, $comp_class ]);
+        $class->ensure_class_loaded($comp_class);
+        $comp_class->source_name($comp) unless $comp_class->source_name;
+
+        push(@to_register, [ $comp_class->source_name, $comp_class ]);
       }
     }
   }
@@ -525,12 +522,11 @@ exception) an exception is thrown that includes a "Rollback failed" message.
 For example,
 
   my $author_rs = $schema->resultset('Author')->find(1);
+  my @titles = qw/Night Day It/;
 
   my $coderef = sub {
-    my ($author, @titles) = @_;
-
     # If any one of these fails, the entire transaction fails
-    $author->create_related('books', {
+    $author_rs->create_related('books', {
       title => $_
     }) foreach (@titles);
 
@@ -539,16 +535,14 @@ For example,
 
   my $rs;
   eval {
-    $rs = $schema->txn_do($coderef, $author_rs, qw/Night Day It/);
+    $rs = $schema->txn_do($coderef);
   };
 
-  if ($@) {
-    my $error = $@;
-    if ($error =~ /Rollback failed/) {
-      die "something terrible has happened!";
-    } else {
-      deal_with_failed_transaction();
-    }
+  if ($@) {                                  # Transaction failed
+    die "something terrible has happened!"   #
+      if ($@ =~ /Rollback failed/);          # Rollback failed
+
+    deal_with_failed_transaction();
   }
 
 In a nested transaction (calling txn_do() from within a txn_do() coderef) only
@@ -711,6 +705,41 @@ sub deploy {
   my ($self, $sqltargs) = @_;
   $self->throw_exception("Can't deploy without storage") unless $self->storage;
   $self->storage->deploy($self, undef, $sqltargs);
+}
+
+=head2 create_ddl_dir (EXPERIMENTAL)
+
+=over 4
+
+=item Arguments: \@databases, $version, $directory, $sqlt_args
+
+=back
+
+Creates an SQL file based on the Schema, for each of the specified
+database types, in the given directory.
+
+Note that this feature is currently EXPERIMENTAL and may not work correctly
+across all databases, or fully handle complex relationships.
+
+=cut
+
+sub create_ddl_dir
+{
+  my $self = shift;
+
+  $self->throw_exception("Can't create_ddl_dir without storage") unless $self->storage;
+  $self->storage->create_ddl_dir($self, @_);
+}
+
+sub ddl_filename
+{
+    my ($self, $type, $dir, $version) = @_;
+
+    my $filename = ref($self);
+    $filename =~ s/^.*:://;
+    $filename = "$dir$filename-$version-$type.sql";
+
+    return $filename;
 }
 
 1;

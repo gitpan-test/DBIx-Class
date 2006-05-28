@@ -1,4 +1,4 @@
-package # hide from PAUSE 
+package # hide from PAUSE
     DBICTest::Schema;
 
 use base qw/DBIx::Class::Schema/;
@@ -7,6 +7,7 @@ no warnings qw/qw/;
 
 __PACKAGE__->load_classes(qw/
   Artist
+  Employee
   CD
   Link
   Bookmark
@@ -26,10 +27,11 @@ __PACKAGE__->load_classes(qw/
     '#dummy',
     'SelfRef',
     'ArtistUndirectedMap',
+    'ArtistSourceName',
     'Producer',
     'CD_to_Producer',
   ),
-  qw/SelfRefAlias TreeLike TwoKeyTreeLike/
+  qw/SelfRefAlias TreeLike TwoKeyTreeLike Event/
 );
 
 1;

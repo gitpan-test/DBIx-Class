@@ -1,6 +1,32 @@
 Revision history for DBIx::Class
 
-0.06003
+0.06999_01 2006-05-28 17:19:30
+        - add automatic naming of unique constraints
+        - marked DB.pm as deprecated and noted it will be removed by 1.0
+        - add ResultSetColumn
+        - refactor ResultSet code to resolve attrs as late as poss
+        - merge prefetch attrs into join attrs
+        - add +select and +as attributes to ResultSet
+        - added AutoInflate::DateTime component
+        - refactor debugging to allow for profiling using Storage::Statistics
+        - removed Data::UUID from deps, made other optionals required
+        - modified SQLT parser to skip dupe table names
+        - added remove_column(s) to ResultSource/ResultSourceProxy
+        - added add_column alias to ResultSourceProxy
+        - added source_name to ResultSource
+        - load_classes now uses source_name and sets it if necessary
+        - add update_or_create_related to Relationship::Base
+        - add find_or_new to ResultSet/ResultSetProxy and find_or_new_related
+          to Relationship::Base
+        - add accessors for unique constraint names and coulums to
+          ResultSource/ResultSourceProxy
+        - rework ResultSet::find() to search unique constraints
+        - CDBICompat: modify retrieve to fix column casing when ColumnCase is
+          loaded
+        - CDBICompat: override find_or_create to fix column casing when
+          ColumnCase is loaded
+
+0.06003 2006-05-19 15:37:30
         - make find_or_create_related check defined() instead of truth
         - don't unnecessarily fetch rels for cascade_update
         - don't set_columns explicitly in update_or_create; instead use
@@ -92,7 +118,7 @@ Revision history for DBIx::Class
         - remove build dependency on version.pm
 
 0.05004 2006-02-13 20:59:00
-        - allow specification of related columns via cols attr when primary 
+        - allow specification of related columns via cols attr when primary
           keys of the related table are not fetched
         - fix count for group_by as scalar
         - add horrific fix to make Oracle's retarded limit syntax work

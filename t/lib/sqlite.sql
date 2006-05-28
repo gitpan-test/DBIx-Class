@@ -1,8 +1,18 @@
 -- 
 -- Created by SQL::Translator::Producer::SQLite
--- Created on Fri May 12 01:09:57 2006
+-- Created on Sat May 27 21:28:05 2006
 -- 
 BEGIN TRANSACTION;
+
+--
+-- Table: employee
+--
+CREATE TABLE employee (
+  employee_id INTEGER PRIMARY KEY NOT NULL,
+  position integer NOT NULL,
+  group_id integer,
+  name varchar(100)
+);
 
 --
 -- Table: serialized
@@ -87,20 +97,20 @@ CREATE TABLE track (
 );
 
 --
--- Table: link
---
-CREATE TABLE link (
-  id INTEGER PRIMARY KEY NOT NULL,
-  url varchar(100),
-  title varchar(100)
-);
-
---
 -- Table: self_ref
 --
 CREATE TABLE self_ref (
   id INTEGER PRIMARY KEY NOT NULL,
   name varchar(100) NOT NULL
+);
+
+--
+-- Table: tags
+--
+CREATE TABLE tags (
+  tagid INTEGER PRIMARY KEY NOT NULL,
+  cd integer NOT NULL,
+  tag varchar(100) NOT NULL
 );
 
 --
@@ -113,12 +123,20 @@ CREATE TABLE treelike (
 );
 
 --
--- Table: tags
+-- Table: link
 --
-CREATE TABLE tags (
-  tagid INTEGER PRIMARY KEY NOT NULL,
-  cd integer NOT NULL,
-  tag varchar(100) NOT NULL
+CREATE TABLE link (
+  id INTEGER PRIMARY KEY NOT NULL,
+  url varchar(100),
+  title varchar(100)
+);
+
+--
+-- Table: event
+--
+CREATE TABLE event (
+  id INTEGER PRIMARY KEY NOT NULL,
+  starts_at datetime NOT NULL
 );
 
 --
@@ -151,14 +169,6 @@ CREATE TABLE artist_undirected_map (
 );
 
 --
--- Table: producer
---
-CREATE TABLE producer (
-  producerid INTEGER PRIMARY KEY NOT NULL,
-  name varchar(100) NOT NULL
-);
-
---
 -- Table: onekey
 --
 CREATE TABLE onekey (
@@ -167,4 +177,15 @@ CREATE TABLE onekey (
   cd integer NOT NULL
 );
 
+--
+-- Table: producer
+--
+CREATE TABLE producer (
+  producerid INTEGER PRIMARY KEY NOT NULL,
+  name varchar(100) NOT NULL
+);
+
+CREATE UNIQUE INDEX tktlnameunique_twokeytreelike on twokeytreelike (name);
+CREATE UNIQUE INDEX cd_artist_title_cd on cd (artist, title);
+CREATE UNIQUE INDEX prod_name_producer on producer (name);
 COMMIT;

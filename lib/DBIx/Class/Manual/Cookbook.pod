@@ -409,24 +409,22 @@ example of the recommended way to use it:
 
   my $genus = $schema->resultset('Genus')->find(12);
 
-  my $coderef1 = sub {
-    my ($schema, $genus, $code) = @_;
-    $genus->add_to_species({ name => 'troglodyte' });
-    $genus->wings(2);
-    $genus->update;
-    $schema->txn_do($code, $genus); # Can have a nested transaction
-    return $genus->species;
-  };
-
   my $coderef2 = sub {
-    my ($genus) = @_;
     $genus->extinct(1);
     $genus->update;
   };
 
+  my $coderef1 = sub {
+    $genus->add_to_species({ name => 'troglodyte' });
+    $genus->wings(2);
+    $genus->update;
+    $schema->txn_do($coderef2); # Can have a nested transaction
+    return $genus->species;
+  };
+
   my $rs;
   eval {
-    $rs = $schema->txn_do($coderef1, $schema, $genus, $coderef2);
+    $rs = $schema->txn_do($coderef1);
   };
 
   if ($@) {                             # Transaction failed
@@ -784,6 +782,66 @@ It is possible to get a Schema object from a row object like so,
 
 This can be useful when you don't want to pass around a Schema object to every
 method.
+
+=head2 Profiling
+
+When you enable L<DBIx::Class::Storage::DBI>'s debugging it prints the SQL
+executed as well as notifications of query completion and transaction
+begin/commit.  If you'd like to profile the SQL you can subclass the
+L<DBIx::Class::Storage::Statistics> class and write your own profiling
+mechanism:
+
+  package My::Profiler;
+  use strict;
+
+  use base 'DBIx::Class::Storage::Statistics';
+
+  use Time::HiRes qw(time);
+
+  my $start;
+
+  sub query_start {
+    my $self = shift();
+    my $sql = shift();
+    my $params = @_;
+
+    print "Executing $sql: ".join(', ', @params)."\n";
+    $start = time();
+  }
+
+  sub query_end {
+    my $self = shift();
+    my $sql = shift();
+    my @params = @_;
+
+    printf("Execution took %0.4f seconds.\n", time() - $start);
+    $start = undef;
+  }
+
+  1;
+
+You can then install that class as the debugging object:
+
+  __PACKAGE__->storage()->debugobj(new My::Profiler());
+  __PACKAGE__->storage()->debug(1);
+
+A more complicated example might involve storing each execution of SQL in an
+array:
+
+  sub query_end {
+    my $self = shift();
+    my $sql = shift();
+    my @params = @_;
+
+    my $elapsed = time() - $start;
+    push(@{ $calls{$sql} }, {
+        params => \@params,
+        elapsed => $elapsed
+    });
+  }
+
+You could then create average, high and low execution times for an SQL
+statement and dig down to see if certain parameters cause aberrant behavior.
 
 =head2 Getting the value of the primary key for the last database insert
 
