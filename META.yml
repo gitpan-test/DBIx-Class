@@ -1,6 +1,6 @@
 ---
 name: DBIx-Class
-version: 0.06999_01
+version: 0.06999_02
 author:
   - 'mst: Matt S. Trout <mst@shadowcatsystems.co.uk>'
 abstract: Extensible and flexible object <-> relational mapper.
@@ -26,7 +26,7 @@ provides:
     file: lib/DBIx/Class/Storage/DBI.pm
   DBIx::Class:
     file: lib/DBIx/Class.pm
-    version: 0.06999_01
+    version: 0.06999_02
   DBIx::Class::AccessorGroup:
     file: lib/DBIx/Class/AccessorGroup.pm
   DBIx::Class::CDBICompat:
@@ -65,8 +65,6 @@ provides:
     file: lib/DBIx/Class/Relationship.pm
   DBIx::Class::Relationship::Base:
     file: lib/DBIx/Class/Relationship/Base.pm
-  DBIx::Class::Relationship::BelongsTo:
-    file: lib/DBIx/Class/Relationship/BelongsTo.pm
   DBIx::Class::ResultSet:
     file: lib/DBIx/Class/ResultSet.pm
   DBIx::Class::ResultSetColumn:
@@ -95,6 +93,8 @@ provides:
     file: lib/DBIx/Class/Storage/DBI/MSSQL.pm
   DBIx::Class::Storage::DBI::MultiDistinctEmulation:
     file: lib/DBIx/Class/Storage/DBI/MultiDistinctEmulation.pm
+  DBIx::Class::Storage::DBI::NoBindVars:
+    file: lib/DBIx/Class/Storage/DBI/NoBindVars.pm
   DBIx::Class::Storage::DBI::ODBC:
     file: lib/DBIx/Class/Storage/DBI/ODBC.pm
   DBIx::Class::Storage::DBI::ODBC400:
@@ -107,6 +107,8 @@ provides:
     file: lib/DBIx/Class/Storage/DBI/Pg.pm
   DBIx::Class::Storage::DBI::SQLite:
     file: lib/DBIx/Class/Storage/DBI/SQLite.pm
+  DBIx::Class::Storage::DBI::Sybase:
+    file: lib/DBIx/Class/Storage/DBI/Sybase.pm
   DBIx::Class::Storage::DBI::mysql:
     file: lib/DBIx/Class/Storage/DBI/mysql.pm
   DBIx::Class::Storage::NESTED_ROLLBACK_EXCEPTION:
@@ -117,9 +119,6 @@ provides:
     file: lib/DBIx/Class/Test/SQLite.pm
   DBIx::Class::UTF8Columns:
     file: lib/DBIx/Class/UTF8Columns.pm
-  DBIx::Class::Validation:
-    file: lib/DBIx/Class/Validation.pm
-    version: 0.01
   DBIx::ContextualFetch::st:
     file: lib/DBIx/Class/CDBICompat/ImaDBI.pm
   SQL::Translator::Producer::DBIx::Class::File:

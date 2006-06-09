@@ -53,7 +53,7 @@ SYNOPSIS
       # Create a result set to search for artists.
       # This does not query the DB.
       my $johns_rs = $schema->resultset('Artist')->search(
-        # Build your WHERE using an L<SQL::Abstract> structure:
+        # Build your WHERE using an SQL::Abstract structure:
         { name => { like => 'John%' } }
       );
 
@@ -145,6 +145,8 @@ CONTRIBUTORS
     ank: Andres Kievsky
 
     blblack: Brandon Black
+
+    bluefeet: Aran Deltac <bluefeet@cpan.org>
 
     LTJake: Brian Cassidy <bricas@cpan.org>
 
