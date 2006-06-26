@@ -149,9 +149,9 @@ sub populate_schema {
     ]);
 
     $schema->populate('FourKeys', [
-        [ qw/foo bar hello goodbye/ ],
-        [ 1, 2, 3, 4 ],
-        [ 5, 4, 3, 6 ],
+        [ qw/foo bar hello goodbye sensors/ ],
+        [ 1, 2, 3, 4, 'online' ],
+        [ 5, 4, 3, 6, 'offline' ],
     ]);
 
     $schema->populate('OneKey', [
@@ -219,8 +219,8 @@ sub populate_schema {
     ]);
 
     $schema->populate('Event', [
-        [ qw/id starts_at/ ],
-        [ 1, '2006-04-25 22:24:33' ],
+        [ qw/id starts_at created_on/ ],
+        [ 1, '2006-04-25 22:24:33', '2006-06-22 21:00:05'],
     ]);
 
     $schema->populate('Link', [

@@ -6,12 +6,12 @@ use base qw/DBIx::Class/;
 
 =head1 NAME
 
-DBIx::Class::InflateColumn::DateTime - Auto-create DateTime objects from datetime columns.
+DBIx::Class::InflateColumn::DateTime - Auto-create DateTime objects from date and datetime columns.
 
 =head1 SYNOPSIS
 
 Load this component and then declare one or more 
-columns to be of the datetime datatype.
+columns to be of the datetime, timestamp or date datatype.
 
   package Event;
   __PACKAGE__->load_components(qw/InflateColumn::DateTime/);
@@ -29,7 +29,9 @@ Then you can treat the specified column as a L<DateTime> object.
 This module figures out the type of DateTime::Format::* class to 
 inflate/deflate with based on the type of DBIx::Class::Storage::DBI::* 
 that you are using.  If you switch from one database to a different 
-one your code will continue to work without modification.
+one your code should continue to work without modification (though note
+that this feature is new as of 0.07, so it may not be perfect yet - bug
+reports to the list very much welcome).
 
 =cut
 
@@ -48,17 +50,21 @@ directly called by end users.
 sub register_column {
   my ($self, $column, $info, @rest) = @_;
   $self->next::method($column, $info, @rest);
-  if ($info->{data_type} =~ /^datetime$/i) {
+  return unless defined($info->{data_type});
+  my $type = lc($info->{data_type});
+  $type = 'datetime' if ($type eq 'timestamp');
+  if ($type eq 'datetime' || $type eq 'date') {
+    my ($parse, $format) = ("parse_${type}", "format_${type}");
     $self->inflate_column(
       $column =>
         {
           inflate => sub {
             my ($value, $obj) = @_;
-            $obj->_datetime_parser->parse_datetime($value);
+            $obj->_datetime_parser->$parse($value);
           },
           deflate => sub {
             my ($value, $obj) = @_;
-            $obj->_datetime_parser->format_datetime($value);
+            $obj->_datetime_parser->$format($value);
           },
         }
     );

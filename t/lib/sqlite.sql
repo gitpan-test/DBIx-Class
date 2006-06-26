@@ -1,6 +1,6 @@
 -- 
 -- Created by SQL::Translator::Producer::SQLite
--- Created on Sat May 27 21:28:05 2006
+-- Created on Thu Jun 22 22:47:36 2006
 -- 
 BEGIN TRANSACTION;
 
@@ -23,14 +23,6 @@ CREATE TABLE serialized (
 );
 
 --
--- Table: liner_notes
---
-CREATE TABLE liner_notes (
-  liner_id INTEGER PRIMARY KEY NOT NULL,
-  notes varchar(100) NOT NULL
-);
-
---
 -- Table: cd_to_producer
 --
 CREATE TABLE cd_to_producer (
@@ -40,11 +32,33 @@ CREATE TABLE cd_to_producer (
 );
 
 --
+-- Table: liner_notes
+--
+CREATE TABLE liner_notes (
+  liner_id INTEGER PRIMARY KEY NOT NULL,
+  notes varchar(100) NOT NULL
+);
+
+--
 -- Table: artist
 --
 CREATE TABLE artist (
   artistid INTEGER PRIMARY KEY NOT NULL,
   name varchar(100)
+);
+
+--
+-- Table: fourkeys_to_twokeys
+--
+CREATE TABLE fourkeys_to_twokeys (
+  f_foo integer NOT NULL,
+  f_bar integer NOT NULL,
+  f_hello integer NOT NULL,
+  f_goodbye integer NOT NULL,
+  t_artist integer NOT NULL,
+  t_cd integer NOT NULL,
+  autopilot character NOT NULL,
+  PRIMARY KEY (f_foo, f_bar, f_hello, f_goodbye, t_artist, t_cd)
 );
 
 --
@@ -97,28 +111,19 @@ CREATE TABLE track (
 );
 
 --
--- Table: self_ref
---
-CREATE TABLE self_ref (
-  id INTEGER PRIMARY KEY NOT NULL,
-  name varchar(100) NOT NULL
-);
-
---
--- Table: tags
---
-CREATE TABLE tags (
-  tagid INTEGER PRIMARY KEY NOT NULL,
-  cd integer NOT NULL,
-  tag varchar(100) NOT NULL
-);
-
---
 -- Table: treelike
 --
 CREATE TABLE treelike (
   id INTEGER PRIMARY KEY NOT NULL,
   parent integer NOT NULL,
+  name varchar(100) NOT NULL
+);
+
+--
+-- Table: self_ref
+--
+CREATE TABLE self_ref (
+  id INTEGER PRIMARY KEY NOT NULL,
   name varchar(100) NOT NULL
 );
 
@@ -132,11 +137,21 @@ CREATE TABLE link (
 );
 
 --
+-- Table: tags
+--
+CREATE TABLE tags (
+  tagid INTEGER PRIMARY KEY NOT NULL,
+  cd integer NOT NULL,
+  tag varchar(100) NOT NULL
+);
+
+--
 -- Table: event
 --
 CREATE TABLE event (
   id INTEGER PRIMARY KEY NOT NULL,
-  starts_at datetime NOT NULL
+  starts_at datetime NOT NULL,
+  created_on timestamp NOT NULL
 );
 
 --
@@ -156,6 +171,7 @@ CREATE TABLE fourkeys (
   bar integer NOT NULL,
   hello integer NOT NULL,
   goodbye integer NOT NULL,
+  sensors character NOT NULL,
   PRIMARY KEY (foo, bar, hello, goodbye)
 );
 
@@ -169,20 +185,20 @@ CREATE TABLE artist_undirected_map (
 );
 
 --
+-- Table: producer
+--
+CREATE TABLE producer (
+  producerid INTEGER PRIMARY KEY NOT NULL,
+  name varchar(100) NOT NULL
+);
+
+--
 -- Table: onekey
 --
 CREATE TABLE onekey (
   id INTEGER PRIMARY KEY NOT NULL,
   artist integer NOT NULL,
   cd integer NOT NULL
-);
-
---
--- Table: producer
---
-CREATE TABLE producer (
-  producerid INTEGER PRIMARY KEY NOT NULL,
-  name varchar(100) NOT NULL
 );
 
 CREATE UNIQUE INDEX tktlnameunique_twokeytreelike on twokeytreelike (name);

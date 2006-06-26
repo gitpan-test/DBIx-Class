@@ -85,6 +85,7 @@ lib/DBIx/Class/Storage/DBI/Oracle.pm
 lib/DBIx/Class/Storage/DBI/Pg.pm
 lib/DBIx/Class/Storage/DBI/SQLite.pm
 lib/DBIx/Class/Storage/DBI/Sybase.pm
+lib/DBIx/Class/Storage/DBI/Sybase/MSSQL.pm
 lib/DBIx/Class/Storage/Statistics.pm
 lib/DBIx/Class/Test/SQLite.pm
 lib/DBIx/Class/UTF8Columns.pm
@@ -95,9 +96,8 @@ MANIFEST			This list of files
 META.yml
 README
 script/dbicadmin
-svn.diff
 t/02pod.t
-t/03podcoverage.t.disabled
+t/03podcoverage.t
 t/04dont_break_c3.t
 t/05components.t
 t/18inserterror.t
@@ -189,6 +189,7 @@ t/lib/DBICTest/Schema/CD_to_Producer.pm
 t/lib/DBICTest/Schema/Employee.pm
 t/lib/DBICTest/Schema/Event.pm
 t/lib/DBICTest/Schema/FourKeys.pm
+t/lib/DBICTest/Schema/FourKeys_to_TwoKeys.pm
 t/lib/DBICTest/Schema/LinerNotes.pm
 t/lib/DBICTest/Schema/Link.pm
 t/lib/DBICTest/Schema/OneKey.pm
@@ -201,6 +202,8 @@ t/lib/DBICTest/Schema/Track.pm
 t/lib/DBICTest/Schema/TreeLike.pm
 t/lib/DBICTest/Schema/TwoKeys.pm
 t/lib/DBICTest/Schema/TwoKeyTreeLike.pm
+t/lib/DBICTest/SyntaxErrorComponent1.pm
+t/lib/DBICTest/SyntaxErrorComponent2.pm
 t/lib/sqlite.sql
 t/testlib/Actor.pm
 t/testlib/ActorAlias.pm
@@ -220,4 +223,3 @@ t/testlib/MyStarLinkMCPK.pm
 t/testlib/Order.pm
 t/testlib/OtherFilm.pm
 t/testlib/PgBase.pm
-VERSIONING.SKETCH

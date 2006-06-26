@@ -232,6 +232,18 @@ __PACKAGE__->mk_group_accessors('simple' =>
   qw/_connect_info _dbh _sql_maker _conn_pid _conn_tid debug debugobj
      cursor on_connect_do transaction_depth/);
 
+=head1 NAME
+
+DBIx::Class::Storage::DBI - DBI storage handler
+
+=head1 SYNOPSIS
+
+=head1 DESCRIPTION
+
+This class represents the connection to the database
+
+=head1 METHODS
+
 =head2 new
 
 =cut
@@ -266,20 +278,6 @@ sub throw_exception {
   my ($self, $msg) = @_;
   croak($msg);
 }
-
-=head1 NAME
-
-DBIx::Class::Storage::DBI - DBI storage handler
-
-=head1 SYNOPSIS
-
-=head1 DESCRIPTION
-
-This class represents the connection to the database
-
-=head1 METHODS
-
-=cut
 
 =head2 connect_info
 
@@ -321,7 +319,10 @@ C<limit_dialect>, C<quote_char>, and C<name_sep>.  Examples:
 
 =head2 on_connect_do
 
-Executes the sql statements given as a listref on every db connect.
+  $schema->storage->on_connect_do(['PRAGMA synchronous = OFF']);
+
+Call this after C<< $schema->connect >> to have the sql statements
+given executed on every db connect.
 
 This option can also be set via L</connect_info>.
 
@@ -467,6 +468,7 @@ sub connect_info {
   my ($self, $info_arg) = @_;
 
   if($info_arg) {
+    my %sql_maker_opts;
     my $info = [ @$info_arg ]; # copy because we can alter it
     my $last_info = $info->[-1];
     if(ref $last_info eq 'HASH') {
@@ -478,7 +480,7 @@ sub connect_info {
       for my $sql_maker_opt (qw/limit_dialect quote_char name_sep/) {
         if(my $opt_val = $last_info->{$sql_maker_opt}) {
           $used = 1;
-          $self->sql_maker->$sql_maker_opt($opt_val);
+          $sql_maker_opts{$sql_maker_opt} = $opt_val;
         }
       }
 
@@ -489,6 +491,7 @@ sub connect_info {
     }
 
     $self->_connect_info($info);
+    $self->sql_maker->$_($sql_maker_opts{$_}) for(keys %sql_maker_opts);
   }
 
   $self->_connect_info;
@@ -914,6 +917,8 @@ L<DBIx::Class::Schema/deploy>.
 
 sub deployment_statements {
   my ($self, $schema, $type, $version, $dir, $sqltargs) = @_;
+  # Need to be connected to get the correct sqlt_type
+  $self->ensure_connected() unless $type;
   $type ||= $self->sqlt_type;
   $version ||= $schema->VERSION || '1.x';
   $dir ||= './';
@@ -963,7 +968,7 @@ sub deploy {
 #      next if($_ =~ /^DROP/m);
       next if($_ =~ /^BEGIN TRANSACTION/m);
       next if($_ =~ /^COMMIT/m);
-      $self->debugobj->query_begin($_) if $self->debug;
+      $self->debugobj->query_start($_) if $self->debug;
       $self->dbh->do($_) or warn "SQL was:\n $_";
       $self->debugobj->query_end($_) if $self->debug;
     }
