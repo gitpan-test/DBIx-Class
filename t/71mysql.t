@@ -4,6 +4,7 @@ use warnings;
 use Test::More;
 use lib qw(t/lib);
 use DBICTest;
+use DBI::Const::GetInfoType;
 
 my ($dsn, $user, $pass) = @ENV{map { "DBICTEST_MYSQL_${_}" } qw/DSN USER PASS/};
 
@@ -66,12 +67,22 @@ my $test_type_info = {
     },
 };
 
+SKIP: {
+    my $mysql_version = $dbh->get_info( $GetInfoType{SQL_DBMS_VER} );
+    skip "Cannot determine MySQL server version", 1 if !$mysql_version;
 
-my $type_info = MySQLTest->schema->storage->columns_info_for('artist');
-is_deeply($type_info, $test_type_info, 'columns_info_for - column data types');
+    my ($v1, $v2, $v3) = $mysql_version =~ /^(\d+)\.(\d+)(?:\.(\d+))?/;
+    skip "Cannot determine MySQL server version", 1 if !$v1 || !defined($v2);
 
+    $v3 ||= 0;
 
+    if( ($v1 < 5) || ($v1 == 5 && $v2 == 0 && $v3 <= 3) ) {
+        $test_type_info->{charfield}->{data_type} = 'VARCHAR';
+    }
+
+    my $type_info = MySQLTest->schema->storage->columns_info_for('artist');
+    is_deeply($type_info, $test_type_info, 'columns_info_for - column data types');
+}
 
 # clean up our mess
 $dbh->do("DROP TABLE artist");
-
