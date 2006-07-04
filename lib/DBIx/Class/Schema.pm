@@ -555,8 +555,8 @@ context and it will behave as expected.
 sub txn_do {
   my ($self, $coderef, @args) = @_;
 
-  ref $self or $self->throw_exception
-    ('Cannot execute txn_do as a class method');
+  $self->storage or $self->throw_exception
+    ('txn_do called on $schema without storage');
   ref $coderef eq 'CODE' or $self->throw_exception
     ('$coderef must be a CODE reference');
 

@@ -93,6 +93,8 @@ lib/SQL/Translator/Parser/DBIx/Class.pm
 lib/SQL/Translator/Producer/DBIx/Class/File.pm
 Makefile.PL
 MANIFEST			This list of files
+META.yml
+README
 script/dbicadmin
 t/02pod.t
 t/03podcoverage.t
@@ -169,17 +171,18 @@ t/cdbi-t/30-pager.t
 t/cdbi-t/98-failure.t
 t/lib/DBICTest.pm
 t/lib/DBICTest/ErrorComponent.pm
-t/lib/DBICTest/Extra.pm
-t/lib/DBICTest/Extra/Foo.pm
 t/lib/DBICTest/FakeComponent.pm
 t/lib/DBICTest/ForeignComponent.pm
 t/lib/DBICTest/ForeignComponent/TestComp.pm
 t/lib/DBICTest/OptionalComponent.pm
 t/lib/DBICTest/Plain.pm
 t/lib/DBICTest/Plain/Test.pm
+t/lib/DBICTest/ResultSetManager.pm
+t/lib/DBICTest/ResultSetManager/Foo.pm
 t/lib/DBICTest/Schema.pm
 t/lib/DBICTest/Schema/Artist.pm
 t/lib/DBICTest/Schema/ArtistSourceName.pm
+t/lib/DBICTest/Schema/ArtistSubclass.pm
 t/lib/DBICTest/Schema/ArtistUndirectedMap.pm
 t/lib/DBICTest/Schema/Bookmark.pm
 t/lib/DBICTest/Schema/CD.pm
@@ -221,5 +224,3 @@ t/testlib/MyStarLinkMCPK.pm
 t/testlib/Order.pm
 t/testlib/OtherFilm.pm
 t/testlib/PgBase.pm
-README
-META.yml

@@ -1,10 +1,13 @@
 Revision history for DBIx::Class
 
-<<<<<<< .mine
+0.06999_05 2006-07-04 14:32:17
+        - fix issue with incorrect $rs->{attrs}{$alias}
+        - fix subclassing issue with source_name
+        - tweak quotes test to output text on failure
+        - fix Schema->txn_do to not fail as a classmethod
+
 0.06999_04 2006-06-29 20:18:47
-=======
         - disable cdbi-t/02-Film.t warning tests under AS perl
->>>>>>> .r2079
         - fixups to MySQL tests (aka "work round mysql being retarded")
         - compat tweaks for Storage debug logging
 
