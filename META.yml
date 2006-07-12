@@ -1,6 +1,6 @@
 ---
 name: DBIx-Class
-version: 0.06999_05
+version: 0.06999_06
 author:
   - 'mst: Matt S. Trout <mst@shadowcatsystems.co.uk>'
 abstract: Extensible and flexible object <-> relational mapper.
@@ -26,7 +26,7 @@ provides:
     file: lib/DBIx/Class/Storage/DBI.pm
   DBIx::Class:
     file: lib/DBIx/Class.pm
-    version: 0.06999_05
+    version: 0.06999_06
   DBIx::Class::AccessorGroup:
     file: lib/DBIx/Class/AccessorGroup.pm
   DBIx::Class::CDBICompat:
@@ -97,8 +97,6 @@ provides:
     file: lib/DBIx/Class/Storage/DBI/NoBindVars.pm
   DBIx::Class::Storage::DBI::ODBC:
     file: lib/DBIx/Class/Storage/DBI/ODBC.pm
-  DBIx::Class::Storage::DBI::ODBC400:
-    file: lib/DBIx/Class/Storage/DBI/ODBC400.pm
   DBIx::Class::Storage::DBI::ODBC::DB2_400_SQL:
     file: lib/DBIx/Class/Storage/DBI/ODBC/DB2_400_SQL.pm
   DBIx::Class::Storage::DBI::Oracle:

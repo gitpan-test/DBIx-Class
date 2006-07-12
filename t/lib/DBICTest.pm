@@ -194,8 +194,10 @@ sub populate_schema {
         [ qw/id parent name/ ],
         [ 1, 0, 'foo'  ],
         [ 2, 1, 'bar'  ],
+        [ 5, 1, 'blop' ],
         [ 3, 2, 'baz'  ],
         [ 4, 3, 'quux' ],
+        [ 6, 2, 'fong'  ],
     ]);
 
     $schema->populate('Track', [

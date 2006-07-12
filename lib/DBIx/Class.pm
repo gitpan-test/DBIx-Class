@@ -13,7 +13,7 @@ sub component_base_class { 'DBIx::Class' }
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
 
-$VERSION = '0.06999_05';
+$VERSION = '0.06999_06';
 
 sub MODIFY_CODE_ATTRIBUTES {
     my ($class,$code,@attrs) = @_;
@@ -206,7 +206,7 @@ castaway: Jess Robinson
 
 quicksilver: Jules Bean
 
-jguenther: Justin Guenther <guentherj@agr.gc.ca>
+jguenther: Justin Guenther <jguenther@cpan.org>
 
 captainL: Luke Saunders <luke.saunders@gmail.com>
 

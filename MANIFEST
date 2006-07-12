@@ -37,6 +37,7 @@ lib/DBIx/Class/Manual/Component.pod
 lib/DBIx/Class/Manual/Cookbook.pod
 lib/DBIx/Class/Manual/DocMap.pod
 lib/DBIx/Class/Manual/Example.pod
+lib/DBIx/Class/Manual/FAQ.pod
 lib/DBIx/Class/Manual/Glossary.pod
 lib/DBIx/Class/Manual/Intro.pod
 lib/DBIx/Class/Manual/Troubleshooting.pod
@@ -80,7 +81,6 @@ lib/DBIx/Class/Storage/DBI/mysql.pm
 lib/DBIx/Class/Storage/DBI/NoBindVars.pm
 lib/DBIx/Class/Storage/DBI/ODBC.pm
 lib/DBIx/Class/Storage/DBI/ODBC/DB2_400_SQL.pm
-lib/DBIx/Class/Storage/DBI/ODBC400.pm
 lib/DBIx/Class/Storage/DBI/Oracle.pm
 lib/DBIx/Class/Storage/DBI/Pg.pm
 lib/DBIx/Class/Storage/DBI/SQLite.pm
@@ -102,6 +102,7 @@ t/04dont_break_c3.t
 t/05components.t
 t/18inserterror.t
 t/19quotes.t
+t/19quotes_newstyle.t
 t/20setuperrors.t
 t/26dumper.t
 t/30dbicplain.t
