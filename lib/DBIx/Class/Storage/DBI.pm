@@ -39,6 +39,8 @@ sub _find_syntax {
 sub select {
   my ($self, $table, $fields, $where, $order, @rest) = @_;
   $table = $self->_quote($table) unless ref($table);
+  local $self->{rownum_hack_count} = 1
+    if (defined $rest[0] && $self->{limit_dialect} eq 'RowNum');
   @rest = (-1) unless defined $rest[0];
   die "LIMIT 0 Does Not Compute" if $rest[0] == 0;
     # and anyway, SQL::Abstract::Limit will cause a barf if we don't first
@@ -86,7 +88,12 @@ sub _recurse_fields {
   return $$fields if $ref eq 'SCALAR';
 
   if ($ref eq 'ARRAY') {
-    return join(', ', map { $self->_recurse_fields($_) } @$fields);
+    return join(', ', map {
+      $self->_recurse_fields($_)
+      .(exists $self->{rownum_hack_count}
+         ? ' AS col'.$self->{rownum_hack_count}++
+         : '')
+     } @$fields);
   } elsif ($ref eq 'HASH') {
     foreach my $func (keys %$fields) {
       return $self->_sqlcase($func)
@@ -111,10 +118,18 @@ sub _order_by {
       $ret .= $self->_sqlcase(' having ').$frag;
     }
     if (defined $_[0]->{order_by}) {
-      $ret .= $self->SUPER::_order_by($_[0]->{order_by});
+      $ret .= $self->_order_by($_[0]->{order_by});
     }
-  } elsif(ref $_[0] eq 'SCALAR') {
+  } elsif (ref $_[0] eq 'SCALAR') {
     $ret = $self->_sqlcase(' order by ').${ $_[0] };
+  } elsif (ref $_[0] eq 'ARRAY' && @{$_[0]}) {
+    my @order = @{+shift};
+    $ret = $self->_sqlcase(' order by ')
+          .join(', ', map {
+                        my $r = $self->_order_by($_, @_);
+                        $r =~ s/^ ?ORDER BY //i;
+                        $r;
+                      } @order);
   } else {
     $ret = $self->SUPER::_order_by(@_);
   }
@@ -213,14 +228,6 @@ sub _quote {
        split(/\Q$sep\E/,$label));
   }
   return $self->SUPER::_quote($label);
-}
-
-sub _RowNum {
-   my $self = shift;
-   my $c;
-   $_[0] =~ s/SELECT (.*?) FROM/
-     'SELECT '.join(', ', map { $_.' AS col'.++$c } split(', ', $1)).' FROM'/e;
-   $self->SUPER::_RowNum(@_);
 }
 
 sub limit_dialect {
@@ -409,6 +416,9 @@ This method is deprecated in favor of setting via L</connect_info>.
 
 Causes SQL trace information to be emitted on the C<debugobj> object.
 (or C<STDERR> if C<debugobj> has not specifically been set).
+
+This is the equivalent to setting L</DBIC_TRACE> in your
+shell environment.
 
 =head2 debugfh
 
@@ -943,14 +953,12 @@ sub create_ddl_dir
   $databases ||= ['MySQL', 'SQLite', 'PostgreSQL'];
   $databases = [ $databases ] if(ref($databases) ne 'ARRAY');
   $version ||= $schema->VERSION || '1.x';
+  $sqltargs = { ( add_drop_table => 1 ), %{$sqltargs || {}} };
 
   eval "use SQL::Translator";
   $self->throw_exception("Can't deploy without SQL::Translator: $@") if $@;
 
-  my $sqlt = SQL::Translator->new({
-#      debug => 1,
-      add_drop_table => 1,
-  });
+  my $sqlt = SQL::Translator->new($sqltargs);
   foreach my $db (@$databases)
   {
     $sqlt->reset();
@@ -1036,13 +1044,14 @@ L<DBIx::Class::Schema/deploy>.
 
 sub deploy {
   my ($self, $schema, $type, $sqltargs) = @_;
-  foreach my $statement ( $self->deployment_statements($schema, $type, undef, undef, { no_comments => 1, %$sqltargs }) ) {
+  foreach my $statement ( $self->deployment_statements($schema, $type, undef, undef, { no_comments => 1, %{ $sqltargs || {} } } ) ) {
     for ( split(";\n", $statement)) {
       next if($_ =~ /^--/);
       next if(!$_);
 #      next if($_ =~ /^DROP/m);
       next if($_ =~ /^BEGIN TRANSACTION/m);
       next if($_ =~ /^COMMIT/m);
+      next if $_ =~ /^\s+$/; # skip whitespace only
       $self->debugobj->query_start($_) if $self->debug;
       $self->dbh->do($_) or warn "SQL was:\n $_";
       $self->debugobj->query_end($_) if $self->debug;

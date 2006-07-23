@@ -1,5 +1,11 @@
 Revision history for DBIx::Class
 
+        - supress warnings for possibly non-unique queries, since
+          _is_unique_query doesn't infer properly in all cases
+        - skip empty queries to eliminate spurious warnings on ->deploy
+        - fixups to ORDER BY, tweaks to deepen some copies in ResultSet
+        - fixup for RowNum limit syntax with functions
+
 0.06999_07 2006-07-12 20:58:05
         - fix issue with from attr copying introduced in last release
 
@@ -12,6 +18,7 @@ Revision history for DBIx::Class
         - cleanup UTF8Columns and make more efficient
         - rename DBIX_CLASS_STORAGE_DBI_DEBUG to DBIC_TRACE (with compat)
         - rename _parent_rs to _parent_source in ResultSet
+        - new FAQ.pod!
 
 0.06999_05 2006-07-04 14:40:01
         - fix issue with incorrect $rs->{attrs}{alias}
@@ -114,10 +121,7 @@ Revision history for DBIx::Class
         - nuke ResultSource caching of ->resultset for consistency reasons
         - fix for -and conditions when updating or deleting on a ResultSet
 
-0.06001 2006-04-08 21:48:43
-        - minor fix to update in case of undefined rels
-        - fixes for cascade delete
-        - substantial improvements and fixes to deploy
+0.06001
         - Added fix for quoting with single table
         - Substantial fixes and improvements to deploy
         - slice now uses search directly

@@ -129,6 +129,8 @@ call it as C<search(undef, \%attrs)>.
     columns => [qw/name artistid/],
   });
 
+For a list of attributes that can be passed to C<search>, see L</ATTRIBUTES>. For more examples of using this function, see L<Searching|DBIx::Class::Manual::Cookbook/Searching>.
+
 =cut
 
 sub search {
@@ -464,10 +466,11 @@ sub single {
     }
   }
 
-  unless ($self->_is_unique_query($attrs->{where})) {
-    carp "Query not guaranteed to return a single row"
-      . "; please declare your unique constraints or use search instead";
-  }
+#  XXX: Disabled since it doesn't infer uniqueness in all cases
+#  unless ($self->_is_unique_query($attrs->{where})) {
+#    carp "Query not guaranteed to return a single row"
+#      . "; please declare your unique constraints or use search instead";
+#  }
 
   my @data = $self->result_source->storage->select_single(
     $attrs->{from}, $attrs->{select},
@@ -765,6 +768,20 @@ sub _collapse_result {
 
 An accessor for the primary ResultSource object from which this ResultSet
 is derived.
+
+=head2 result_class
+
+=over 4
+
+=item Arguments: $result_class?
+
+=item Return Value: $result_class
+
+=back
+
+An accessor for the class to use when creating row objects. Defaults to 
+C<< result_source->result_class >> - which in most cases is the name of the 
+L<"table"|DBIx::Class::Manual::Glossary/"ResultSource"> class.
 
 =cut
 
@@ -1450,9 +1467,10 @@ sub _resolve_from {
   my $join = ($attrs->{join}
                ? [ $attrs->{join}, $extra_join ]
                : $extra_join);
-  push(@{$from}, 
-    $source->resolve_join($join, $attrs->{alias}, $seen)
-  );
+  $from = [
+    @$from,
+    ($join ? $source->resolve_join($join, $attrs->{alias}, $seen) : ()),
+  ];
 
   return ($from,$seen);
 }
@@ -1471,13 +1489,21 @@ sub _resolved_attrs {
   } elsif (!$attrs->{select}) {
     $attrs->{columns} = [ $source->columns ];
   }
-  
-  $attrs->{select} ||= [
-    map { m/\./ ? $_ : "${alias}.$_" } @{delete $attrs->{columns}}
-  ];
-  $attrs->{as} ||= [
-    map { m/^\Q${alias}.\E(.+)$/ ? $1 : $_ } @{$attrs->{select}}
-  ];
+ 
+  $attrs->{select} = 
+    ($attrs->{select}
+      ? (ref $attrs->{select} eq 'ARRAY'
+          ? [ @{$attrs->{select}} ]
+          : [ $attrs->{select} ])
+      : [ map { m/\./ ? $_ : "${alias}.$_" } @{delete $attrs->{columns}} ]
+    );
+  $attrs->{as} =
+    ($attrs->{as}
+      ? (ref $attrs->{as} eq 'ARRAY'
+          ? [ @{$attrs->{as}} ]
+          : [ $attrs->{as} ])
+      : [ map { m/^\Q${alias}.\E(.+)$/ ? $1 : $_ } @{$attrs->{select}} ]
+    );
   
   my $adds;
   if ($adds = delete $attrs->{include_columns}) {
@@ -1487,7 +1513,8 @@ sub _resolved_attrs {
   }
   if ($adds = delete $attrs->{'+select'}) {
     $adds = [$adds] unless ref $adds eq 'ARRAY';
-    push(@{$attrs->{select}}, map { /\./ || ref $_ ? $_ : "${alias}.$_" } @$adds);
+    push(@{$attrs->{select}},
+           map { /\./ || ref $_ ? $_ : "${alias}.$_" } @$adds);
   }
   if (my $adds = delete $attrs->{'+as'}) {
     $adds = [$adds] unless ref $adds eq 'ARRAY';
@@ -1514,9 +1541,11 @@ sub _resolved_attrs {
 
   $attrs->{group_by} ||= $attrs->{select} if delete $attrs->{distinct};
   if ($attrs->{order_by}) {
-    $attrs->{order_by} = [ $attrs->{order_by} ] unless ref $attrs->{order_by};    
+    $attrs->{order_by} = (ref($attrs->{order_by}) eq 'ARRAY'
+                           ? [ @{$attrs->{order_by}} ]
+                           : [ $attrs->{order_by} ]);
   } else {
-    $attrs->{order_by} ||= [];    
+    $attrs->{order_by} = [];    
   }
 
   my $collapse = $attrs->{collapse} || {};
@@ -1539,7 +1568,8 @@ sub _resolved_attrs {
 
 sub _merge_attr {
   my ($self, $a, $b) = @_;
-  return $b unless $a;
+  return $b unless defined($a);
+  return $a unless defined($b);
   
   if (ref $b eq 'HASH' && ref $a eq 'HASH') {
     foreach my $key (keys %{$b}) {
@@ -1723,9 +1753,15 @@ use C<get_column> instead:
 You can create your own accessors if required - see
 L<DBIx::Class::Manual::Cookbook> for details.
 
-Please note: This will NOT insert an C<AS employee_count> into the SQL statement
-produced, it is used for internal access only. Thus attempting to use the accessor
-in an C<order_by> clause or similar will fail misrably.
+Please note: This will NOT insert an C<AS employee_count> into the SQL
+statement produced, it is used for internal access only. Thus
+attempting to use the accessor in an C<order_by> clause or similar
+will fail miserably.
+
+To get around this limitation, you can supply literal SQL to your
+C<select> attibute that contains the C<AS alias> text, eg:
+
+  select => [\'myfield AS alias']
 
 =head2 join
 
