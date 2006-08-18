@@ -1,5 +1,25 @@
 Revision history for DBIx::Class
 
+0.07001
+        - add directory argument to deploy()
+        - support default aliases in many_to_many accessors.
+        - support for relationship attributes in many_to_many accessors.
+        - stop search_rs being destructive to attrs
+        - better error reporting when loading components
+        - UTF8Columns changed to use "utf8" instead of "Encode"
+        - restore automatic aliasing in ResultSet::find() on nonunique queries
+        - allow aliases in ResultSet::find() queries (in cases of relationships
+          with prefetch)
+        - pass $attrs to find from update_or_create so a specific key can be
+          provided
+        - remove anonymous blesses to avoid major speed hit on Fedora Core 5's
+          Perl and possibly others; for more information see:
+          https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=196836
+        - fix a pathological prefetch case
+        - table case fix for Oracle in columns_info_for
+        - stopped search_rs deleting attributes from passed hash
+
+0.07000 2006-07-23 02:30:00
         - supress warnings for possibly non-unique queries, since
           _is_unique_query doesn't infer properly in all cases
         - skip empty queries to eliminate spurious warnings on ->deploy

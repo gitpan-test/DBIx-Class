@@ -1068,8 +1068,8 @@ L<DBIx::Class::Schema/deploy>.
 =cut
 
 sub deploy {
-  my ($self, $schema, $type, $sqltargs, $dir) = @_;
-  foreach my $statement ( $self->deployment_statements($schema, $type, undef, $dir, { no_comments => 1, %{ $sqltargs || {} } } ) ) {
+  my ($self, $schema, $type, $sqltargs) = @_;
+  foreach my $statement ( $self->deployment_statements($schema, $type, undef, undef, { no_comments => 1, %{ $sqltargs || {} } } ) ) {
     for ( split(";\n", $statement)) {
       next if($_ =~ /^--/);
       next if(!$_);

@@ -1,6 +1,6 @@
 -- 
 -- Created by SQL::Translator::Producer::SQLite
--- Created on Sun Jul 23 00:23:30 2006
+-- Created on Tue Aug  8 01:53:20 2006
 -- 
 BEGIN TRANSACTION;
 
@@ -164,6 +164,15 @@ CREATE TABLE twokeys (
 );
 
 --
+-- Table: noprimarykey
+--
+CREATE TABLE noprimarykey (
+  foo integer NOT NULL,
+  bar integer NOT NULL,
+  baz integer NOT NULL
+);
+
+--
 -- Table: fourkeys
 --
 CREATE TABLE fourkeys (
@@ -201,9 +210,54 @@ CREATE TABLE onekey (
   cd integer NOT NULL
 );
 
+--
+-- Table: typed_object
+--
+CREATE TABLE typed_object (
+  objectid INTEGER PRIMARY KEY NOT NULL,
+  type VARCHAR(100) NOT NULL,
+  value VARCHAR(100)
+);
+
+--
+-- Table: collection
+--
+CREATE TABLE collection (
+  collectionid INTEGER PRIMARY KEY NOT NULL,
+  name VARCHAR(100)
+);
+
+--
+-- Table: collection_object
+--
+CREATE TABLE collection_object (
+  collection INTEGER NOT NULL,
+  object INTEGER NOT NULL
+);
+
+--
+-- Table: owners
+--
+CREATE TABLE owners (
+  ownerid INTEGER PRIMARY KEY NOT NULL,
+  name varchar(100)
+);
+
+--
+-- Table: books
+--
+CREATE TABLE books (
+  id INTEGER PRIMARY KEY NOT NULL,
+  owner INTEGER,
+  source varchar(100),
+  title varchar(100)
+);
+
+
 CREATE UNIQUE INDEX tktlnameunique_twokeytreelike on twokeytreelike (name);
 CREATE UNIQUE INDEX cd_artist_title_cd on cd (artist, title);
 CREATE UNIQUE INDEX track_cd_position_track on track (cd, position);
 CREATE UNIQUE INDEX track_cd_title_track on track (cd, title);
+CREATE UNIQUE INDEX foo_bar_noprimarykey on noprimarykey (foo, bar);
 CREATE UNIQUE INDEX prod_name_producer on producer (name);
 COMMIT;

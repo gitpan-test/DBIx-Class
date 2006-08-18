@@ -70,9 +70,11 @@ lib/DBIx/Class/ResultSourceProxy.pm
 lib/DBIx/Class/ResultSourceProxy/Table.pm
 lib/DBIx/Class/Row.pm
 lib/DBIx/Class/Schema.pm
+lib/DBIx/Class/Schema.pm.orig
 lib/DBIx/Class/Serialize/Storable.pm
 lib/DBIx/Class/Storage.pm
 lib/DBIx/Class/Storage/DBI.pm
+lib/DBIx/Class/Storage/DBI.pm.orig
 lib/DBIx/Class/Storage/DBI/Cursor.pm
 lib/DBIx/Class/Storage/DBI/DB2.pm
 lib/DBIx/Class/Storage/DBI/MSSQL.pm
@@ -111,6 +113,7 @@ t/32connect_code_ref.t
 t/40resultsetmanager.t
 t/41orrible.t
 t/42toplimit.t
+t/46where_attribute.t
 t/50fork.t
 t/51threads.t
 t/52cycle.t
@@ -135,6 +138,7 @@ t/75limit.t
 t/76joins.t
 t/77join_count.t
 t/78self_referencial.t
+t/79aliasing.t
 t/80unique.t
 t/81transactions.t
 t/82cascade_copy.t
@@ -186,15 +190,20 @@ t/lib/DBICTest/Schema/ArtistSourceName.pm
 t/lib/DBICTest/Schema/ArtistSubclass.pm
 t/lib/DBICTest/Schema/ArtistUndirectedMap.pm
 t/lib/DBICTest/Schema/Bookmark.pm
+t/lib/DBICTest/Schema/BooksInLibrary.pm
 t/lib/DBICTest/Schema/CD.pm
 t/lib/DBICTest/Schema/CD_to_Producer.pm
+t/lib/DBICTest/Schema/Collection.pm
+t/lib/DBICTest/Schema/CollectionObject.pm
 t/lib/DBICTest/Schema/Employee.pm
 t/lib/DBICTest/Schema/Event.pm
 t/lib/DBICTest/Schema/FourKeys.pm
 t/lib/DBICTest/Schema/FourKeys_to_TwoKeys.pm
 t/lib/DBICTest/Schema/LinerNotes.pm
 t/lib/DBICTest/Schema/Link.pm
+t/lib/DBICTest/Schema/NoPrimaryKey.pm
 t/lib/DBICTest/Schema/OneKey.pm
+t/lib/DBICTest/Schema/Owners.pm
 t/lib/DBICTest/Schema/Producer.pm
 t/lib/DBICTest/Schema/SelfRef.pm
 t/lib/DBICTest/Schema/SelfRefAlias.pm
@@ -204,6 +213,7 @@ t/lib/DBICTest/Schema/Track.pm
 t/lib/DBICTest/Schema/TreeLike.pm
 t/lib/DBICTest/Schema/TwoKeys.pm
 t/lib/DBICTest/Schema/TwoKeyTreeLike.pm
+t/lib/DBICTest/Schema/TypedObject.pm
 t/lib/DBICTest/SyntaxErrorComponent1.pm
 t/lib/DBICTest/SyntaxErrorComponent2.pm
 t/lib/sqlite.sql
