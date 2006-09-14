@@ -1,6 +1,6 @@
 ---
 name: DBIx-Class
-version: 0.07001
+version: 0.07002
 author:
   - 'mst: Matt S. Trout <mst@shadowcatsystems.co.uk>'
 abstract: Extensible and flexible object <-> relational mapper.
@@ -8,9 +8,8 @@ license: perl
 resources:
   license: http://dev.perl.org/licenses/
 requires:
-  Algorithm::C3: 0.04
   Carp::Clan: 0
-  Class::C3: 0.11
+  Class::C3: 0.13
   Class::Data::Accessor: 0.01
   Class::Inspector: 0
   Cwd: 3.19
@@ -28,7 +27,7 @@ provides:
     file: lib/DBIx/Class/Storage/DBI.pm
   DBIx::Class:
     file: lib/DBIx/Class.pm
-    version: 0.07001
+    version: 0.07002
   DBIx::Class::AccessorGroup:
     file: lib/DBIx/Class/AccessorGroup.pm
   DBIx::Class::CDBICompat:
