@@ -1,6 +1,6 @@
 ---
 name: DBIx-Class
-version: 0.07002
+version: 0.07999_01
 author:
   - 'mst: Matt S. Trout <mst@shadowcatsystems.co.uk>'
 abstract: Extensible and flexible object <-> relational mapper.
@@ -27,7 +27,7 @@ provides:
     file: lib/DBIx/Class/Storage/DBI.pm
   DBIx::Class:
     file: lib/DBIx/Class.pm
-    version: 0.07002
+    version: 0.07999_01
   DBIx::Class::AccessorGroup:
     file: lib/DBIx/Class/AccessorGroup.pm
   DBIx::Class::CDBICompat:
@@ -84,6 +84,8 @@ provides:
     file: lib/DBIx/Class/Schema.pm
   DBIx::Class::Serialize::Storable:
     file: lib/DBIx/Class/Serialize/Storable.pm
+  DBIx::Class::Storage:
+    file: lib/DBIx/Class/Storage.pm
   DBIx::Class::Storage::DBI:
     file: lib/DBIx/Class/Storage/DBI.pm
   DBIx::Class::Storage::DBI::Cursor:
@@ -112,8 +114,6 @@ provides:
     file: lib/DBIx/Class/Storage/DBI/Sybase/MSSQL.pm
   DBIx::Class::Storage::DBI::mysql:
     file: lib/DBIx/Class/Storage/DBI/mysql.pm
-  DBIx::Class::Storage::NESTED_ROLLBACK_EXCEPTION:
-    file: lib/DBIx/Class/Storage.pm
   DBIx::Class::Storage::Statistics:
     file: lib/DBIx/Class/Storage/Statistics.pm
   DBIx::Class::Test::SQLite:
@@ -125,7 +125,7 @@ provides:
   SQL::Translator::Producer::DBIx::Class::File:
     file: lib/SQL/Translator/Producer/DBIx/Class/File.pm
     version: 0.1
-generated_by: Module::Build version 0.28
+generated_by: Module::Build version 0.2805
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.2.html
   version: 1.2
