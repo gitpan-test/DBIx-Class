@@ -4,8 +4,11 @@ use warnings;
 
 use base qw/DBIx::Class::Storage::DBI::ODBC/;
 
-sub _dbh_last_insert_id {
-    my ($self, $dbh, $source, $col) = @_;
+sub last_insert_id
+{
+    my ($self) = @_;
+
+    my $dbh = $self->_dbh;
 
     # get the schema/table separator:
     #    '.' when SQL naming is active
@@ -23,14 +26,10 @@ sub _dbh_last_insert_id {
 sub _sql_maker_opts {
     my ($self) = @_;
     
-    $self->dbh_do(sub {
-        my ($self, $dbh) = @_;
-
-        return {
-            limit_dialect => 'FetchFirst',
-            name_sep => $dbh->get_info(41)
-        };
-    });
+    return {
+        limit_dialect => 'FetchFirst',
+        name_sep => $self->_dbh->get_info(41)
+    };
 }
 
 1;

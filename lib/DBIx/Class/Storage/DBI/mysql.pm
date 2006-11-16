@@ -7,9 +7,8 @@ use base qw/DBIx::Class::Storage::DBI/;
 
 # __PACKAGE__->load_components(qw/PK::Auto/);
 
-sub _dbh_last_insert_id {
-  my ($self, $dbh, $source, $col) = @_;
-  $dbh->{mysql_insertid};
+sub last_insert_id {
+  return $_[0]->_dbh->{mysql_insertid};
 }
 
 sub sqlt_type {

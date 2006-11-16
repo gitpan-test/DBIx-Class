@@ -343,6 +343,22 @@ sub find {
     $input_query = {@_};
   }
 
+  my (%related, $info);
+
+  foreach my $key (keys %$input_query) {
+    if (ref($input_query->{$key})
+        && ($info = $self->result_source->relationship_info($key))) {
+      my $rel_q = $self->result_source->resolve_condition(
+                    $info->{cond}, delete $input_query->{$key}, $key
+                  );
+      die "Can't handle OR join condition in find" if ref($rel_q) eq 'ARRAY';
+      @related{keys %$rel_q} = values %$rel_q;
+    }
+  }
+  if (my @keys = keys %related) {
+    @{$input_query}{@keys} = values %related;
+  }
+
   my @unique_queries = $self->_unique_queries($input_query, $attrs);
 
   # Build the final query: Default to the disjunction of the unique queries,
@@ -520,7 +536,7 @@ sub single {
     $attrs->{where}, $attrs
   );
 
-  return (@data ? $self->_construct_object(@data) : ());
+  return (@data ? ($self->_construct_object(@data))[0] : ());
 }
 
 # _is_unique_query
@@ -705,22 +721,29 @@ sub next {
     $self->{all_cache_position} = 1;
     return ($self->all)[0];
   }
+  if ($self->{stashed_objects}) {
+    my $obj = shift(@{$self->{stashed_objects}});
+    delete $self->{stashed_objects} unless @{$self->{stashed_objects}};
+    return $obj;
+  }
   my @row = (
     exists $self->{stashed_row}
       ? @{delete $self->{stashed_row}}
       : $self->cursor->next
   );
   return unless (@row);
-  return $self->_construct_object(@row);
+  my ($row, @more) = $self->_construct_object(@row);
+  $self->{stashed_objects} = \@more if @more;
+  return $row;
 }
 
 sub _construct_object {
   my ($self, @row) = @_;
   my $info = $self->_collapse_result($self->{_attrs}{as}, \@row);
-  my $new = $self->result_class->inflate_result($self->result_source, @$info);
-  $new = $self->{_attrs}{record_filter}->($new)
+  my @new = $self->result_class->inflate_result($self->result_source, @$info);
+  @new = $self->{_attrs}{record_filter}->(@new)
     if exists $self->{_attrs}{record_filter};
-  return $new;
+  return @new;
 }
 
 sub _collapse_result {
@@ -1234,10 +1257,10 @@ sub new_result {
   my %new = (
     %{ $self->_remove_alias($values, $alias) },
     %{ $self->_remove_alias($collapsed_cond, $alias) },
+    -result_source => $self->result_source,
   );
 
   my $obj = $self->result_class->new(\%new);
-  $obj->result_source($self->result_source) if $obj->can('result_source');
   return $obj;
 }
 
@@ -1284,9 +1307,15 @@ sub _collapse_cond {
 sub _remove_alias {
   my ($self, $query, $alias) = @_;
 
-  my %unaliased = %{ $query || {} };
-  foreach my $key (keys %unaliased) {
-    $unaliased{$1} = delete $unaliased{$key}
+  my %orig = %{ $query || {} };
+  my %unaliased;
+
+  foreach my $key (keys %orig) {
+    if ($key !~ /\./) {
+      $unaliased{$key} = $orig{$key};
+      next;
+    }
+    $unaliased{$1} = $orig{$key}
       if $key =~ m/^(?:\Q$alias\E\.)?([^.]+)$/;
   }
 
@@ -1738,8 +1767,8 @@ Which column(s) to order the results by. This is currently passed
 through directly to SQL, so you can give e.g. C<year DESC> for a
 descending order on the column `year'.
 
-Please note that if you have C<quote_char> enabled (see
-L<DBIx::Class::Storage::DBI/connect_info>) you will need to do C<\'year DESC' > to
+Please note that if you have quoting enabled (see
+L<DBIx::Class::Storage/quote_char>) you will need to do C<\'year DESC' > to
 specify an order. (The scalar ref causes it to be passed as raw sql to the DB,
 so you will need to manually quote things as appropriate.)
 

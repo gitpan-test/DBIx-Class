@@ -225,8 +225,8 @@ sub populate_schema {
     ]);
 
     $schema->populate('Link', [
-        [ qw/id url title/ ],
-        [ 1, '', 'aaa' ]
+        [ qw/id title/ ],
+        [ 1, 'aaa' ]
     ]);
 
     $schema->populate('Bookmark', [

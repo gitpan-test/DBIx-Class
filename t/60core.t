@@ -7,7 +7,7 @@ use DBICTest;
 
 my $schema = DBICTest->init_schema();
 
-plan tests => 64;
+plan tests => 63;
 
 # figure out if we've got a version of sqlite that is older than 3.2.6, in
 # which case COUNT(DISTINCT()) doesn't work
@@ -277,25 +277,11 @@ ok(!$@, "stringify to false value doesn't cause error");
 # test column_info
 {
   $schema->source("Artist")->{_columns}{'artistid'} = {};
-  $schema->source("Artist")->column_info_from_storage(1);
 
   my $typeinfo = $schema->source("Artist")->column_info('artistid');
   is($typeinfo->{data_type}, 'INTEGER', 'column_info ok');
   $schema->source("Artist")->column_info('artistid');
   ok($schema->source("Artist")->{_columns_info_loaded} == 1, 'Columns info flag set');
-}
-
-# test source_info
-{
-  my $expected = {
-    "source_info_key_A" => "source_info_value_A",
-    "source_info_key_B" => "source_info_value_B",
-    "source_info_key_C" => "source_info_value_C",
-  };
-
-  my $sinfo = $schema->source("Artist")->source_info;
-
-  is_deeply($sinfo, $expected, 'source_info data works');
 }
 
 # test remove_columns

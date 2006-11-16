@@ -12,8 +12,7 @@ __PACKAGE__->load_components(qw/AccessorGroup/);
 
 __PACKAGE__->mk_group_accessors('simple' => qw/_ordered_columns
   _columns _primaries _unique_constraints name resultset_attributes
-  schema from _relationships column_info_from_storage source_name
-  source_info/);
+  schema from _relationships column_info_from_storage source_name/);
 
 __PACKAGE__->mk_group_accessors('component_class' => qw/resultset_class
   result_class/);
@@ -57,21 +56,13 @@ sub new {
   $new->{_relationships} = { %{$new->{_relationships}||{}} };
   $new->{name} ||= "!!NAME NOT SET!!";
   $new->{_columns_info_loaded} ||= 0;
+  if(!defined $new->column_info_from_storage) {
+      $new->{column_info_from_storage} = 1
+  }
   return $new;
 }
 
 =pod
-
-=head2 source_info
-
-Stores a hashref of per-source metadata.  No specific key names
-have yet been standardized, the examples below are purely hypothetical
-and don't actually accomplish anything on their own:
-
-  __PACKAGE__->source_info({
-    "_tablespace" => 'fast_disk_array_3',
-    "_engine" => 'InnoDB',
-  });
 
 =head2 add_columns
 
@@ -108,29 +99,31 @@ whatever your database supports.
 =item size
 
 The length of your column, if it is a column type that can have a size
-restriction. This is currently not used by DBIx::Class.
+restriction. This is currently only used by L<DBIx::Class::Schema/deploy>.
 
 =item is_nullable
 
 Set this to a true value for a columns that is allowed to contain
-NULL values. This is currently not used by DBIx::Class.
+NULL values. This is currently only used by L<DBIx::Class::Schema/deploy>.
 
 =item is_auto_increment
 
 Set this to a true value for a column whose value is somehow
 automatically set. This is used to determine which columns to empty
-when cloning objects using C<copy>.
+when cloning objects using C<copy>. It is also used by
+L<DBIx::Class::Schema/deploy>.
 
 =item is_foreign_key
 
 Set this to a true value for a column that contains a key from a
-foreign table. This is currently not used by DBIx::Class.
+foreign table. This is currently only used by
+L<DBIx::Class::Schema/deploy>.
 
 =item default_value
 
 Set this to the default value which will be inserted into a column
 by the database. Can contain either a value or a function. This is
-currently not used by DBIx::Class.
+currently only used by L<DBIx::Class::Schema/deploy>.
 
 =item sequence
 
@@ -138,6 +131,14 @@ Set this on a primary key column to the name of the sequence used to
 generate a new key value. If not specified, L<DBIx::Class::PK::Auto>
 will attempt to retrieve the name of the sequence from the database
 automatically.
+
+=item extras
+
+This is used by L<DBIx::Class::Schema/deploy> and L<SQL::Translator>
+to add extra non-generic data to the column. For example: C<< extras
+=> { unsigned => 1} >> is used by the MySQL producer to set an integer
+column to unsigned. For more details, see
+L<SQL::Translator::Producer::MySQL>.
 
 =back
 
@@ -201,8 +202,8 @@ sub column_info {
        and $self->schema and $self->storage )
   {
     $self->{_columns_info_loaded}++;
-    my $info;
-    my $lc_info;
+    my $info = {};
+    my $lc_info = {};
     # eval for the case of storage without table
     eval { $info = $self->storage->columns_info_for( $self->from ) };
     unless ($@) {
@@ -210,7 +211,10 @@ sub column_info {
         $lc_info->{lc $realcol} = $info->{$realcol};
       }
       foreach my $col ( keys %{$self->_columns} ) {
-        $self->_columns->{$col} = { %{ $self->_columns->{$col}}, %{$info->{$col} || $lc_info->{lc $col}} };
+        $self->_columns->{$col} = {
+          %{ $self->_columns->{$col} },
+          %{ $info->{$col} || $lc_info->{lc $col} || {} }
+        };
       }
     }
   }
@@ -219,10 +223,13 @@ sub column_info {
 
 =head2 column_info_from_storage
 
-Enables the on-demand automatic loading of the above column
-metadata from storage as neccesary.  This is *deprecated*, and
-should not be used.  It will be removed before 1.0.
+Enables or disables the on-demand automatic loading of the above
+column metadata from storage as neccesary.  Defaults to true in the
+current release, but will default to false in future releases starting
+with 0.08000.  This is *deprecated*, and should not be used.  It will
+be removed before 1.0.
 
+  __PACKAGE__->column_info_from_storage(0);
   __PACKAGE__->column_info_from_storage(1);
 
 =head2 columns
@@ -931,11 +938,19 @@ but is cached from then on unless resultset_class changes.
 
 =head2 resultset_class
 
+` package My::ResultSetClass;
+  use base 'DBIx::Class::ResultSet';
+  ...
+
+  $source->resultset_class('My::ResultSet::Class');
+
 Set the class of the resultset, this is useful if you want to create your
 own resultset methods. Create your own class derived from
-L<DBIx::Class::ResultSet>, and set it here.
+L<DBIx::Class::ResultSet>, and set it here. 
 
 =head2 resultset_attributes
+
+  $source->resultset_attributes({ order_by => [ 'id' ] });
 
 Specify here any attributes you wish to pass to your specialised resultset.
 
