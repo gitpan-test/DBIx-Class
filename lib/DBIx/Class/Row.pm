@@ -79,6 +79,7 @@ sub insert {
   $self->in_storage(1);
   $self->{_dirty_columns} = {};
   $self->{related_resultsets} = {};
+  undef $self->{_orig_ident};
   return $self;
 }
 
@@ -110,14 +111,14 @@ required.
 sub update {
   my ($self, $upd) = @_;
   $self->throw_exception( "Not in database" ) unless $self->in_storage;
-  $self->set_columns($upd) if $upd;
-  my %to_update = $self->get_dirty_columns;
-  return $self unless keys %to_update;
   my $ident_cond = $self->ident_condition;
   $self->throw_exception("Cannot safely update a row in a PK-less table")
     if ! keys %$ident_cond;
+  $self->set_columns($upd) if $upd;
+  my %to_update = $self->get_dirty_columns;
+  return $self unless keys %to_update;
   my $rows = $self->result_source->storage->update(
-               $self->result_source->from, \%to_update, $ident_cond);
+               $self->result_source->from, \%to_update, $self->{_orig_ident} || $ident_cond);
   if ($rows == 0) {
     $self->throw_exception( "Can't update ${self}: row not found" );
   } elsif ($rows > 1) {
@@ -125,6 +126,7 @@ sub update {
   }
   $self->{_dirty_columns} = {};
   $self->{related_resultsets} = {};
+  undef $self->{_orig_ident};
   return $self;
 }
 
@@ -241,6 +243,7 @@ the column is marked as dirty for when you next call $obj->update.
 sub set_column {
   my $self = shift;
   my ($column) = @_;
+  $self->{_orig_ident} ||= $self->ident_condition;
   my $old = $self->get_column($column);
   my $ret = $self->store_column(@_);
   $self->{_dirty_columns}{$column} = 1
