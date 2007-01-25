@@ -4,16 +4,21 @@ use strict;
 use warnings;
 
 use vars qw($VERSION);
-use base qw/DBIx::Class::Componentised Class::Data::Accessor/;
+use base qw/DBIx::Class::Componentised Class::Accessor::Grouped/;
 
-sub mk_classdata { shift->mk_classaccessor(@_); }
+sub mk_classdata { 
+    my $self = shift;
+    $self->mk_group_accessors('inherited', $_[0]); 
+    $self->set_inherited(@_) if @_ > 1;
+}
+
 sub component_base_class { 'DBIx::Class' }
 
 # Always remember to do all digits for the version even if they're 0
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
 
-$VERSION = '0.07005';
+$VERSION = '0.07999_02';
 
 sub MODIFY_CODE_ATTRIBUTES {
   my ($class,$code,@attrs) = @_;
@@ -180,6 +185,8 @@ andyg: Andy Grundman <andy@hybridized.org>
 
 ank: Andres Kievsky
 
+ash: Ash Berlin <ash@cpan.org>
+
 blblack: Brandon L. Black <blblack@gmail.com>
 
 bluefeet: Aran Deltac <bluefeet@cpan.org>
@@ -210,6 +217,8 @@ konobi: Scott McWhirter
 
 LTJake: Brian Cassidy <bricas@cpan.org>
 
+ned: Neil de Carteret
+
 nigel: Nigel Metheringham <nigelm@cpan.org>
 
 ningu: David Kamholz <dkamholz@cpan.org>
@@ -233,6 +242,8 @@ sszabo: Stephan Szabo <sszabo@bigpanda.com>
 Todd Lipcon
 
 typester: Daisuke Murase <typester@cpan.org>
+
+victori: Victor Igumnov <victori@cpan.org>
 
 wdh: Will Hawes
 

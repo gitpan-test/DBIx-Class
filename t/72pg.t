@@ -15,6 +15,7 @@ use DBICTest;
   __PACKAGE__->load_components(qw/PK::Auto Core/);
   __PACKAGE__->table('casecheck');
   __PACKAGE__->add_columns(qw/id name NAME uc_name/);
+  __PACKAGE__->column_info_from_storage(1);
   __PACKAGE__->set_primary_key('id');
 
 }
@@ -29,7 +30,7 @@ plan skip_all => 'Set $ENV{DBICTEST_PG_DSN}, _USER and _PASS to run this test'
 plan tests => 8;
 
 DBICTest::Schema->load_classes( 'Casecheck' );
-DBICTest::Schema->compose_connection('PgTest' => $dsn, $user, $pass);
+DBICTest::Schema->compose_namespace('PgTest' => $dsn, $user, $pass);
 
 my $dbh = PgTest->schema->storage->dbh;
 PgTest->schema->source("Artist")->name("testschema.artist");
