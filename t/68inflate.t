@@ -5,6 +5,7 @@ use Test::More;
 use lib qw(t/lib);
 use DBICTest;
 
+DBICTest::Schema::CD->add_column('year');
 my $schema = DBICTest->init_schema();
 
 eval { require DateTime };
@@ -12,9 +13,7 @@ plan skip_all => "Need DateTime for inflation tests" if $@;
 
 plan tests => 20;
 
-$schema->class('CD')
-#DBICTest::Schema::CD
-->inflate_column( 'year',
+DBICTest::Schema::CD->inflate_column( 'year',
     { inflate => sub { DateTime->new( year => shift ) },
       deflate => sub { shift->year } }
 );

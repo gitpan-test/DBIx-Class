@@ -1,6 +1,6 @@
 ---
 name: DBIx-Class
-version: 0.06999_04
+version: 0.07006
 author:
   - 'mst: Matt S. Trout <mst@shadowcatsystems.co.uk>'
 abstract: Extensible and flexible object <-> relational mapper.
@@ -9,9 +9,10 @@ resources:
   license: http://dev.perl.org/licenses/
 requires:
   Carp::Clan: 0
-  Class::C3: 0.11
+  Class::C3: 0.13
   Class::Data::Accessor: 0.01
   Class::Inspector: 0
+  Cwd: 3.19
   DBI: 1.4
   Data::Page: 2
   Module::Find: 0
@@ -26,7 +27,7 @@ provides:
     file: lib/DBIx/Class/Storage/DBI.pm
   DBIx::Class:
     file: lib/DBIx/Class.pm
-    version: 0.06999_04
+    version: 0.07006
   DBIx::Class::AccessorGroup:
     file: lib/DBIx/Class/AccessorGroup.pm
   DBIx::Class::CDBICompat:
@@ -49,18 +50,6 @@ provides:
     file: lib/DBIx/Class/PK.pm
   DBIx::Class::PK::Auto:
     file: lib/DBIx/Class/PK/Auto.pm
-  DBIx::Class::PK::Auto::DB2:
-    file: lib/DBIx/Class/PK/Auto/DB2.pm
-  DBIx::Class::PK::Auto::MSSQL:
-    file: lib/DBIx/Class/PK/Auto/MSSQL.pm
-  DBIx::Class::PK::Auto::MySQL:
-    file: lib/DBIx/Class/PK/Auto/MySQL.pm
-  DBIx::Class::PK::Auto::Oracle:
-    file: lib/DBIx/Class/PK/Auto/Oracle.pm
-  DBIx::Class::PK::Auto::Pg:
-    file: lib/DBIx/Class/PK/Auto/Pg.pm
-  DBIx::Class::PK::Auto::SQLite:
-    file: lib/DBIx/Class/PK/Auto/SQLite.pm
   DBIx::Class::Relationship:
     file: lib/DBIx/Class/Relationship.pm
   DBIx::Class::Relationship::Base:
@@ -97,8 +86,6 @@ provides:
     file: lib/DBIx/Class/Storage/DBI/NoBindVars.pm
   DBIx::Class::Storage::DBI::ODBC:
     file: lib/DBIx/Class/Storage/DBI/ODBC.pm
-  DBIx::Class::Storage::DBI::ODBC400:
-    file: lib/DBIx/Class/Storage/DBI/ODBC400.pm
   DBIx::Class::Storage::DBI::ODBC::DB2_400_SQL:
     file: lib/DBIx/Class/Storage/DBI/ODBC/DB2_400_SQL.pm
   DBIx::Class::Storage::DBI::Oracle:
@@ -126,7 +113,7 @@ provides:
   SQL::Translator::Producer::DBIx::Class::File:
     file: lib/SQL/Translator/Producer/DBIx/Class/File.pm
     version: 0.1
-generated_by: Module::Build version 0.28
+generated_by: Module::Build version 0.2807
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.2.html
   version: 1.2

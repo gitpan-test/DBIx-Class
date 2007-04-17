@@ -3,13 +3,13 @@ package # hide from PAUSE
 
 use base 'DBIx::Class::Core';
 
-__PACKAGE__->table('noprimarykey');
-__PACKAGE__->add_columns(
+DBICTest::Schema::NoPrimaryKey->table('noprimarykey');
+DBICTest::Schema::NoPrimaryKey->add_columns(
   'foo' => { data_type => 'integer' },
   'bar' => { data_type => 'integer' },
   'baz' => { data_type => 'integer' },
 );
 
-__PACKAGE__->add_unique_constraint(foo_bar => [ qw/foo bar/ ]);
+DBICTest::Schema::NoPrimaryKey->add_unique_constraint(foo_bar => [ qw/foo bar/ ]);
 
 1;

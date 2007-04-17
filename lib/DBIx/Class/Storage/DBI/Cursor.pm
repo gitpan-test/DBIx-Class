@@ -43,9 +43,11 @@ sub new {
     args => $args,
     pos => 0,
     attrs => $attrs,
-    _dbh_gen => $storage->{_dbh_gen},
+    pid => $$,
   };
 
+  $new->{tid} = threads->tid if $INC{'threads.pm'};
+  
   return bless ($new, $class);
 }
 
@@ -63,10 +65,10 @@ Advances the cursor to the next row and returns an arrayref of column values.
 
 =cut
 
-sub _dbh_next {
-  my ($storage, $dbh, $self) = @_;
+sub next {
+  my ($self) = @_;
 
-  $self->_check_dbh_gen;
+  $self->_check_forks_threads;
   if ($self->{attrs}{rows} && $self->{pos} >= $self->{attrs}{rows}) {
     $self->{sth}->finish if $self->{sth}->{Active};
     delete $self->{sth};
@@ -74,7 +76,7 @@ sub _dbh_next {
   }
   return if $self->{done};
   unless ($self->{sth}) {
-    $self->{sth} = ($storage->_select(@{$self->{args}}))[1];
+    $self->{sth} = ($self->{storage}->_select(@{$self->{args}}))[1];
     if ($self->{attrs}{software_limit}) {
       if (my $offset = $self->{attrs}{offset}) {
         $self->{sth}->fetch for 1 .. $offset;
@@ -89,11 +91,6 @@ sub _dbh_next {
     $self->{done} = 1;
   }
   return @row;
-}
-
-sub next {
-  my ($self) = @_;
-  $self->{storage}->dbh_do($self->can('_dbh_next'), $self);
 }
 
 =head2 all
@@ -111,20 +108,15 @@ L<DBIx::Class::ResultSet>.
 
 =cut
 
-sub _dbh_all {
-  my ($storage, $dbh, $self) = @_;
-
-  $self->_check_dbh_gen;
-  $self->{sth}->finish if $self->{sth}->{Active};
-  delete $self->{sth};
-  my ($rv, $sth) = $storage->_select(@{$self->{args}});
-  return @{$sth->fetchall_arrayref};
-}
-
 sub all {
   my ($self) = @_;
+
+  $self->_check_forks_threads;
   return $self->SUPER::all if $self->{attrs}{rows};
-  $self->{storage}->dbh_do($self->can('_dbh_all'), $self);
+  $self->{sth}->finish if $self->{sth}->{Active};
+  delete $self->{sth};
+  my ($rv, $sth) = $self->{storage}->_select(@{$self->{args}});
+  return @{$sth->fetchall_arrayref};
 }
 
 =head2 reset
@@ -136,8 +128,8 @@ Resets the cursor to the beginning of the L<DBIx::Class::ResultSet>.
 sub reset {
   my ($self) = @_;
 
-  # No need to care about failures here
-  eval { $self->{sth}->finish if $self->{sth} && $self->{sth}->{Active} };
+  $self->_check_forks_threads;
+  $self->{sth}->finish if $self->{sth}->{Active};
   $self->_soft_reset;
 }
 
@@ -145,25 +137,30 @@ sub _soft_reset {
   my ($self) = @_;
 
   delete $self->{sth};
-  delete $self->{done};
   $self->{pos} = 0;
+  delete $self->{done};
   return $self;
 }
 
-sub _check_dbh_gen {
+sub _check_forks_threads {
   my ($self) = @_;
 
-  if($self->{_dbh_gen} != $self->{storage}->{_dbh_gen}) {
-    $self->{_dbh_gen} = $self->{storage}->{_dbh_gen};
-    $self->_soft_reset;
+  if($INC{'threads.pm'} && $self->{tid} != threads->tid) {
+      $self->_soft_reset;
+      $self->{tid} = threads->tid;
+  }
+
+  if($self->{pid} != $$) {
+      $self->_soft_reset;
+      $self->{pid} = $$;
   }
 }
 
 sub DESTROY {
   my ($self) = @_;
 
-  # None of the reasons this would die matter if we're in DESTROY anyways
-  eval { $self->{sth}->finish if $self->{sth} && $self->{sth}->{Active} };
+  $self->_check_forks_threads;
+  $self->{sth}->finish if $self->{sth} && $self->{sth}->{Active};
 }
 
 1;

@@ -1,9 +1,7 @@
 package DBIx::Class::Storage::Statistics;
 use strict;
-use warnings;
 
-use base qw/Class::Accessor::Grouped/;
-
+use base qw/DBIx::Class::AccessorGroup Class::Data::Accessor/;
 __PACKAGE__->mk_group_accessors(simple => qw/callback debugfh/);
 
 =head1 NAME

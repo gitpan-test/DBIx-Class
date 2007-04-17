@@ -9,7 +9,6 @@ __PACKAGE__->load_classes(qw/
   Artist
   Employee
   CD
-  FileColumn
   Link
   Bookmark
   #dummy

@@ -4,20 +4,18 @@ use strict;
 use warnings;
 
 use DBIx::Class::ResultSet;
-use DBIx::Class::ResultSourceHandle;
 use Carp::Clan qw/^DBIx::Class/;
 use Storable;
 
 use base qw/DBIx::Class/;
+__PACKAGE__->load_components(qw/AccessorGroup/);
 
 __PACKAGE__->mk_group_accessors('simple' => qw/_ordered_columns
   _columns _primaries _unique_constraints name resultset_attributes
-  schema from _relationships column_info_from_storage source_info/);
+  schema from _relationships column_info_from_storage source_name/);
 
-__PACKAGE__->mk_group_accessors('inherited' => qw/resultset_class
+__PACKAGE__->mk_group_accessors('component_class' => qw/resultset_class
   result_class/);
-
-__PACKAGE__->mk_group_ro_accessors('simple' => qw/source_name/);
 
 =head1 NAME
 
@@ -48,7 +46,9 @@ sub new {
   my ($class, $attrs) = @_;
   $class = ref $class if ref $class;
 
-  my $new = bless { %{$attrs || {}} }, $class;
+  my $new = { %{$attrs || {}}, _resultset => undef };
+  bless $new, $class;
+
   $new->{resultset_class} ||= 'DBIx::Class::ResultSet';
   $new->{resultset_attributes} = { %{$new->{resultset_attributes} || {}} };
   $new->{_ordered_columns} = [ @{$new->{_ordered_columns}||[]}];
@@ -56,21 +56,13 @@ sub new {
   $new->{_relationships} = { %{$new->{_relationships}||{}} };
   $new->{name} ||= "!!NAME NOT SET!!";
   $new->{_columns_info_loaded} ||= 0;
+  if(!defined $new->column_info_from_storage) {
+      $new->{column_info_from_storage} = 1
+  }
   return $new;
 }
 
 =pod
-
-=head2 source_info
-
-Stores a hashref of per-source metadata.  No specific key names
-have yet been standardized, the examples below are purely hypothetical
-and don't actually accomplish anything on their own:
-
-  __PACKAGE__->source_info({
-    "_tablespace" => 'fast_disk_array_3',
-    "_engine" => 'InnoDB',
-  });
 
 =head2 add_columns
 
@@ -231,10 +223,13 @@ sub column_info {
 
 =head2 column_info_from_storage
 
-Enables the on-demand automatic loading of the above column
-metadata from storage as neccesary.  This is *deprecated*, and
-should not be used.  It will be removed before 1.0.
+Enables or disables the on-demand automatic loading of the above
+column metadata from storage as neccesary.  Defaults to true in the
+current release, but will default to false in future releases starting
+with 0.08000.  This is *deprecated*, and should not be used.  It will
+be removed before 1.0.
 
+  __PACKAGE__->column_info_from_storage(0);
   __PACKAGE__->column_info_from_storage(1);
 
 =head2 columns
@@ -957,7 +952,9 @@ L<DBIx::Class::ResultSet>, and set it here.
 
   $source->resultset_attributes({ order_by => [ 'id' ] });
 
-Specify here any attributes you wish to pass to your specialised resultset.
+Specify here any attributes you wish to pass to your specialised
+resultset. For a full list of these, please see
+L<DBIx::Class::ResultSet/ATTRIBUTES>.
 
 =cut
 
@@ -967,6 +964,12 @@ sub resultset {
     'resultset does not take any arguments. If you want another resultset, '.
     'call it on the schema instead.'
   ) if scalar @_;
+
+  # disabled until we can figure out a way to do it without consistency issues
+  #
+  #return $self->{_resultset}
+  #  if ref $self->{_resultset} eq $self->resultset_class;
+  #return $self->{_resultset} =
 
   return $self->resultset_class->new(
     $self, $self->{resultset_attributes}
@@ -992,20 +995,6 @@ its class name.
 
   # from your schema...
   $schema->resultset('Books')->find(1);
-
-=head2 handle
-
-Obtain a new handle to this source. Returns an instance of a 
-L<DBIx::Class::ResultSourceHandle>.
-
-=cut
-
-sub handle {
-    return new DBIx::Class::ResultSourceHandle({
-        schema         => $_[0]->schema,
-        source_moniker => $_[0]->source_name
-    });
-}
 
 =head2 throw_exception
 

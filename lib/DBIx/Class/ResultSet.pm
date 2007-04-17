@@ -10,10 +10,10 @@ use Carp::Clan qw/^DBIx::Class/;
 use Data::Page;
 use Storable;
 use DBIx::Class::ResultSetColumn;
-use DBIx::Class::ResultSourceHandle;
 use base qw/DBIx::Class/;
 
-__PACKAGE__->mk_group_accessors('simple' => qw/result_class _source_handle/);
+__PACKAGE__->load_components(qw/AccessorGroup/);
+__PACKAGE__->mk_group_accessors('simple' => qw/result_source result_class/);
 
 =head1 NAME
 
@@ -85,8 +85,7 @@ sub new {
   return $class->new_result(@_) if ref $class;
 
   my ($source, $attrs) = @_;
-  $source = $source->handle 
-    unless $source->isa('DBIx::Class::ResultSourceHandle');
+  #weaken $source;
   $attrs = { %{$attrs||{}} };
 
   if ($attrs->{page}) {
@@ -98,8 +97,8 @@ sub new {
   $attrs->{alias} ||= 'me';
 
   my $self = {
-    _source_handle => $source,
-    result_class => $attrs->{result_class} || $source->resolve->result_class,
+    result_source => $source,
+    result_class => $attrs->{result_class} || $source->result_class,
     cond => $attrs->{where},
     count => undef,
     pager => undef,
@@ -135,7 +134,10 @@ call it as C<search(undef, \%attrs)>.
     columns => [qw/name artistid/],
   });
 
-For a list of attributes that can be passed to C<search>, see L</ATTRIBUTES>. For more examples of using this function, see L<Searching|DBIx::Class::Manual::Cookbook/Searching>.
+For a list of attributes that can be passed to C<search>, see
+L</ATTRIBUTES>. For more examples of using this function, see
+L<Searching|DBIx::Class::Manual::Cookbook/Searching>. For a complete
+documentation for the first argument, see L<SQL::Abstract>.
 
 =cut
 
@@ -240,7 +242,7 @@ sub search_rs {
         : $having);
   }
 
-  my $rs = (ref $self)->new($self->_source_handle, $new_attrs);
+  my $rs = (ref $self)->new($self->result_source, $new_attrs);
   if ($rows) {
     $rs->set_cache($rows);
   }
@@ -744,7 +746,7 @@ sub next {
 sub _construct_object {
   my ($self, @row) = @_;
   my $info = $self->_collapse_result($self->{_attrs}{as}, \@row);
-  my @new = $self->result_class->inflate_result($self->_source_handle, @$info);
+  my @new = $self->result_class->inflate_result($self->result_source, @$info);
   @new = $self->{_attrs}{record_filter}->(@new)
     if exists $self->{_attrs}{record_filter};
   return @new;
@@ -920,7 +922,7 @@ sub _count { # Separated out so pager can get the full count
   # offset, order by and page are not needed to count. record_filter is cdbi
   delete $attrs->{$_} for qw/rows offset order_by page pager record_filter/;
 
-  my $tmp_rs = (ref $self)->new($self->_source_handle, $attrs);
+  my $tmp_rs = (ref $self)->new($self->result_source, $attrs);
   my ($count) = $tmp_rs->cursor->next;
   return $count;
 }
@@ -1111,9 +1113,9 @@ sub update {
     unless ref $values eq 'HASH';
 
   my $cond = $self->_cond_for_update_delete;
-   
+
   return $self->result_source->storage->update(
-    $self->result_source, $values, $cond
+    $self->result_source->from, $values, $cond
   );
 }
 
@@ -1163,7 +1165,7 @@ sub delete {
 
   my $cond = $self->_cond_for_update_delete;
 
-  $self->result_source->storage->delete($self->result_source, $cond);
+  $self->result_source->storage->delete($self->result_source->from, $cond);
   return 1;
 }
 
@@ -1231,7 +1233,7 @@ attribute set on the resultset (10 by default).
 
 sub page {
   my ($self, $page) = @_;
-  return (ref $self)->new($self->_source_handle, { %{$self->{attrs}}, page => $page });
+  return (ref $self)->new($self->result_source, { %{$self->{attrs}}, page => $page });
 }
 
 =head2 new_result
@@ -1261,9 +1263,11 @@ sub new_result {
   my %new = (
     %{ $self->_remove_alias($values, $alias) },
     %{ $self->_remove_alias($collapsed_cond, $alias) },
+    -result_source => $self->result_source,
   );
 
-  return $self->result_class->new(\%new,$self->_source_handle);
+  my $obj = $self->result_class->new(\%new);
+  return $obj;
 }
 
 # _collapse_cond
@@ -1557,7 +1561,7 @@ sub related_resultset {
     my $rel_obj = $self->result_source->relationship_info($rel);
 
     $self->throw_exception(
-      "search_related: result source '" . $self->_source_handle->source_moniker .
+      "search_related: result source '" . $self->result_source->name .
         "' has no such relationship $rel")
       unless $rel_obj;
     
@@ -1566,7 +1570,7 @@ sub related_resultset {
     my $join_count = $seen->{$rel};
     my $alias = ($join_count > 1 ? join('_', $rel, $join_count) : $rel);
 
-    $self->_source_handle->schema->resultset($rel_obj->{class})->search_rs(
+    $self->result_source->schema->resultset($rel_obj->{class})->search_rs(
       undef, {
         %{$self->{attrs}||{}},
         join => undef,
@@ -1607,7 +1611,7 @@ sub _resolved_attrs {
   return $self->{_attrs} if $self->{_attrs};
 
   my $attrs = { %{$self->{attrs}||{}} };
-  my $source = $self->result_source;
+  my $source = $self->{result_source};
   my $alias = $attrs->{alias};
 
   $attrs->{columns} ||= delete $attrs->{cols} if exists $attrs->{cols};
@@ -1739,16 +1743,6 @@ sub _merge_attr {
   }
 }
 
-sub result_source {
-    my $self = shift;
-
-    if (@_) {
-        $self->_source_handle($_[0]->handle);
-    } else {
-        $self->_source_handle->resolve;
-    }
-}
-
 =head2 throw_exception
 
 See L<DBIx::Class::Schema/throw_exception> for details.
@@ -1757,7 +1751,7 @@ See L<DBIx::Class::Schema/throw_exception> for details.
 
 sub throw_exception {
   my $self=shift;
-  $self->_source_handle->schema->throw_exception(@_);
+  $self->result_source->schema->throw_exception(@_);
 }
 
 # XXX: FIXME: Attributes docs need clearing up
@@ -1779,8 +1773,8 @@ Which column(s) to order the results by. This is currently passed
 through directly to SQL, so you can give e.g. C<year DESC> for a
 descending order on the column `year'.
 
-Please note that if you have C<quote_char> enabled (see
-L<DBIx::Class::Storage::DBI/connect_info>) you will need to do C<\'year DESC' > to
+Please note that if you have quoting enabled (see
+L<DBIx::Class::Storage/quote_char>) you will need to do C<\'year DESC' > to
 specify an order. (The scalar ref causes it to be passed as raw sql to the DB,
 so you will need to manually quote things as appropriate.)
 
@@ -1813,7 +1807,9 @@ Shortcut to include additional columns in the returned results - for example
   });
 
 would return all CDs and include a 'name' column to the information
-passed to object inflation
+passed to object inflation. Note that the 'artist' is the name of the
+column (or relationship) accessor, and 'name' is the name of the column
+accessor in the related table.
 
 =head2 select
 
@@ -1864,8 +1860,14 @@ Indicates additional column names for those added via L<+select>.
 
 =back
 
-Indicates column names for object inflation. This is used in conjunction with
-C<select>, usually when C<select> contains one or more function or stored
+Indicates column names for object inflation. That is, c< as >
+indicates the name that the column can be accessed as via the
+C<get_column> method (or via the object accessor, B<if one already
+exists>).  It has nothing to do with the SQL code C< SELECT foo AS bar
+>.
+
+The C< as > attribute is used in conjunction with C<select>,
+usually when C<select> contains one or more function or stored
 procedure names:
 
   $rs = $schema->resultset('Employee')->search(undef, {

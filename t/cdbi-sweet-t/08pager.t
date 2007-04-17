@@ -16,12 +16,9 @@ BEGIN {
 use lib 't/lib';
 
 use_ok('DBICTest');
+DBICTest->init_schema();
 
-DBICTest::Schema::CD->load_components(qw/CDBICompat CDBICompat::Pager/);
-
-my $schema = DBICTest->init_schema(compose_connection => 1);
-
-DBICTest::CD->result_source_instance->schema->storage($schema->storage);
+DBICTest::CD->load_components(qw/CDBICompat::Pager/);
 
 my ( $pager, $it ) = DBICTest::CD->page(
     {},

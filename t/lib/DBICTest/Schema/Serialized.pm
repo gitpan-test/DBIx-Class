@@ -3,11 +3,11 @@ package # hide from PAUSE
 
 use base 'DBIx::Class::Core';
 
-__PACKAGE__->table('serialized');
-__PACKAGE__->add_columns(
+DBICTest::Schema::Serialized->table('serialized');
+DBICTest::Schema::Serialized->add_columns(
   'id' => { data_type => 'integer' },
   'serialized' => { data_type => 'text' },
 );
-__PACKAGE__->set_primary_key('id');
+DBICTest::Schema::Serialized->set_primary_key('id');
 
 1;

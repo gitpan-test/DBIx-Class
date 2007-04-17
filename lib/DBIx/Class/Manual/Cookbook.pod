@@ -107,12 +107,15 @@ to access the returned value:
   );
 
   # Equivalent SQL:
-  # SELECT name name, LENGTH( name ) name_length
+  # SELECT name name, LENGTH( name )
   # FROM artist
 
-If your alias exists as a column in your base class (i.e. it was added
-with C<add_columns>), you just access it as normal. Our C<Artist>
-class has a C<name> column, so we just use the C<name> accessor:
+Note that the C< as > attribute has absolutely nothing to with the sql
+syntax C< SELECT foo AS bar > (see the documentation in
+L<DBIx::Class::ResultSet/ATTRIBUTES>).  If your alias exists as a
+column in your base class (i.e. it was added with C<add_columns>), you
+just access it as normal. Our C<Artist> class has a C<name> column, so
+we just use the C<name> accessor:
 
   my $artist = $rs->first();
   my $name = $artist->name();
@@ -139,7 +142,7 @@ any of your aliases using either of these:
       select => [
         { distinct => [ $source->columns ] }
       ],
-      as => [ $source->columns ]
+      as => [ $source->columns ] # remember 'as' is not the same as SQL AS :-)
     }
   );
 
@@ -175,6 +178,10 @@ L<DBIx::Class> supports C<GROUP BY> as follows:
   # SELECT name, COUNT( cds.cdid ) FROM artist me
   # LEFT JOIN cd cds ON ( cds.artist = me.artistid )
   # GROUP BY name
+
+Please see L<DBIx::Class::ResultSet/ATTRIBUTES> documentation if you
+are in any way unsure about the use of the attributes above (C< join
+>, C< select >, C< as > and C< group_by >).
 
 =head3 Predefined searches
 
@@ -415,7 +422,7 @@ ways, the obvious one is to use search:
     {},
     { 
        select => [ { sum => 'Cost' } ],
-       as     => [ 'total_cost' ],
+       as     => [ 'total_cost' ], # remember this 'as' is for DBIx::Class::ResultSet not SQL
     }
   );
   my $tc = $rs->first->get_column('total_cost');
@@ -487,7 +494,7 @@ To order C<< $book->pages >> by descending page_number.
 =head2 Transactions
 
 As of version 0.04001, there is improved transaction support in
-L<DBIx::Class::Storage> and L<DBIx::Class::Schema>.  Here is an
+L<DBIx::Class::Storage::DBI> and L<DBIx::Class::Schema>.  Here is an
 example of the recommended way to use it:
 
   my $genus = $schema->resultset('Genus')->find(12);
@@ -526,7 +533,7 @@ in the future.
 
 =head2 Many-to-many relationships
 
-This is straightforward using L<DBIx::Class::Relationship::ManyToMany>:
+This is straightforward using L<ManyToMany|DBIx::Class::Relationship/many_to_many>:
 
   package My::DB;
   # ... set up connection ...
@@ -564,11 +571,13 @@ It's as simple as overriding the C<new> method.  Note the use of
 C<next::method>.
 
   sub new {
-    my ( $class, $attrs ) = @_;
+    my ( $self, $attrs ) = @_;
 
     $attrs->{foo} = 'bar' unless defined $attrs->{foo};
 
-    $class->next::method($attrs);
+    $self->next::method($attrs);
+
+    return $self;
   }
 
 For more information about C<next::method>, look in the L<Class::C3> 
@@ -586,7 +595,7 @@ module.
 To make an object stringify itself as a single column, use something
 like this (replace C<foo> with the column/method of your choice):
 
-  use overload '""' => 'foo', fallback => 1;
+  use overload '""' => sub { shift->name}, fallback => 1;
 
 For more complex stringification, you can use an anonymous subroutine:
 
@@ -905,7 +914,7 @@ method.
 
 =head2 Profiling
 
-When you enable L<DBIx::Class::Storage>'s debugging it prints the SQL
+When you enable L<DBIx::Class::Storage::DBI>'s debugging it prints the SQL
 executed as well as notifications of query completion and transaction
 begin/commit.  If you'd like to profile the SQL you can subclass the
 L<DBIx::Class::Storage::Statistics> class and write your own profiling
@@ -1100,18 +1109,42 @@ B<Test File> test.pl
 
 DBIx::Class is not built for speed, it's built for convenience and
 ease of use, but sometimes you just need to get the data, and skip the
-fancy objects.
-  
-To do this simply use L<DBIx::Class::ResultClass::HashRefInflator>.
-  
- my $rs = $schema->resultset('CD');
- 
- $rs->result_class('DBIx::Class::ResultClass::HashRefInflator');
- 
- my $hash_ref = $rs->find(1);
-  
-Wasn't that easy?
-  
+fancy objects. Luckily this is also fairly easy using
+C<inflate_result>:
+
+  # Define a class which just returns the results as a hashref:
+  package My::HashRefInflator;
+
+  ## $me is the hashref of cols/data from the immediate resultsource
+  ## $prefetch is a deep hashref of all the data from the prefetched
+  ##   related sources.
+
+  sub mk_hash {
+     my ($me, $rest) = @_;
+
+     return { %$me, 
+        map { ($_ => mk_hash(@{$rest->{$_}})) } keys %$rest
+     };
+  }
+
+  sub inflate_result {
+     my ($self, $source, $me, $prefetch) = @_;
+     return mk_hash($me, $prefetch); 
+  }
+
+  # Change the object inflation to a hashref for just this resultset:
+  $rs->result_class('My::HashRefInflator');
+
+  my $datahashref = $rs->next;
+  foreach my $col (keys %$datahashref) {
+     if(!ref($datahashref->{$col})) {
+        # It's a plain value
+     }
+     elsif(ref($datahashref->{$col} eq 'HASH')) {
+        # It's a related value in a hashref
+     }
+  }
+
 =head2 Want to know if find_or_create found or created a row?
 
 Just use C<find_or_new> instead, then check C<in_storage>:
@@ -1120,6 +1153,45 @@ Just use C<find_or_new> instead, then check C<in_storage>:
   unless ($obj->in_storage) {
     $obj->insert;
     # do whatever else you wanted if it was a new row
+  }
+
+=head3 Wrapping/overloading a column accessor
+
+Problem: Say you have a table "Camera" and want to associate a description
+with each camera. For most cameras, you'll be able to generate the description from
+the other columns. However, in a few special cases you may want to associate a
+custom description with a camera.
+
+Solution:
+
+In your database schema, define a description field in the "Camera" table that
+can contain text and null values.
+
+In DBIC, we'll overload the column accessor to provide a sane default if no
+custom description is defined. The accessor will either return or generate the
+description, depending on whether the field is null or not.
+
+First, in your "Camera" schema class, define the description field as follows:
+
+  __PACKAGE__->add_columns(description => { accessor => '_description' });
+
+Next, we'll define the accessor-wrapper subroutine:
+
+  sub description {
+      my $self = shift;
+
+      # If there is an update to the column, we'll let the original accessor
+      # deal with it.
+      return $self->_description(@_) if @_;
+
+      # Fetch the column value.
+      my $description = $self->_description;
+
+      # If there's something in the description field, then just return that.
+      return $description if defined $description && length $descripton;
+
+      # Otherwise, generate a description.
+      return $self->generate_description;
   }
 
 =cut

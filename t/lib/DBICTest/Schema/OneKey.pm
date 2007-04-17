@@ -3,8 +3,8 @@ package # hide from PAUSE
 
 use base 'DBIx::Class::Core';
 
-__PACKAGE__->table('onekey');
-__PACKAGE__->add_columns(
+DBICTest::Schema::OneKey->table('onekey');
+DBICTest::Schema::OneKey->add_columns(
   'id' => {
     data_type => 'integer',
     is_auto_increment => 1,
@@ -16,7 +16,7 @@ __PACKAGE__->add_columns(
     data_type => 'integer',
   },
 );
-__PACKAGE__->set_primary_key('id');
+DBICTest::Schema::OneKey->set_primary_key('id');
 
 
 1;
