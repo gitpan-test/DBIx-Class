@@ -6,7 +6,7 @@ use warnings;
 
 use Class::C3;
 use Class::Inspector;
-use Carp::Clan qw/DBIx::Class/;
+use Carp::Clan qw/^DBIx::Class/;
 
 sub inject_base {
   my ($class, $target, @to_inject) = @_;
@@ -33,8 +33,7 @@ sub inject_base {
   # it on the basis of the comments in Class::C3, the author was on #dbix-class
   # while I was implementing this.
 
-  my $table = { Class::C3::_dump_MRO_table };
-  eval "package $target; import Class::C3;" unless exists $table->{$target};
+  eval "package $target; import Class::C3;" unless exists $Class::C3::MRO{$target};
 }
 
 sub load_components {

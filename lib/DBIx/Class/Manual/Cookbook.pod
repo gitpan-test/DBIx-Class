@@ -70,6 +70,56 @@ This results in the following C<WHERE> clause:
 For more information on generating complex queries, see
 L<SQL::Abstract/WHERE CLAUSES>.
 
+=head3 Arbitrary SQL through a custom ResultSource
+
+Sometimes you have to run arbitrary SQL because your query is too complex
+(e.g. it contains Unions, Sub-Selects, Stored Procedures, etc.) or has to
+be optimized for your database in a special way, but you still want to 
+get the results as a L<DBIx::Class::ResultSet>. 
+The recommended way to accomplish this is by defining a separate ResultSource 
+for your query. You can then inject complete SQL statements using a scalar 
+reference (this is a feature of L<SQL::Abstract>).
+
+Say you want to run a complex custom query on your user data, here's what
+you have to add to your User class:
+
+  package My::Schema::User;
+  
+  use base qw/DBIx::Class/;
+  
+  # ->load_components, ->table, ->add_columns, etc.
+
+  # Make a new ResultSource based on the User class
+  my $source = __PACKAGE__->result_source_instance();
+  my $new_source = $source->new( $source );
+  $new_source->source_name( 'UserFriendsComplex' );
+  
+  # Hand in your query as a scalar reference
+  # It will be added as a sub-select after FROM,
+  # so pay attention to the surrounding brackets!
+  $new_source->name( \<<SQL );
+  ( SELECT u.* FROM user u 
+  INNER JOIN user_friends f ON u.id = f.user_id 
+  WHERE f.friend_user_id = ?
+  UNION 
+  SELECT u.* FROM user u 
+  INNER JOIN user_friends f ON u.id = f.friend_user_id 
+  WHERE f.user_id = ? )
+  SQL 
+
+  # Finally, register your new ResultSource with your Schema
+  My::Schema->register_source( 'UserFriendsComplex' => $new_source );
+
+Next, you can execute your complex query using bind parameters like this:
+
+  my $friends = [ $schema->resultset( 'UserFriendsComplex' )->search( {}, 
+    {
+      bind  => [ 12345, 12345 ]
+    }
+  ) ];
+  
+... and you'll get back a perfect L<DBIx::Class::ResultSet>.
+
 =head3 Using specific columns
 
 When you only want specific columns from a table, you can use
@@ -494,7 +544,7 @@ To order C<< $book->pages >> by descending page_number.
 =head2 Transactions
 
 As of version 0.04001, there is improved transaction support in
-L<DBIx::Class::Storage::DBI> and L<DBIx::Class::Schema>.  Here is an
+L<DBIx::Class::Storage> and L<DBIx::Class::Schema>.  Here is an
 example of the recommended way to use it:
 
   my $genus = $schema->resultset('Genus')->find(12);
@@ -571,13 +621,13 @@ It's as simple as overriding the C<new> method.  Note the use of
 C<next::method>.
 
   sub new {
-    my ( $self, $attrs ) = @_;
+    my ( $class, $attrs ) = @_;
 
     $attrs->{foo} = 'bar' unless defined $attrs->{foo};
 
-    $self->next::method($attrs);
+    my $new = $class->next::method($attrs);
 
-    return $self;
+    return $new;
   }
 
 For more information about C<next::method>, look in the L<Class::C3> 
@@ -914,7 +964,7 @@ method.
 
 =head2 Profiling
 
-When you enable L<DBIx::Class::Storage::DBI>'s debugging it prints the SQL
+When you enable L<DBIx::Class::Storage>'s debugging it prints the SQL
 executed as well as notifications of query completion and transaction
 begin/commit.  If you'd like to profile the SQL you can subclass the
 L<DBIx::Class::Storage::Statistics> class and write your own profiling
@@ -1109,41 +1159,33 @@ B<Test File> test.pl
 
 DBIx::Class is not built for speed, it's built for convenience and
 ease of use, but sometimes you just need to get the data, and skip the
-fancy objects. Luckily this is also fairly easy using
-C<inflate_result>:
+fancy objects.
+  
+To do this simply use L<DBIx::Class::ResultClass::HashRefInflator>.
+  
+ my $rs = $schema->resultset('CD');
+ 
+ $rs->result_class('DBIx::Class::ResultClass::HashRefInflator');
+ 
+ my $hash_ref = $rs->find(1);
+  
+Wasn't that easy?
+  
+=head2 Get raw data for blindingly fast results
 
-  # Define a class which just returns the results as a hashref:
-  package My::HashRefInflator;
+If the C<inflate_result> solution above is not fast enough for you, you
+can use a DBIx::Class to return values exactly as they come out of the
+data base with none of the convenience methods wrapped round them.
 
-  ## $me is the hashref of cols/data from the immediate resultsource
-  ## $prefetch is a deep hashref of all the data from the prefetched
-  ##   related sources.
+This is used like so:-
 
-  sub mk_hash {
-     my ($me, $rest) = @_;
-
-     return { %$me, 
-        map { ($_ => mk_hash(@{$rest->{$_}})) } keys %$rest
-     };
+  my $cursor = $rs->cursor
+  while (my @vals = $cursor->next) {
+      # use $val[0..n] here
   }
 
-  sub inflate_result {
-     my ($self, $source, $me, $prefetch) = @_;
-     return mk_hash($me, $prefetch); 
-  }
-
-  # Change the object inflation to a hashref for just this resultset:
-  $rs->result_class('My::HashRefInflator');
-
-  my $datahashref = $rs->next;
-  foreach my $col (keys %$datahashref) {
-     if(!ref($datahashref->{$col})) {
-        # It's a plain value
-     }
-     elsif(ref($datahashref->{$col} eq 'HASH')) {
-        # It's a related value in a hashref
-     }
-  }
+You will need to map the array offsets to particular columns (you can
+use the I<select> attribute of C<search()> to force ordering).
 
 =head2 Want to know if find_or_create found or created a row?
 
