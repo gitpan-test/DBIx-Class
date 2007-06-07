@@ -1,5 +1,11 @@
 Revision history for DBIx::Class
 
+0.07999_05 2007-06-07 23:00:00
+        - Made source_name rw in ResultSource
+        - Fixed up SQL::Translator test/runtime dependencies
+        - Fixed t/60core.t in the absence of DateTime::Format::MySQL
+        - Test cleanup and doc note (ribasushi)
+
 0.07999_04 2007-06-01 14:04:00
         - pulled in Replication storage from branch and marked EXPERIMENTAL
         - fixup to ensure join always LEFT after first LEFT join depthwise

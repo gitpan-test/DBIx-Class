@@ -113,6 +113,7 @@ lib/SQL/Translator/Producer/DBIx/Class/File.pm
 Makefile.PL
 MANIFEST			This list of files
 META.yml
+README
 script/dbicadmin
 t/02pod.t
 t/03podcoverage.t
