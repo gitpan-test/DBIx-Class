@@ -42,6 +42,7 @@ lib/DBIx/Class/Componentised.pm
 lib/DBIx/Class/Core.pm
 lib/DBIx/Class/Cursor.pm
 lib/DBIx/Class/DB.pm
+lib/DBIx/Class/Exception.pm
 lib/DBIx/Class/InflateColumn.pm
 lib/DBIx/Class/InflateColumn/DateTime.pm
 lib/DBIx/Class/InflateColumn/File.pm

@@ -21,7 +21,7 @@ provides:
     file: lib/DBIx/Class/Storage/DBI/Oracle/WhereJoins.pm
   DBIx::Class: 
     file: lib/DBIx/Class.pm
-    version: 0.07999_05
+    version: 0.07999_06
   DBIx::Class::CDBICompat: 
     file: lib/DBIx/Class/CDBICompat.pm
   DBIx::Class::CDBICompat::ColumnGroups::GrouperShim: 
@@ -32,6 +32,8 @@ provides:
     file: lib/DBIx/Class/Cursor.pm
   DBIx::Class::DB: 
     file: lib/DBIx/Class/DB.pm
+  DBIx::Class::Exception: 
+    file: lib/DBIx/Class/Exception.pm
   DBIx::Class::InflateColumn: 
     file: lib/DBIx/Class/InflateColumn.pm
   DBIx::Class::InflateColumn::DateTime: 
@@ -137,4 +139,4 @@ requires:
   Storable: 0
   perl: 5.6.1
 tests: t/*.t t/*/*.t
-version: 0.07999_05
+version: 0.07999_06

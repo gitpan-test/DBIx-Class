@@ -3,6 +3,7 @@ package DBIx::Class::Schema;
 use strict;
 use warnings;
 
+use DBIx::Class::Exception;
 use Carp::Clan qw/^DBIx::Class/;
 use Scalar::Util qw/weaken/;
 use File::Spec;
@@ -15,6 +16,7 @@ __PACKAGE__->mk_classdata('source_registrations' => {});
 __PACKAGE__->mk_classdata('storage_type' => '::DBI');
 __PACKAGE__->mk_classdata('storage');
 __PACKAGE__->mk_classdata('exception_action');
+__PACKAGE__->mk_classdata('stacktrace' => $ENV{DBIC_TRACE} || 0);
 
 =head1 NAME
 
@@ -863,7 +865,7 @@ sub populate {
 
 If C<exception_action> is set for this class/object, L</throw_exception>
 will prefer to call this code reference with the exception as an argument,
-rather than its normal <croak> action.
+rather than its normal C<croak> or C<confess> action.
 
 Your subroutine should probably just wrap the error in the exception
 object/class of your choosing and rethrow.  If, against all sage advice,
@@ -885,6 +887,18 @@ Example:
    # suppress all exceptions, like a moron:
    $schema_obj->exception_action(sub { 1 });
 
+=head2 stacktrace
+
+=over 4
+
+=item Arguments: boolean
+
+=back
+
+Whether L</throw_exception> should include stack trace information.
+Defaults to false normally, but defaults to true if C<$ENV{DBIC_TRACE}>
+is true.
+
 =head2 throw_exception
 
 =over 4
@@ -895,13 +909,16 @@ Example:
 
 Throws an exception. Defaults to using L<Carp::Clan> to report errors from
 user's perspective.  See L</exception_action> for details on overriding
-this method's behavior.
+this method's behavior.  If L</stacktrace> is turned on, C<throw_exception>'s
+default behavior will provide a detailed stack trace.
 
 =cut
 
 sub throw_exception {
   my $self = shift;
-  croak @_ if !$self->exception_action || !$self->exception_action->(@_);
+
+  DBIx::Class::Exception->throw($_[0], $self->stacktrace)
+    if !$self->exception_action || !$self->exception_action->(@_);
 }
 
 =head2 deploy (EXPERIMENTAL)
