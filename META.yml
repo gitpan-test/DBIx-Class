@@ -21,7 +21,7 @@ provides:
     file: lib/DBIx/Class/Storage/DBI/Oracle/WhereJoins.pm
   DBIx::Class: 
     file: lib/DBIx/Class.pm
-    version: 0.08000
+    version: 0.08001
   DBIx::Class::AccessorGroup: 
     file: lib/DBIx/Class/AccessorGroup.pm
   DBIx::Class::CDBICompat: 
@@ -122,8 +122,6 @@ provides:
     file: lib/DBIx/Class/Schema/Versioned.pm
   DBIx::Class::Version::Table: 
     file: lib/DBIx/Class/Schema/Versioned.pm
-  DBIx::ContextualFetch::st: 
-    file: lib/DBIx/Class/CDBICompat/ImaDBI.pm
   SQL::Translator::Producer::DBIx::Class::File: 
     file: lib/SQL/Translator/Producer/DBIx/Class/File.pm
     version: 0.1
@@ -143,4 +141,4 @@ requires:
   Storable: 0
   perl: 5.6.1
 tests: t/*.t t/*/*.t
-version: 0.08000
+version: 0.08001
