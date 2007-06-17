@@ -70,6 +70,18 @@ my $exceptions = {
     'DBIx::Class::Storage::DBI::mysql'                  => { skip => 1 },
     'SQL::Translator::Parser::DBIx::Class'              => { skip => 1 },
     'SQL::Translator::Producer::DBIx::Class::File'      => { skip => 1 },
+
+# skipped because the synopsis covers it clearly
+
+    'DBIx::Class::InflateColumn::File'                  => { skip => 1 },
+
+# skipped because two methods may not need to be public
+
+    'DBIx::Class::Schema::Versioned' => { ignore => [ qw(on_connect exists) ] },
+
+# must kill authors.
+
+    'DBIx::Class::Storage::DBI::Replication' => { skip => 1 },
 };
 
 foreach my $module (@modules) {

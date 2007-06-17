@@ -14,6 +14,7 @@ inc/Module/Install/Scripts.pm
 inc/Module/Install/Win32.pm
 inc/Module/Install/WriteAll.pm
 lib/DBIx/Class.pm
+lib/DBIx/Class/AccessorGroup.pm
 lib/DBIx/Class/CDBICompat.pm
 lib/DBIx/Class/CDBICompat/AccessorMapping.pm
 lib/DBIx/Class/CDBICompat/AttributeAPI.pm
@@ -88,6 +89,7 @@ lib/DBIx/Class/ResultSourceProxy/Table.pm
 lib/DBIx/Class/Row.pm
 lib/DBIx/Class/Schema.pm
 lib/DBIx/Class/Schema/Versioned.pm
+lib/DBIx/Class/Serialize/Storable.pm
 lib/DBIx/Class/Storage.pm
 lib/DBIx/Class/Storage/DBI.pm
 lib/DBIx/Class/Storage/DBI/Cursor.pm

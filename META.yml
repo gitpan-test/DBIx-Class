@@ -4,7 +4,7 @@ author: "mst: Matt S. Trout <mst@shadowcatsystems.co.uk>"
 build_requires: 
   DBD::SQLite: 1.11
 distribution_type: module
-generated_by: Module::Install version 0.670
+generated_by: Module::Install version 0.67
 license: perl
 meta-spec: 
   url: http://module-build.sourceforge.net/META-spec-v1.3.html
@@ -21,7 +21,9 @@ provides:
     file: lib/DBIx/Class/Storage/DBI/Oracle/WhereJoins.pm
   DBIx::Class: 
     file: lib/DBIx/Class.pm
-    version: 0.07999_06
+    version: 0.08000
+  DBIx::Class::AccessorGroup: 
+    file: lib/DBIx/Class/AccessorGroup.pm
   DBIx::Class::CDBICompat: 
     file: lib/DBIx/Class/CDBICompat.pm
   DBIx::Class::CDBICompat::ColumnGroups::GrouperShim: 
@@ -72,6 +74,8 @@ provides:
     file: lib/DBIx/Class/Schema.pm
   DBIx::Class::Schema::Versioned: 
     file: lib/DBIx/Class/Schema/Versioned.pm
+  DBIx::Class::Serialize::Storable: 
+    file: lib/DBIx/Class/Serialize/Storable.pm
   DBIx::Class::Storage: 
     file: lib/DBIx/Class/Storage.pm
   DBIx::Class::Storage::DBI: 
@@ -139,4 +143,4 @@ requires:
   Storable: 0
   perl: 5.6.1
 tests: t/*.t t/*/*.t
-version: 0.07999_06
+version: 0.08000

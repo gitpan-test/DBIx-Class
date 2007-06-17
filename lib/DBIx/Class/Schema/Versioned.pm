@@ -60,7 +60,7 @@ sub schema_version {
   return $version;
 }
 
-sub on_connect
+sub _on_connect
 {
     my ($self) = @_;
     my $vschema = DBIx::Class::Version->connect(@{$self->storage->connect_info()});

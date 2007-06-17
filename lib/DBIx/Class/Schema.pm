@@ -679,7 +679,6 @@ sub connection {
   my $storage = $storage_class->new($self);
   $storage->connect_info(\@info);
   $self->storage($storage);
-  $self->on_connect() if($self->can('on_connect'));
   return $self;
 }
 

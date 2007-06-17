@@ -1,5 +1,9 @@
 Revision history for DBIx::Class
 
+0.08000 2007-06-17 18:06:12
+        - Fixed DBIC_TRACE debug filehandles to set ->autoflush(1)
+        - Fixed circular dbh<->storage in HandleError with weakref
+
 0.07999_06 2007-06-13 04:45:00
         - tweaked Row.pm to make last_insert_id take multiple column names
         - Fixed DBIC::Storage::DBI::Cursor::DESTROY bug that was
@@ -69,7 +73,7 @@ Revision history for DBIx::Class
         - add support to Ordered for multiple ordering columns
         - mark DB.pm and compose_connection as deprecated
         - switch tests to compose_namespace
-        - ResltClass::HashRefInflator added
+        - ResultClass::HashRefInflator added
         - Changed row and rs objects to not have direct handle to a source,
           instead a (schema,source_name) tuple of type ResultSourceHandle
 

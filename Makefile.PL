@@ -1,4 +1,4 @@
-use inc::Module::Install 0.64;
+use inc::Module::Install 0.67;
 
 name     'DBIx-Class';
 all_from 'lib/DBIx/Class.pm';
