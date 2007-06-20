@@ -382,15 +382,14 @@ each other. In most cases this is simply a C<.>.
 =item unsafe
 
 This Storage driver normally installs its own C<HandleError>, sets
-C<RaiseError> on, and sets C<PrintError> off on all database handles,
-including those supplied by a coderef.  It does this so that it can
-have consistent and useful error behavior.
+C<RaiseError> and C<ShowErrorStatement> on, and sets C<PrintError> off on
+all database handles, including those supplied by a coderef.  It does this
+so that it can have consistent and useful error behavior.
 
 If you set this option to a true value, Storage will not do its usual
-modifications to the database handle's C<RaiseError>, C<PrintError>, and
-C<HandleError> attributes, and instead relies on the settings in your
-connect_info DBI options (or the values you set in your connection
-coderef, in the case that you are connecting via coderef).
+modifications to the database handle's attributes, and instead relies on
+the settings in your connect_info DBI options (or the values you set in
+your connection coderef, in the case that you are connecting via coderef).
 
 Note that your custom settings can cause Storage to malfunction,
 especially if you set a C<HandleError> handler that suppresses exceptions
@@ -772,6 +771,7 @@ sub _connect {
       $dbh->{HandleError} = sub {
           $weak_self->throw_exception("DBI Exception: $_[0]")
       };
+      $dbh->{ShowErrorStatement} = 1;
       $dbh->{RaiseError} = 1;
       $dbh->{PrintError} = 0;
     }
@@ -788,6 +788,7 @@ sub _connect {
 
 sub txn_begin {
   my $self = shift;
+  $self->ensure_connected();
   if($self->{transaction_depth}++ == 0) {
     $self->debugobj->txn_begin()
       if $self->debug;
@@ -1403,16 +1404,21 @@ sub deployment_statements {
 sub deploy {
   my ($self, $schema, $type, $sqltargs, $dir) = @_;
   foreach my $statement ( $self->deployment_statements($schema, $type, undef, $dir, { no_comments => 1, %{ $sqltargs || {} } } ) ) {
-    for ( split(";\n", $statement)) {
-      next if($_ =~ /^--/);
-      next if(!$_);
-#      next if($_ =~ /^DROP/m);
-      next if($_ =~ /^BEGIN TRANSACTION/m);
-      next if($_ =~ /^COMMIT/m);
-      next if $_ =~ /^\s+$/; # skip whitespace only
-      $self->debugobj->query_start($_) if $self->debug;
-      $self->dbh->do($_); # shouldn't be using ->dbh ?
-      $self->debugobj->query_end($_) if $self->debug;
+    foreach my $line ( split(";\n", $statement)) {
+      next if($line =~ /^--/);
+      next if(!$line);
+#      next if($line =~ /^DROP/m);
+      next if($line =~ /^BEGIN TRANSACTION/m);
+      next if($line =~ /^COMMIT/m);
+      next if $line =~ /^\s+$/; # skip whitespace only
+      $self->debugobj->query_start($line) if $self->debug;
+      eval {
+        $self->dbh->do($line); # shouldn't be using ->dbh ?
+      };
+      if ($@) {
+        warn qq{$@ (running "${line}")};
+      }
+      $self->debugobj->query_end($line) if $self->debug;
     }
   }
 }
