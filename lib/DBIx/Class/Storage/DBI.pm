@@ -115,7 +115,7 @@ sub _emulate_limit {
 }
 
 sub _recurse_fields {
-  my ($self, $fields) = @_;
+  my ($self, $fields, $params) = @_;
   my $ref = ref $fields;
   return $self->_quote($fields) unless $ref;
   return $$fields if $ref eq 'SCALAR';
@@ -123,10 +123,10 @@ sub _recurse_fields {
   if ($ref eq 'ARRAY') {
     return join(', ', map {
       $self->_recurse_fields($_)
-      .(exists $self->{rownum_hack_count}
-         ? ' AS col'.$self->{rownum_hack_count}++
-         : '')
-     } @$fields);
+        .(exists $self->{rownum_hack_count} && !($params && $params->{no_rownum_hack})
+          ? ' AS col'.$self->{rownum_hack_count}++
+          : '')
+      } @$fields);
   } elsif ($ref eq 'HASH') {
     foreach my $func (keys %$fields) {
       return $self->_sqlcase($func)
@@ -142,7 +142,7 @@ sub _order_by {
   if (ref $_[0] eq 'HASH') {
     if (defined $_[0]->{group_by}) {
       $ret = $self->_sqlcase(' group by ')
-               .$self->_recurse_fields($_[0]->{group_by});
+        .$self->_recurse_fields($_[0]->{group_by}, { no_rownum_hack => 1 });
     }
     if (defined $_[0]->{having}) {
       my $frag;
@@ -1200,7 +1200,7 @@ sub bind_attribute_by_data_type {
     return;
 }
 
-=head2 create_ddl_dir (EXPERIMENTAL)
+=head2 create_ddl_dir
 
 =over 4
 
@@ -1210,9 +1210,6 @@ sub bind_attribute_by_data_type {
 
 Creates a SQL file based on the Schema, for each of the specified
 database types, in the given directory.
-
-Note that this feature is currently EXPERIMENTAL and may not work correctly
-across all databases, or fully handle complex relationships.
 
 =cut
 

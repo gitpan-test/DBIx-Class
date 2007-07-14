@@ -4,10 +4,34 @@ use warnings;
 use Test::More;
 use lib qw(t/lib);
 use DBICTest;
-use Data::Dumper;
 my $schema = DBICTest->init_schema();
 
-plan tests => 19;
+plan tests => 20;
+
+ {
+   my $rs = $schema->resultset( 'CD' )->search(
+     {
+       'producer.name'   => 'blah',
+       'producer_2.name' => 'foo',
+     },
+     {
+       'join' => [
+         { cd_to_producer => 'producer' },
+         { cd_to_producer => 'producer' },
+       ],
+       'prefetch' => [
+         'artist',
+         { cd_to_producer => 'producer' },
+       ],
+     }
+   );
+  
+   eval {
+     my @rows = $rs->all();
+   };
+   is( $@, '' );
+ }
+
 
 my @rs1a_results = $schema->resultset("Artist")->search_related('cds', {title => 'Forkful of bees'}, {order_by => 'title'});
 is($rs1a_results[0]->title, 'Forkful of bees', "bare field conditions okay after search related");
@@ -16,14 +40,14 @@ my @artists = $rs1->all;
 cmp_ok(@artists, '==', 2, "Two artists returned");
 
 my $rs2 = $rs1->search({ artistid => '1' }, { join => {'cds' => {'cd_to_producer' => 'producer'} } });
-
 my @artists2 = $rs2->search({ 'producer.name' => 'Matt S Trout' });
 my @cds = $artists2[0]->cds;
 cmp_ok(scalar @cds, '==', 1, "condition based on inherited join okay");
 
-#this is wrong, should accept me.title really
 my $rs3 = $rs2->search_related('cds');
 cmp_ok(scalar($rs3->all), '==', 45, "All cds for artist returned");
+
+
 cmp_ok($rs3->count, '==', 45, "All cds for artist returned via count");
 
 my $rs4 = $schema->resultset("CD")->search({ 'artist.artistid' => '1' }, { join => ['tracks', 'artist'], prefetch => 'artist' });

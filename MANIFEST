@@ -187,6 +187,7 @@ t/89inflate_datetime.t
 t/90ensure_class_loaded.t
 t/90join_torture.t
 t/91debug.t
+t/91merge_attr.t
 t/92storage.t
 t/93nobindvars.t
 t/93single_accessor_object.t

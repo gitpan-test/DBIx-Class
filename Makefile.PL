@@ -4,7 +4,6 @@ name     'DBIx-Class';
 perl_version '5.006001';
 all_from 'lib/DBIx/Class.pm';
 
-requires 'Cwd'                       => 3.19; 
 requires 'Data::Page'                => 2.00;
 requires 'Scalar::Util'              => 0;
 requires 'SQL::Abstract'             => 1.20;
@@ -23,6 +22,7 @@ requires 'Scope::Guard'              => 0.03;
 requires 'Encode'                    => 0 if ($] <= 5.008000);  
 
 build_requires 'DBD::SQLite'         => 1.11;
+build_requires 'Test::Builder'       => 0.33;
 
 install_script 'script/dbicadmin';
 

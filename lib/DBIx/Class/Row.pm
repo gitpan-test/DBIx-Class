@@ -150,9 +150,7 @@ sub insert {
   my %related_stuff = (%{$self->{_relationship_data} || {}}, 
                        %{$self->{_inflated_column} || {}});
 
-  if(!$self->{_rel_in_storage})
-  {
-
+  if(!$self->{_rel_in_storage}) {
     $source->storage->txn_begin;
 
     # The guard will save us if we blow out of this scope via die
@@ -166,24 +164,38 @@ sub insert {
     my @pri = $self->primary_columns;
 
     REL: foreach my $relname (keys %related_stuff) {
-      my $keyhash = $source->resolve_condition(
-                      $source->relationship_info($relname)->{cond},
-                      undef, 1
-                    ); # the above argset gives me the dependent cols on self
-
-      # assume anything that references our PK probably is dependent on us
-      # rather than vice versa
-
-      foreach my $p (@pri) {
-        next REL if exists $keyhash->{$p};
-      }
 
       my $rel_obj = $related_stuff{$relname};
-      if(Scalar::Util::blessed($rel_obj) && $rel_obj->isa('DBIx::Class::Row')) {
-        $rel_obj->insert();
-        $self->set_from_related($relname, $rel_obj);
-        delete $related_stuff{$relname};
+
+      next REL unless (Scalar::Util::blessed($rel_obj)
+                       && $rel_obj->isa('DBIx::Class::Row'));
+
+      my $cond = $source->relationship_info($relname)->{cond};
+
+      next REL unless ref($cond) eq 'HASH';
+
+      # map { foreign.foo => 'self.bar' } to { bar => 'foo' }
+
+      my $keyhash = { map { my $x = $_; $x =~ s/.*\.//; $x; } reverse %$cond };
+
+      # assume anything that references our PK probably is dependent on us
+      # rather than vice versa, unless the far side is (a) defined or (b)
+      # auto-increment
+
+      foreach my $p (@pri) {
+        if (exists $keyhash->{$p}) {
+          warn $keyhash->{$p};
+          unless (defined($rel_obj->get_column($keyhash->{$p}))
+                  || $rel_obj->column_info($keyhash->{$p})
+                             ->{is_auto_increment}) {
+            next REL;
+          }
+        }
       }
+
+      $rel_obj->insert();
+      $self->set_from_related($relname, $rel_obj);
+      delete $related_stuff{$relname};
     }
   }
 
@@ -208,8 +220,7 @@ sub insert {
     $self->store_column($auto_pri[$_] => $ids[$_]) for 0 .. $#ids;
   }
 
-  if(!$self->{_rel_in_storage})
-  {
+  if(!$self->{_rel_in_storage}) {
     ## Now do the has_many rels, that need $selfs ID.
     foreach my $relname (keys %related_stuff) {
       my $rel_obj = $related_stuff{$relname};

@@ -3,6 +3,7 @@ abstract: Extensible and flexible object <-> relational mapper.
 author: "mst: Matt S. Trout <mst@shadowcatsystems.co.uk>"
 build_requires: 
   DBD::SQLite: 1.11
+  Test::Builder: 0.33
 distribution_type: module
 generated_by: Module::Install version 0.67
 license: perl
@@ -21,7 +22,7 @@ provides:
     file: lib/DBIx/Class/Storage/DBI/Oracle/WhereJoins.pm
   DBIx::Class: 
     file: lib/DBIx/Class.pm
-    version: 0.08002
+    version: 0.08003
   DBIx::Class::AccessorGroup: 
     file: lib/DBIx/Class/AccessorGroup.pm
   DBIx::Class::CDBICompat: 
@@ -130,7 +131,6 @@ requires:
   Class::Accessor::Grouped: 0.05002
   Class::C3: 0.13
   Class::Inspector: 0
-  Cwd: 3.19
   DBI: 1.4
   Data::Page: 2
   JSON: 1
@@ -142,4 +142,4 @@ requires:
   Storable: 0
   perl: 5.6.1
 tests: t/*.t t/*/*.t
-version: 0.08002
+version: 0.08003

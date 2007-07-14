@@ -15,7 +15,7 @@ use Test::More;
 use lib qw(t/lib);
 use DBICTest;
 
-plan tests => 98;
+plan tests => 134;
 
 
 ## ----------------------------------------------------------------------------
@@ -29,6 +29,96 @@ my $cd_rs	= $schema->resultset('CD');
 ok( $schema, 'Got a Schema object');
 ok( $art_rs, 'Got Good Artist Resultset');
 ok( $cd_rs, 'Got Good CD Resultset');
+
+
+## ----------------------------------------------------------------------------
+## Schema populate Tests
+## ----------------------------------------------------------------------------
+
+SCHEMA_POPULATE1: {
+
+	## Test to make sure that the old $schema->populate is using the new method
+	## for $resultset->populate when in void context and with sub objects.
+	
+	$schema->populate('Artist', [
+	
+		[qw/name cds/],
+		["001First Artist", [
+			{title=>"001Title1", year=>2000},
+			{title=>"001Title2", year=>2001},
+			{title=>"001Title3", year=>2002},
+		]],
+		["002Second Artist", []],
+		["003Third Artist", [
+			{title=>"003Title1", year=>2005},
+		]],
+		[undef, [
+			{title=>"004Title1", year=>2010}
+		]],
+	]);
+	
+	isa_ok $schema, 'DBIx::Class::Schema';
+	
+	my ($undef, $artist1, $artist2, $artist3 ) = $schema->resultset('Artist')->search({
+		name=>["001First Artist","002Second Artist","003Third Artist", undef]},
+		{order_by=>'name ASC'})->all;
+	
+	isa_ok  $artist1, 'DBICTest::Artist';
+	isa_ok  $artist2, 'DBICTest::Artist';
+	isa_ok  $artist3, 'DBICTest::Artist';
+	isa_ok  $undef, 'DBICTest::Artist';	
+	
+	ok $artist1->name eq '001First Artist', "Got Expected Artist Name for Artist001";
+	ok $artist2->name eq '002Second Artist', "Got Expected Artist Name for Artist002";
+	ok $artist3->name eq '003Third Artist', "Got Expected Artist Name for Artist003";
+	ok !defined $undef->name, "Got Expected Artist Name for Artist004";	
+	
+	ok $artist1->cds->count eq 3, "Got Right number of CDs for Artist1";
+	ok $artist2->cds->count eq 0, "Got Right number of CDs for Artist2";
+	ok $artist3->cds->count eq 1, "Got Right number of CDs for Artist3";
+	ok $undef->cds->count eq 1, "Got Right number of CDs for Artist4";	
+	
+	ARTIST1CDS: {
+	
+		my ($cd1, $cd2, $cd3) = $artist1->cds->search(undef, {order_by=>'year ASC'});
+		
+		isa_ok $cd1, 'DBICTest::CD';
+		isa_ok $cd2, 'DBICTest::CD';
+		isa_ok $cd3, 'DBICTest::CD';
+		
+		ok $cd1->year == 2000;
+		ok $cd2->year == 2001;
+		ok $cd3->year == 2002;
+		
+		ok $cd1->title eq '001Title1';
+		ok $cd2->title eq '001Title2';
+		ok $cd3->title eq '001Title3';
+	}
+	
+	ARTIST3CDS: {
+	
+		my ($cd1) = $artist3->cds->search(undef, {order_by=>'year ASC'});
+		
+		isa_ok $cd1, 'DBICTest::CD';
+
+		ok $cd1->year == 2005;
+		ok $cd1->title eq '003Title1';
+	}
+
+	ARTIST4CDS: {
+	
+		my ($cd1) = $undef->cds->search(undef, {order_by=>'year ASC'});
+		
+		isa_ok $cd1, 'DBICTest::CD';
+
+		ok $cd1->year == 2010;
+		ok $cd1->title eq '004Title1';
+	}
+	
+	## Need to do some cleanup so that later tests don't get borked
+	
+	$undef->delete;
+}
 
 
 ## ----------------------------------------------------------------------------
@@ -293,15 +383,23 @@ VOID_CONTEXT: {
 				cds => [
 					{ title => 'VOID_PK_One Hit Wonder', year => 2006 },
 				],					
-			},			
+			},	
+			{
+				artistid => ++$aid,
+				name => undef,
+				cds => [
+					{ title => 'VOID_PK_Zundef test', year => 2006 },
+				],					
+			},		
 		];
 		
 		## Get the result row objects.
 		
 		$art_rs->populate($artists);
 		
-		my ($girl, $formerly, $damn, $crap) = $art_rs->search(
-			{name=>[sort map {$_->{name}} @$artists]},
+		my ($undef, $girl, $formerly, $damn, $crap) = $art_rs->search(
+		
+			{name=>[ map { $_->{name} } @$artists]},
 			{order_by=>'name ASC'},
 		);
 		
@@ -311,25 +409,29 @@ VOID_CONTEXT: {
 		isa_ok( $girl, 'DBICTest::Artist', "Got 'Artist'");
 		isa_ok( $damn, 'DBICTest::Artist', "Got 'Artist'");	
 		isa_ok( $formerly, 'DBICTest::Artist', "Got 'Artist'");	
-		
+		isa_ok( $undef, 'DBICTest::Artist', "Got 'Artist'");		
+	
 		## Find the expected information?
 
-		ok( $crap->name eq 'VOID_PK_Manufactured Crap', "Got Correct name for result object");
+		ok( $crap->name eq 'VOID_PK_Manufactured Crap', "Got Correct name 'VOID_PK_Manufactured Crap' for result object");
 		ok( $girl->name eq 'VOID_PK_Angsty-Whiny Girl', "Got Correct name for result object");
 		ok( $damn->name eq 'VOID_PK_Like I Give a Damn', "Got Correct name for result object");	
 		ok( $formerly->name eq 'VOID_PK_Formerly Named', "Got Correct name for result object");
+		ok( !defined $undef->name, "Got Correct name 'is undef' for result object");		
 		
 		## Create the expected children sub objects?
 		ok( $crap->can('cds'), "Has cds relationship");
 		ok( $girl->can('cds'), "Has cds relationship");
 		ok( $damn->can('cds'), "Has cds relationship");
 		ok( $formerly->can('cds'), "Has cds relationship");
-		
+		ok( $undef->can('cds'), "Has cds relationship");	
+	
 		ok( $crap->cds->count == 0, "got Expected Number of Cds");
 		ok( $girl->cds->count == 2, "got Expected Number of Cds");	
 		ok( $damn->cds->count == 3, "got Expected Number of Cds");
 		ok( $formerly->cds->count == 1, "got Expected Number of Cds");
-
+		ok( $undef->cds->count == 1, "got Expected Number of Cds");
+		
 		## Did the cds get expected information?
 		
 		my ($cd1, $cd2) = $girl->cds->search({},{order_by=>'year ASC'});
@@ -391,12 +493,17 @@ VOID_CONTEXT: {
 				title => 'Some CD4BB',
 				year => '1997',
 				artist => { name => 'Fred BloggsDBB'},
+			},
+			{
+				title => 'Some CD5BB',
+				year => '1997',
+				artist => { name => undef},
 			},		
 		];
 		
 		$cd_rs->populate($cds);
 		
-		my ($cdA, $cdB) = $cd_rs->search(
+		my ($cdA, $cdB, $cdC) = $cd_rs->search(
 			{title=>[sort map {$_->{title}} @$cds]},
 			{order_by=>'title ASC'},
 		);
@@ -410,6 +517,11 @@ VOID_CONTEXT: {
 		isa_ok($cdB->artist, 'DBICTest::Artist', 'Set Artist');
 		is($cdB->title, 'Some CD4BB', 'Found Expected title');
 		is($cdB->artist->name, 'Fred BloggsDBB', 'Set Artist to FredDBB');
+		
+		isa_ok($cdC, 'DBICTest::CD', 'Created CD');
+		isa_ok($cdC->artist, 'DBICTest::Artist', 'Set Artist');
+		is($cdC->title, 'Some CD5BB', 'Found Expected title');
+		is( $cdC->artist->name, undef, 'Set Artist to something undefined');
 	}
 	
 	
