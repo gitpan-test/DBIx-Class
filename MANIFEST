@@ -134,6 +134,7 @@ t/32connect_code_ref.t
 t/33storage_reconnect.t
 t/34exception_action.t
 t/35disable_sth_caching.t
+t/36datetime.t
 t/39load_namespaces_1.t
 t/39load_namespaces_2.t
 t/39load_namespaces_3.t

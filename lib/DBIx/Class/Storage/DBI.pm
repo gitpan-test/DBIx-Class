@@ -13,9 +13,11 @@ use Scalar::Util qw/blessed weaken/;
 
 __PACKAGE__->mk_group_accessors('simple' =>
     qw/_connect_info _dbi_connect_info _dbh _sql_maker _sql_maker_opts
-       _conn_pid _conn_tid disable_sth_caching cursor on_connect_do
-       transaction_depth unsafe/
+       _conn_pid _conn_tid disable_sth_caching on_connect_do
+       transaction_depth unsafe _dbh_autocommit/
 );
+
+__PACKAGE__->cursor_class('DBIx::Class::Storage::DBI::Cursor');
 
 BEGIN {
 
@@ -311,7 +313,6 @@ documents DBI-specific methods and behaviors.
 sub new {
   my $new = shift->next::method(@_);
 
-  $new->cursor("DBIx::Class::Storage::DBI::Cursor");
   $new->transaction_depth(0);
   $new->_sql_maker_opts({});
   $new->{_in_dbh_do} = 0;
@@ -479,7 +480,10 @@ sub connect_info {
 
   my $last_info = $dbi_info->[-1];
   if(ref $last_info eq 'HASH') {
-    for my $storage_opt (qw/on_connect_do disable_sth_caching unsafe/) {
+    $last_info = { %$last_info }; # so delete is non-destructive
+    for my $storage_opt (
+        qw/on_connect_do disable_sth_caching unsafe cursor_class/
+      ) {
       if(my $value = delete $last_info->{$storage_opt}) {
         $self->$storage_opt($value);
       }
@@ -489,6 +493,8 @@ sub connect_info {
         $self->_sql_maker_opts->{$sql_maker_opt} = $opt_val;
       }
     }
+    # re-insert modified hashref
+    $dbi_info->[-1] = $last_info;
 
     # Get rid of any trailing empty hashref
     pop(@$dbi_info) if !keys %$last_info;
@@ -582,6 +588,8 @@ sub txn_do {
   ref $coderef eq 'CODE' or $self->throw_exception
     ('$coderef must be a CODE reference');
 
+  return $coderef->(@_) if $self->{transaction_depth};
+
   local $self->{_in_dbh_do} = 1;
 
   my @result;
@@ -642,7 +650,7 @@ sub disconnect {
   my ($self) = @_;
 
   if( $self->connected ) {
-    $self->_dbh->rollback unless $self->_dbh->{AutoCommit};
+    $self->_dbh->rollback unless $self->_dbh_autocommit;
     $self->_dbh->disconnect;
     $self->_dbh(undef);
     $self->{_dbh_gen}++;
@@ -723,7 +731,7 @@ sub _populate_dbh {
 
   # Always set the transaction depth on connect, since
   #  there is no transaction in progress by definition
-  $self->{transaction_depth} = $self->_dbh->{AutoCommit} ? 0 : 1;
+  $self->{transaction_depth} = $self->_dbh_autocommit ? 0 : 1;
 
   if(ref $self eq 'DBIx::Class::Storage::DBI') {
     my $driver = $self->_dbh->{Driver}->{Name};
@@ -765,7 +773,7 @@ sub _connect {
        $dbh = DBI->connect(@info);
     }
 
-    if(!$self->unsafe) {
+    if($dbh && !$self->unsafe) {
       my $weak_self = $self;
       weaken($weak_self);
       $dbh->{HandleError} = sub {
@@ -782,6 +790,8 @@ sub _connect {
   $self->throw_exception("DBI Connection failed: " . ($@||$DBI::errstr))
     if !$dbh || $@;
 
+  $self->_dbh_autocommit($dbh->{AutoCommit});
+
   $dbh;
 }
 
@@ -789,7 +799,7 @@ sub _connect {
 sub txn_begin {
   my $self = shift;
   $self->ensure_connected();
-  if($self->{transaction_depth}++ == 0) {
+  if($self->{transaction_depth} == 0) {
     $self->debugobj->txn_begin()
       if $self->debug;
     # this isn't ->_dbh-> because
@@ -797,6 +807,7 @@ sub txn_begin {
     #  for AutoCommit users
     $self->dbh->begin_work;
   }
+  $self->{transaction_depth}++;
 }
 
 sub txn_commit {
@@ -807,7 +818,7 @@ sub txn_commit {
       if ($self->debug);
     $dbh->commit;
     $self->{transaction_depth} = 0
-      if $dbh->{AutoCommit};
+      if $self->_dbh_autocommit;
   }
   elsif($self->{transaction_depth} > 1) {
     $self->{transaction_depth}--
@@ -817,15 +828,13 @@ sub txn_commit {
 sub txn_rollback {
   my $self = shift;
   my $dbh = $self->_dbh;
-  my $autocommit;
   eval {
-    $autocommit = $dbh->{AutoCommit};
     if ($self->{transaction_depth} == 1) {
       $self->debugobj->txn_rollback()
         if ($self->debug);
-      $dbh->rollback;
       $self->{transaction_depth} = 0
-        if $autocommit;
+        if $self->_dbh_autocommit;
+      $dbh->rollback;
     }
     elsif($self->{transaction_depth} > 1) {
       $self->{transaction_depth}--;
@@ -839,7 +848,7 @@ sub txn_rollback {
     my $exception_class = "DBIx::Class::Storage::NESTED_ROLLBACK_EXCEPTION";
     $error =~ /$exception_class/ and $self->throw_exception($error);
     # ensure that a failed rollback resets the transaction depth
-    $self->{transaction_depth} = $autocommit ? 0 : 1;
+    $self->{transaction_depth} = $self->_dbh_autocommit ? 0 : 1;
     $self->throw_exception($error);
   }
 }
@@ -1055,7 +1064,7 @@ Handle a SQL select statement.
 sub select {
   my $self = shift;
   my ($ident, $select, $condition, $attrs) = @_;
-  return $self->cursor->new($self, \@_, $attrs);
+  return $self->cursor_class->new($self, \@_, $attrs);
 }
 
 sub select_single {
@@ -1428,7 +1437,10 @@ Returns the datetime parser class
 
 sub datetime_parser {
   my $self = shift;
-  return $self->{datetime_parser} ||= $self->build_datetime_parser(@_);
+  return $self->{datetime_parser} ||= do {
+    $self->ensure_connected;
+    $self->build_datetime_parser(@_);
+  };
 }
 
 =head2 datetime_parser_type

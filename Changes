@@ -1,5 +1,24 @@
 Revision history for DBIx::Class
 
+0.08004 2007-08-06 19:00:00
+        - fix storage connect code to not trigger bug via auto-viv 
+          (test from aherzog)
+        - fixup cursor_class to be an 'inherited' attr for per-package defaults
+        - add default_resultset_attributes entry to Schema
+        - optimisation in DBI::Cursor to check software_limit before falling
+          back to base Cursor->all
+        - fix bug with create_multi not inserting non-storage objects
+          (test and fix from davinchi)
+        - DBIx::Class::AccessorGroup made empty subclass of
+          Class::Accessor::Grouped
+        - fixed an ugly bug regarding $dbh->{AutoCommit} and transactions
+        - ensure_class_loaded handles non-classnames better.
+        - non-destructive hashref handling for connect_info options
+        - count no longer returns negative values after slice
+          (report and test from JOHANL)
+        - rebless before building datetime_parser
+          (patch from mattlaw / Matt Lawrence)
+
 0.08003 2007-07-14 18:01:00
         - improved populate bulk_insert mode
         - fixed up multi_create to be more intelligent about PK<->PK rels
