@@ -23,7 +23,7 @@ sub component_base_class { 'DBIx::Class' }
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
 
-$VERSION = '0.08004';
+$VERSION = '0.08005';
 
 sub MODIFY_CODE_ATTRIBUTES {
   my ($class,$code,@attrs) = @_;
@@ -171,6 +171,8 @@ The community can be found via:
 
   SVN: http://dev.catalyst.perl.org/repos/bast/DBIx-Class/
 
+  SVNWeb: http://dev.catalyst.perl.org/svnweb/bast/browse/DBIx-Class/
+
   IRC: irc.perl.org#dbix-class
 
 =head1 WHERE TO GO NEXT
@@ -188,6 +190,8 @@ is traditional :)
 =head1 CONTRIBUTORS
 
 abraxxa: Alexander Hartmaier <alex_hartmaier@hotmail.com>
+
+aherzog: Adam Herzog <adam@herzogdesigns.com>
 
 andyg: Andy Grundman <andy@hybridized.org>
 
