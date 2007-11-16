@@ -95,6 +95,8 @@ sub new {
 
   $attrs->{alias} ||= 'me';
 
+  # Creation of {} and bless separated to mitigate RH perl bug
+  # see https://bugzilla.redhat.com/show_bug.cgi?id=196836
   my $self = {
     _source_handle => $source,
     result_class => $attrs->{result_class} || $source->resolve->result_class,
@@ -137,6 +139,8 @@ For a list of attributes that can be passed to C<search>, see
 L</ATTRIBUTES>. For more examples of using this function, see
 L<Searching|DBIx::Class::Manual::Cookbook/Searching>. For a complete
 documentation for the first argument, see L<SQL::Abstract>.
+
+For more help on using joins with search, see L<DBIx::Class::Manual::Joining>.
 
 =cut
 
@@ -263,6 +267,13 @@ sub search_rs {
 
 Pass a literal chunk of SQL to be added to the conditional part of the
 resultset query.
+
+CAVEAT: C<search_literal> is provided for Class::DBI compatibility and should
+only be used in that context. There are known problems using C<search_literal>
+in chained queries; it can result in bind values in the wrong order.  See
+L<DBIx::Class::Manual::Cookbook/Searching> and
+L<DBIx::Class::Manual::FAQ/Searching> for searching techniques that do not
+require C<search_literal>.
 
 =cut
 
@@ -1449,9 +1460,12 @@ sub new_result {
 
   my $alias = $self->{attrs}{alias};
   my $collapsed_cond = $self->{cond} ? $self->_collapse_cond($self->{cond}) : {};
+
+  # precendence must be given to passed values over values inherited from the cond, 
+  # so the order here is important.
   my %new = (
-    %{ $self->_remove_alias($values, $alias) },
     %{ $self->_remove_alias($collapsed_cond, $alias) },
+    %{ $self->_remove_alias($values, $alias) },
     -source_handle => $self->_source_handle,
     -result_source => $self->result_source, # DO NOT REMOVE THIS, REQUIRED
   );
@@ -1549,7 +1563,7 @@ sub find_or_new {
 
 =item Arguments: \%vals
 
-=item Return Value: $object
+=item Return Value: a L<DBIx::Class::Row> $object
 
 =back
 
@@ -2064,10 +2078,10 @@ sub _merge_attr {
       $position++;
     }
     my ($b_key) = ( ref $b_element eq 'HASH' ) ? keys %{$b_element} : ($b_element);
+
     if ($best_candidate->{score} == 0 || exists $seen_keys->{$b_key}) {
       push( @{$a}, $b_element );
     } else {
-      $seen_keys->{$b_key} = 1; # don't merge the same key twice
       my $a_best = $a->[$best_candidate->{position}];
       # merge a_best and b_element together and replace original with merged
       if (ref $a_best ne 'HASH') {
@@ -2077,6 +2091,7 @@ sub _merge_attr {
         $a->[$best_candidate->{position}] = { $key => $self->_merge_attr($a_best->{$key}, $b_element->{$key}) };
       }
     }
+    $seen_keys->{$b_key} = 1; # don't merge the same key twice
   }
 
   return $a;
@@ -2209,11 +2224,10 @@ Indicates additional column names for those added via L<+select>.
 
 =back
 
-Indicates column names for object inflation. That is, c< as >
+Indicates column names for object inflation. That is, C<as>
 indicates the name that the column can be accessed as via the
 C<get_column> method (or via the object accessor, B<if one already
-exists>).  It has nothing to do with the SQL code C< SELECT foo AS bar
->.
+exists>).  It has nothing to do with the SQL code C<SELECT foo AS bar>.
 
 The C<as> attribute is used in conjunction with C<select>,
 usually when C<select> contains one or more function or stored
@@ -2319,6 +2333,7 @@ to Earth' and a cd with title 'Popular'.
 If you want to fetch related objects from other tables as well, see C<prefetch>
 below.
 
+For more help on using joins with search, see L<DBIx::Class::Manual::Joining>.
 =head2 prefetch
 
 =over 4

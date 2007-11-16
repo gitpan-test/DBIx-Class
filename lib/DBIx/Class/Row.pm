@@ -116,7 +116,6 @@ sub new {
           next;
         }
       }
-      use Data::Dumper;
       $new->throw_exception("No such column $key on $class")
         unless $class->has_column($key);
       $new->store_column($key => $attrs->{$key});          
@@ -243,7 +242,7 @@ sub insert {
         my $reverse = $source->reverse_relationship_info($relname);
         foreach my $obj (@cands) {
           $obj->set_from_related($_, $self) for keys %$reverse;
-          $obj->insert() if(!$obj->in_storage);
+          $obj->insert() unless ($obj->in_storage || $obj->result_source->resultset->search({$obj->get_columns})->count);
         }
       }
     }
@@ -532,15 +531,29 @@ sub copy {
   $new->result_source($self->result_source);
   $new->set_columns($changes);
   $new->insert;
+
+  # Its possible we'll have 2 relations to the same Source. We need to make 
+  # sure we don't try to insert the same row twice esle we'll violate unique
+  # constraints
+  my $rels_copied = {};
+
   foreach my $rel ($self->result_source->relationships) {
     my $rel_info = $self->result_source->relationship_info($rel);
-    if ($rel_info->{attrs}{cascade_copy}) {
-      my $resolved = $self->result_source->resolve_condition(
-       $rel_info->{cond}, $rel, $new);
-      foreach my $related ($self->search_related($rel)) {
-        $related->copy($resolved);
-      }
+
+    next unless $rel_info->{attrs}{cascade_copy};
+  
+    my $resolved = $self->result_source->resolve_condition(
+      $rel_info->{cond}, $rel, $new
+    );
+
+    my $copied = $rels_copied->{ $rel_info->{source} } ||= {};
+    foreach my $related ($self->search_related($rel)) {
+      my $id_str = join("\0", $related->id);
+      next if $copied->{$id_str};
+      $copied->{$id_str} = 1;
+      my $rel_copy = $related->copy($resolved);
     }
+ 
   }
   return $new;
 }

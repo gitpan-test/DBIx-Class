@@ -89,6 +89,7 @@ lib/DBIx/Class/Row.pm
 lib/DBIx/Class/Schema.pm
 lib/DBIx/Class/Schema/Versioned.pm
 lib/DBIx/Class/Serialize/Storable.pm
+lib/DBIx/Class/StartupCheck.pm
 lib/DBIx/Class/Storage.pm
 lib/DBIx/Class/Storage/DBI.pm
 lib/DBIx/Class/Storage/DBI/Cursor.pm
@@ -143,6 +144,7 @@ t/40resultsetmanager.t
 t/41orrible.t
 t/42toplimit.t
 t/46where_attribute.t
+t/47bind_attribute.t
 t/50fork.t
 t/51threads.t
 t/52cycle.t
@@ -165,6 +167,7 @@ t/70auto.t
 t/71mysql.t
 t/72pg.t
 t/73oracle.t
+t/73oracle_inflate.t
 t/745db2.t
 t/746db2_400.t
 t/74mssql.t
@@ -190,6 +193,7 @@ t/90join_torture.t
 t/91debug.t
 t/91merge_attr.t
 t/92storage.t
+t/92storage_on_connect_do.t
 t/93nobindvars.t
 t/93single_accessor_object.t
 t/94pk_mutation.t
@@ -258,7 +262,10 @@ t/lib/DBICTest/Schema/Collection.pm
 t/lib/DBICTest/Schema/CollectionObject.pm
 t/lib/DBICTest/Schema/Employee.pm
 t/lib/DBICTest/Schema/Event.pm
+t/lib/DBICTest/Schema/EventTZ.pm
+t/lib/DBICTest/Schema/EventTZ.pm.rej
 t/lib/DBICTest/Schema/FileColumn.pm
+t/lib/DBICTest/Schema/ForceForeign.pm
 t/lib/DBICTest/Schema/FourKeys.pm
 t/lib/DBICTest/Schema/FourKeys_to_TwoKeys.pm
 t/lib/DBICTest/Schema/LinerNotes.pm

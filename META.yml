@@ -7,7 +7,7 @@ build_requires:
   DBIx::ContextualFetch: 0
   Test::Builder: 0.33
 distribution_type: module
-generated_by: Module::Install version 0.67
+generated_by: Module::Install version 0.670
 license: perl
 meta-spec: 
   url: http://module-build.sourceforge.net/META-spec-v1.3.html
@@ -24,7 +24,7 @@ provides:
     file: lib/DBIx/Class/Storage/DBI/Oracle/WhereJoins.pm
   DBIx::Class: 
     file: lib/DBIx/Class.pm
-    version: 0.08007
+    version: 0.08008
   DBIx::Class::AccessorGroup: 
     file: lib/DBIx/Class/AccessorGroup.pm
   DBIx::Class::CDBICompat: 
@@ -79,6 +79,8 @@ provides:
     file: lib/DBIx/Class/Schema/Versioned.pm
   DBIx::Class::Serialize::Storable: 
     file: lib/DBIx/Class/Serialize/Storable.pm
+  DBIx::Class::StartupCheck: 
+    file: lib/DBIx/Class/StartupCheck.pm
   DBIx::Class::Storage: 
     file: lib/DBIx/Class/Storage.pm
   DBIx::Class::Storage::DBI: 
@@ -128,6 +130,8 @@ provides:
   SQL::Translator::Producer::DBIx::Class::File: 
     file: lib/SQL/Translator/Producer/DBIx/Class/File.pm
     version: 0.1
+  TestRHBug: 
+    file: lib/DBIx/Class/StartupCheck.pm
 requires: 
   Carp::Clan: 0
   Class::Accessor::Grouped: 0.05002
@@ -145,4 +149,4 @@ requires:
   Storable: 0
   perl: 5.6.1
 tests: t/*.t t/*/*.t
-version: 0.08007
+version: 0.08008
