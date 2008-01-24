@@ -100,6 +100,7 @@ lib/DBIx/Class/Storage/DBI/mysql.pm
 lib/DBIx/Class/Storage/DBI/NoBindVars.pm
 lib/DBIx/Class/Storage/DBI/ODBC.pm
 lib/DBIx/Class/Storage/DBI/ODBC/DB2_400_SQL.pm
+lib/DBIx/Class/Storage/DBI/ODBC/Microsoft_SQL_Server.pm
 lib/DBIx/Class/Storage/DBI/Oracle.pm
 lib/DBIx/Class/Storage/DBI/Oracle/Generic.pm
 lib/DBIx/Class/Storage/DBI/Oracle/WhereJoins.pm
@@ -170,6 +171,7 @@ t/73oracle.t
 t/73oracle_inflate.t
 t/745db2.t
 t/746db2_400.t
+t/746mssql.t
 t/74mssql.t
 t/75limit.t
 t/76joins.t
@@ -263,7 +265,6 @@ t/lib/DBICTest/Schema/CollectionObject.pm
 t/lib/DBICTest/Schema/Employee.pm
 t/lib/DBICTest/Schema/Event.pm
 t/lib/DBICTest/Schema/EventTZ.pm
-t/lib/DBICTest/Schema/EventTZ.pm.rej
 t/lib/DBICTest/Schema/FileColumn.pm
 t/lib/DBICTest/Schema/ForceForeign.pm
 t/lib/DBICTest/Schema/FourKeys.pm

@@ -11,6 +11,7 @@ use Data::Page;
 use Storable;
 use DBIx::Class::ResultSetColumn;
 use DBIx::Class::ResultSourceHandle;
+use List::Util ();
 use base qw/DBIx::Class/;
 
 __PACKAGE__->mk_group_accessors('simple' => qw/result_class _source_handle/);
@@ -168,17 +169,25 @@ always return a resultset, even in list context.
 sub search_rs {
   my $self = shift;
 
-  my $rows;
-
-  unless (@_) {                 # no search, effectively just a clone
-    $rows = $self->get_cache;
-  }
-
   my $attrs = {};
   $attrs = pop(@_) if @_ > 1 and ref $_[$#_] eq 'HASH';
   my $our_attrs = { %{$self->{attrs}} };
   my $having = delete $our_attrs->{having};
   my $where = delete $our_attrs->{where};
+
+  my $rows;
+
+  my %safe = (alias => 1, cache => 1);
+
+  unless (
+    (@_ && defined($_[0])) # @_ == () or (undef)
+    || 
+    (keys %$attrs # empty attrs or only 'safe' attrs
+    && List::Util::first { !$safe{$_} } keys %$attrs)
+  ) {
+    # no search, effectively just a clone
+    $rows = $self->get_cache;
+  }
 
   my $new_attrs = { %{$our_attrs}, %{$attrs} };
 
@@ -929,7 +938,7 @@ Performs an SQL C<COUNT> with the same query as the resultset was built
 with to find the number of elements. If passed arguments, does a search
 on the resultset and counts the results of that.
 
-Note: When using C<count> with C<group_by>, L<DBIX::Class> emulates C<GROUP BY>
+Note: When using C<count> with C<group_by>, L<DBIx::Class> emulates C<GROUP BY>
 using C<COUNT( DISTINCT( columns ) )>. Some databases (notably SQLite) do
 not support C<DISTINCT> with multiple columns. If you are using such a
 database, you should only use columns from the main table in your C<group_by>
@@ -2204,7 +2213,7 @@ return a column named C<count(employeeid)> in the above example.
 =over 4
 
 Indicates additional columns to be selected from storage.  Works the same as
-L<select> but adds columns to the selection.
+L</select> but adds columns to the selection.
 
 =back
 
@@ -2212,7 +2221,7 @@ L<select> but adds columns to the selection.
 
 =over 4
 
-Indicates additional column names for those added via L<+select>.
+Indicates additional column names for those added via L</+select>.
 
 =back
 
@@ -2334,6 +2343,7 @@ If you want to fetch related objects from other tables as well, see C<prefetch>
 below.
 
 For more help on using joins with search, see L<DBIx::Class::Manual::Joining>.
+
 =head2 prefetch
 
 =over 4
