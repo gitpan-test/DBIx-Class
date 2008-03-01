@@ -110,6 +110,7 @@ lib/DBIx/Class/Storage/DBI/SQLite.pm
 lib/DBIx/Class/Storage/DBI/Sybase.pm
 lib/DBIx/Class/Storage/DBI/Sybase/MSSQL.pm
 lib/DBIx/Class/Storage/Statistics.pm
+lib/DBIx/Class/Storage/TxnScopeGuard.pm
 lib/DBIx/Class/Test/SQLite.pm
 lib/DBIx/Class/UTF8Columns.pm
 lib/SQL/Translator/Parser/DBIx/Class.pm
@@ -118,6 +119,7 @@ Makefile.PL
 MANIFEST			This list of files
 META.yml
 README
+scope-guard.patch
 script/dbicadmin
 t/02pod.t
 t/03podcoverage.t
@@ -265,6 +267,7 @@ t/lib/DBICTest/Schema/CollectionObject.pm
 t/lib/DBICTest/Schema/Employee.pm
 t/lib/DBICTest/Schema/Event.pm
 t/lib/DBICTest/Schema/EventTZ.pm
+t/lib/DBICTest/Schema/EventTZ.pm.rej
 t/lib/DBICTest/Schema/FileColumn.pm
 t/lib/DBICTest/Schema/ForceForeign.pm
 t/lib/DBICTest/Schema/FourKeys.pm
