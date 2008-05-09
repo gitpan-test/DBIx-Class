@@ -60,6 +60,7 @@ this:
 
  my $fred = $schema->resultset('Author')->find({ Name => 'Fred' });
  my $fredsbooks = $schema->resultset('Book')->search({ Author => $fred->ID });
+
 With a has_many relationship called "books" on Author (see below for details),
 we can do this instead:
 
@@ -269,6 +270,11 @@ the related objects will be deleted as well.  To turn this behaviour off,
 pass C<< cascade_delete => 0 >> in the C<$attr> hashref. However, any
 database-level cascade or restrict will take precedence over a
 DBIx-Class-based cascading delete.
+
+If you copy an object in a class with a C<has_many> relationship, all
+the related objects will be copied as well. To turn this behaviour off,
+pass C<< cascade_copy => 0 >> in the C<$attr> hashref. The behaviour
+defaults to C<< cascade_copy => 1 >>.
 
 See L<DBIx::Class::Relationship::Base> for documentation on relationship
 methods and valid relationship attributes.

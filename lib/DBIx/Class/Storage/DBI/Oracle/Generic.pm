@@ -12,6 +12,7 @@ DBIx::Class::Storage::DBI::Oracle - Automatic primary key class for Oracle
 
   # In your table classes
   __PACKAGE__->load_components(qw/PK::Auto Core/);
+  __PACKAGE__->add_columns({ id => { sequence => 'mysequence', auto_nextval => 1 } });
   __PACKAGE__->set_primary_key('id');
   __PACKAGE__->sequence('mysequence');
 
@@ -30,11 +31,14 @@ use base qw/DBIx::Class::Storage::DBI::MultiDistinctEmulation/;
 # __PACKAGE__->load_components(qw/PK::Auto/);
 
 sub _dbh_last_insert_id {
-  my ($self, $dbh, $source, $col) = @_;
-  my $seq = ($source->column_info($col)->{sequence} ||= $self->get_autoinc_seq($source,$col));
-  my $sql = 'SELECT ' . $seq . '.currval FROM DUAL';
-  my ($id) = $dbh->selectrow_array($sql);
-  return $id;
+  my ($self, $dbh, $source, @columns) = @_;
+  my @ids = ();
+  foreach my $col (@columns) {
+    my $seq = ($source->column_info($col)->{sequence} ||= $self->get_autoinc_seq($source,$col));
+    my $id = $self->_sequence_fetch( 'currval', $seq );
+    push @ids, $id;
+  }
+  return @ids;
 }
 
 sub _dbh_get_autoinc_seq {
@@ -59,6 +63,12 @@ sub _dbh_get_autoinc_seq {
   $self->throw_exception("Unable to find a sequence INSERT trigger on table '" . $source->name . "'.");
 }
 
+sub _sequence_fetch {
+  my ( $self, $type, $seq ) = @_;
+  my ($id) = $self->dbh->selectrow_array("SELECT ${seq}.${type} FROM DUAL");
+  return $id;
+}
+
 =head2 get_autoinc_seq
 
 Returns the sequence name for an autoincrement column
@@ -68,7 +78,7 @@ Returns the sequence name for an autoincrement column
 sub get_autoinc_seq {
   my ($self, $source, $col) = @_;
     
-  $self->dbh_do($self->can('_dbh_get_autoinc_seq'), $source, $col);
+  $self->dbh_do('_dbh_get_autoinc_seq', $source, $col);
 }
 
 =head2 columns_info_for

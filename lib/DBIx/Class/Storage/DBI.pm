@@ -5,6 +5,7 @@ use base 'DBIx::Class::Storage';
 
 use strict;    
 use warnings;
+use Carp::Clan qw/^DBIx::Class/;
 use DBI;
 use SQL::Abstract::Limit;
 use DBIx::Class::Storage::DBI::Cursor;
@@ -14,7 +15,8 @@ use Scalar::Util qw/blessed weaken/;
 __PACKAGE__->mk_group_accessors('simple' =>
     qw/_connect_info _dbi_connect_info _dbh _sql_maker _sql_maker_opts
        _conn_pid _conn_tid disable_sth_caching on_connect_do
-       on_disconnect_do transaction_depth unsafe _dbh_autocommit/
+       on_disconnect_do transaction_depth unsafe _dbh_autocommit
+       auto_savepoint savepoints/
 );
 
 __PACKAGE__->cursor_class('DBIx::Class::Storage::DBI::Cursor');
@@ -24,7 +26,8 @@ __PACKAGE__->sql_maker_class('DBIC::SQL::Abstract');
 
 BEGIN {
 
-package DBIC::SQL::Abstract; # Would merge upstream, but nate doesn't reply :(
+package # Hide from PAUSE
+  DBIC::SQL::Abstract; # Would merge upstream, but nate doesn't reply :(
 
 use base qw/SQL::Abstract::Limit/;
 
@@ -327,6 +330,7 @@ sub new {
 
   $new->transaction_depth(0);
   $new->_sql_maker_opts({});
+  $new->{savepoints} = [];
   $new->{_in_dbh_do} = 0;
   $new->{_dbh_gen} = 0;
 
@@ -429,6 +433,12 @@ Note that your custom settings can cause Storage to malfunction,
 especially if you set a C<HandleError> handler that suppresses exceptions
 and/or disable C<RaiseError>.
 
+=item auto_savepoint
+
+If this option is true, L<DBIx::Class> will use savepoints when nesting
+transactions, making it possible to recover from failure in the inner
+transaction without having to abort all outer transactions.
+
 =back
 
 These options can be mixed in with your other L<DBI> connection attributes,
@@ -442,16 +452,16 @@ whether any options are specified in the new C<connect_info>.
 Another Important Note:
 
 DBIC can do some wonderful magic with handling exceptions,
-disconnections, and transactions when you use C<AutoCommit =&gt; 1>
+disconnections, and transactions when you use C<< AutoCommit => 1 >>
 combined with C<txn_do> for transaction support.
 
-If you set C<AutoCommit =&gt; 0> in your connect info, then you are always
+If you set C<< AutoCommit => 0 >> in your connect info, then you are always
 in an assumed transaction between commits, and you're telling us you'd
 like to manage that manually.  A lot of DBIC's magic protections
 go away.  We can't protect you from exceptions due to database
 disconnects because we don't know anything about how to restart your
 transactions.  You're on your own for handling all sorts of exceptional
-cases if you choose the C<AutoCommit =&gt 0> path, just as you would
+cases if you choose the C<< AutoCommit => 0 >> path, just as you would
 be with raw DBI.
 
 Examples:
@@ -516,6 +526,7 @@ sub connect_info {
     $last_info = { %$last_info }; # so delete is non-destructive
     my @storage_option = qw(
       on_connect_do on_disconnect_do disable_sth_caching unsafe cursor_class
+      auto_savepoint
     );
     for my $storage_opt (@storage_option) {
       if(my $value = delete $last_info->{$storage_opt}) {
@@ -544,9 +555,10 @@ This method is deprecated in favor of setting via L</connect_info>.
 
 =head2 dbh_do
 
-Arguments: $subref, @extra_coderef_args?
+Arguments: ($subref | $method_name), @extra_coderef_args?
 
-Execute the given subref using the new exception-based connection management.
+Execute the given $subref or $method_name using the new exception-based
+connection management.
 
 The first two arguments will be the storage object that C<dbh_do> was called
 on and a database handle to use.  Any additional arguments will be passed
@@ -574,12 +586,11 @@ Example:
 
 sub dbh_do {
   my $self = shift;
-  my $coderef = shift;
+  my $code = shift;
 
-  ref $coderef eq 'CODE' or $self->throw_exception
-    ('$coderef must be a CODE reference');
+  my $dbh = $self->_dbh;
 
-  return $coderef->($self, $self->_dbh, @_) if $self->{_in_dbh_do}
+  return $self->$code($dbh, @_) if $self->{_in_dbh_do}
       || $self->{transaction_depth};
 
   local $self->{_in_dbh_do} = 1;
@@ -588,16 +599,20 @@ sub dbh_do {
   my $want_array = wantarray;
 
   eval {
-    $self->_verify_pid if $self->_dbh;
-    $self->_populate_dbh if !$self->_dbh;
+    $self->_verify_pid if $dbh;
+    if( !$dbh ) {
+        $self->_populate_dbh;
+        $dbh = $self->_dbh;
+    }
+
     if($want_array) {
-        @result = $coderef->($self, $self->_dbh, @_);
+        @result = $self->$code($dbh, @_);
     }
     elsif(defined $want_array) {
-        $result[0] = $coderef->($self, $self->_dbh, @_);
+        $result[0] = $self->$code($dbh, @_);
     }
     else {
-        $coderef->($self, $self->_dbh, @_);
+        $self->$code($dbh, @_);
     }
   };
 
@@ -609,7 +624,7 @@ sub dbh_do {
   # We were not connected - reconnect and retry, but let any
   #  exception fall right through this time
   $self->_populate_dbh;
-  $coderef->($self, $self->_dbh, @_);
+  $self->$code($self->_dbh, @_);
 }
 
 # This is basically a blend of dbh_do above and DBIx::Class::Storage::txn_do.
@@ -622,7 +637,7 @@ sub txn_do {
   ref $coderef eq 'CODE' or $self->throw_exception
     ('$coderef must be a CODE reference');
 
-  return $coderef->(@_) if $self->{transaction_depth};
+  return $coderef->(@_) if $self->{transaction_depth} && ! $self->auto_savepoint;
 
   local $self->{_in_dbh_do} = 1;
 
@@ -763,6 +778,8 @@ sub sql_maker {
   return $self->_sql_maker;
 }
 
+sub _rebless {}
+
 sub _populate_dbh {
   my ($self) = @_;
   my @info = @{$self->_dbi_connect_info || []};
@@ -776,7 +793,7 @@ sub _populate_dbh {
     my $driver = $self->_dbh->{Driver}->{Name};
     if ($self->load_optional_class("DBIx::Class::Storage::DBI::${driver}")) {
       bless $self, "DBIx::Class::Storage::DBI::${driver}";
-      $self->_rebless() if $self->can('_rebless');
+      $self->_rebless();
     }
   }
 
@@ -861,6 +878,90 @@ sub _connect {
   $dbh;
 }
 
+sub svp_begin {
+  my ($self, $name) = @_;
+
+  $name = $self->_svp_generate_name
+    unless defined $name;
+
+  $self->throw_exception ("You can't use savepoints outside a transaction")
+    if $self->{transaction_depth} == 0;
+
+  $self->throw_exception ("Your Storage implementation doesn't support savepoints")
+    unless $self->can('_svp_begin');
+  
+  push @{ $self->{savepoints} }, $name;
+
+  $self->debugobj->svp_begin($name) if $self->debug;
+  
+  return $self->_svp_begin($name);
+}
+
+sub svp_release {
+  my ($self, $name) = @_;
+
+  $self->throw_exception ("You can't use savepoints outside a transaction")
+    if $self->{transaction_depth} == 0;
+
+  $self->throw_exception ("Your Storage implementation doesn't support savepoints")
+    unless $self->can('_svp_release');
+
+  if (defined $name) {
+    $self->throw_exception ("Savepoint '$name' does not exist")
+      unless grep { $_ eq $name } @{ $self->{savepoints} };
+
+    # Dig through the stack until we find the one we are releasing.  This keeps
+    # the stack up to date.
+    my $svp;
+
+    do { $svp = pop @{ $self->{savepoints} } } while $svp ne $name;
+  } else {
+    $name = pop @{ $self->{savepoints} };
+  }
+
+  $self->debugobj->svp_release($name) if $self->debug;
+
+  return $self->_svp_release($name);
+}
+
+sub svp_rollback {
+  my ($self, $name) = @_;
+
+  $self->throw_exception ("You can't use savepoints outside a transaction")
+    if $self->{transaction_depth} == 0;
+
+  $self->throw_exception ("Your Storage implementation doesn't support savepoints")
+    unless $self->can('_svp_rollback');
+
+  if (defined $name) {
+      # If they passed us a name, verify that it exists in the stack
+      unless(grep({ $_ eq $name } @{ $self->{savepoints} })) {
+          $self->throw_exception("Savepoint '$name' does not exist!");
+      }
+
+      # Dig through the stack until we find the one we are releasing.  This keeps
+      # the stack up to date.
+      while(my $s = pop(@{ $self->{savepoints} })) {
+          last if($s eq $name);
+      }
+      # Add the savepoint back to the stack, as a rollback doesn't remove the
+      # named savepoint, only everything after it.
+      push(@{ $self->{savepoints} }, $name);
+  } else {
+      # We'll assume they want to rollback to the last savepoint
+      $name = $self->{savepoints}->[-1];
+  }
+
+  $self->debugobj->svp_rollback($name) if $self->debug;
+  
+  return $self->_svp_rollback($name);
+}
+
+sub _svp_generate_name {
+    my ($self) = @_;
+
+    return 'savepoint_'.scalar(@{ $self->{'savepoints'} });
+}
 
 sub txn_begin {
   my $self = shift;
@@ -872,6 +973,8 @@ sub txn_begin {
     #  we should reconnect on begin_work
     #  for AutoCommit users
     $self->dbh->begin_work;
+  } elsif ($self->auto_savepoint) {
+    $self->svp_begin;
   }
   $self->{transaction_depth}++;
 }
@@ -887,7 +990,9 @@ sub txn_commit {
       if $self->_dbh_autocommit;
   }
   elsif($self->{transaction_depth} > 1) {
-    $self->{transaction_depth}--
+    $self->{transaction_depth}--;
+    $self->svp_release
+      if $self->auto_savepoint;
   }
 }
 
@@ -904,6 +1009,10 @@ sub txn_rollback {
     }
     elsif($self->{transaction_depth} > 1) {
       $self->{transaction_depth}--;
+      if ($self->auto_savepoint) {
+        $self->svp_rollback;
+        $self->svp_release;
+      }
     }
     else {
       die DBIx::Class::Storage::NESTED_ROLLBACK_EXCEPTION->new;
@@ -1010,7 +1119,7 @@ sub _dbh_execute {
 
 sub _execute {
     my $self = shift;
-    $self->dbh_do($self->can('_dbh_execute'), @_)
+    $self->dbh_do('_dbh_execute', @_)
 }
 
 sub insert {
@@ -1018,6 +1127,17 @@ sub insert {
   
   my $ident = $source->from; 
   my $bind_attributes = $self->source_bind_attributes($source);
+
+  foreach my $col ( $source->columns ) {
+    if ( !defined $to_insert->{$col} ) {
+      my $col_info = $source->column_info($col);
+
+      if ( $col_info->{auto_nextval} ) {
+        $self->ensure_connected; 
+        $to_insert->{$col} = $self->_sequence_fetch( 'nextval', $col_info->{sequence} || $self->_dbh_get_autoinc_seq($self->dbh, $source) );
+      }
+    }
+  }
 
   $self->_execute('insert' => [], $source, $bind_attributes, $to_insert);
 
@@ -1122,6 +1242,9 @@ sub _select {
   } else {
     $self->throw_exception("rows attribute must be positive if present")
       if (defined($attrs->{rows}) && !($attrs->{rows} > 0));
+
+    # MySQL actually recommends this approach.  I cringe.
+    $attrs->{rows} = 2**48 if not defined $attrs->{rows} and defined $attrs->{offset};
     push @args, $attrs->{rows}, $attrs->{offset};
   }
 
@@ -1164,6 +1287,9 @@ sub select_single {
   my $self = shift;
   my ($rv, $sth, @bind) = $self->_select(@_);
   my @row = $sth->fetchrow_array;
+  if(@row && $sth->fetchrow_array) {
+    carp "Query returned more than one row.  SQL that returns multiple rows is DEPRECATED for ->find and ->single";
+  }
   # Need to call finish() to work round broken DBDs
   $sth->finish();
   return @row;
@@ -1198,7 +1324,7 @@ sub _dbh_sth {
 
 sub sth {
   my ($self, $sql) = @_;
-  $self->dbh_do($self->can('_dbh_sth'), $sql);
+  $self->dbh_do('_dbh_sth', $sql);
 }
 
 sub _dbh_columns_info_for {
@@ -1260,7 +1386,7 @@ sub _dbh_columns_info_for {
 
 sub columns_info_for {
   my ($self, $table) = @_;
-  $self->dbh_do($self->can('_dbh_columns_info_for'), $table);
+  $self->dbh_do('_dbh_columns_info_for', $table);
 }
 
 =head2 last_insert_id
@@ -1277,7 +1403,7 @@ sub _dbh_last_insert_id {
 
 sub last_insert_id {
   my $self = shift;
-  $self->dbh_do($self->can('_dbh_last_insert_id'), @_);
+  $self->dbh_do('_dbh_last_insert_id', @_);
 }
 
 =head2 sqlt_type
@@ -1329,21 +1455,20 @@ sub create_ddl_dir
   $version ||= $schema->VERSION || '1.x';
   $sqltargs = { ( add_drop_table => 1 ), %{$sqltargs || {}} };
 
-  $self->throw_exception(q{Can't create a ddl file without SQL::Translator 0.08: '}
+  $self->throw_exception(q{Can't create a ddl file without SQL::Translator 0.09: '}
       . $self->_check_sqlt_message . q{'})
           if !$self->_check_sqlt_version;
 
-  my $sqlt = SQL::Translator->new({
-#      debug => 1,
-      add_drop_table => 1,
-  });
+  my $sqlt = SQL::Translator->new( $sqltargs );
+
+  $sqlt->parser('SQL::Translator::Parser::DBIx::Class');
+  my $sqlt_schema = $sqlt->translate({ data => $schema }) or die $sqlt->error;
+
   foreach my $db (@$databases)
   {
     $sqlt->reset();
-    $sqlt->parser('SQL::Translator::Parser::DBIx::Class');
-#    $sqlt->parser_args({'DBIx::Class' => $schema);
     $sqlt = $self->configure_sqlt($sqlt, $db);
-    $sqlt->data($schema);
+    $sqlt->{schema} = $sqlt_schema;
     $sqlt->producer($db);
 
     my $file;
@@ -1351,23 +1476,22 @@ sub create_ddl_dir
     if(-e $filename)
     {
       warn("$filename already exists, skipping $db");
-      next;
-    }
-
-    my $output = $sqlt->translate;
-    if(!$output)
-    {
-      warn("Failed to translate to $db, skipping. (" . $sqlt->error . ")");
-      next;
-    }
-    if(!open($file, ">$filename"))
-    {
-        $self->throw_exception("Can't open $filename for writing ($!)");
+      next unless ($preversion);
+    } else {
+      my $output = $sqlt->translate;
+      if(!$output)
+      {
+        warn("Failed to translate to $db, skipping. (" . $sqlt->error . ")");
         next;
-    }
-    print $file $output;
-    close($file);
-
+      }
+      if(!open($file, ">$filename"))
+      {
+          $self->throw_exception("Can't open $filename for writing ($!)");
+          next;
+      }
+      print $file $output;
+      close($file);
+    } 
     if($preversion)
     {
       require SQL::Translator::Diff;
@@ -1379,36 +1503,7 @@ sub create_ddl_dir
         warn("No previous schema file found ($prefilename)");
         next;
       }
-      #### We need to reparse the SQLite file we just wrote, so that 
-      ##   Diff doesnt get all confoosed, and Diff is *very* confused.
-      ##   FIXME: rip Diff to pieces!
-#      my $target_schema = $sqlt->schema;
-#      unless ( $target_schema->name ) {
-#        $target_schema->name( $filename );
-#      }
-      my @input;
-      push @input, {file => $prefilename, parser => $db};
-      push @input, {file => $filename, parser => $db};
-      my ( $source_schema, $source_db, $target_schema, $target_db ) = map {
-        my $file   = $_->{'file'};
-        my $parser = $_->{'parser'};
 
-        my $t = SQL::Translator->new;
-        $t->debug( 0 );
-        $t->trace( 0 );
-        $t->parser( $parser )            or die $t->error;
-        my $out = $t->translate( $file ) or die $t->error;
-        my $schema = $t->schema;
-        unless ( $schema->name ) {
-          $schema->name( $file );
-        }
-        ($schema, $parser);
-      } @input;
-
-      my $diff = SQL::Translator::Diff::schema_diff($source_schema, $db,
-                                                    $target_schema, $db,
-                                                    {}
-                                                   );
       my $difffile = $schema->ddl_filename($db, $dir, $version, $preversion);
       print STDERR "Diff: $difffile: $db, $dir, $version, $preversion \n";
       if(-e $difffile)
@@ -1416,6 +1511,43 @@ sub create_ddl_dir
         warn("$difffile already exists, skipping");
         next;
       }
+
+      my $source_schema;
+      {
+        my $t = SQL::Translator->new($sqltargs);
+        $t->debug( 0 );
+        $t->trace( 0 );
+        $t->parser( $db )                       or die $t->error;
+        $t = $self->configure_sqlt($t, $db);
+        my $out = $t->translate( $prefilename ) or die $t->error;
+        $source_schema = $t->schema;
+        unless ( $source_schema->name ) {
+          $source_schema->name( $prefilename );
+        }
+      }
+
+      # The "new" style of producers have sane normalization and can support 
+      # diffing a SQL file against a DBIC->SQLT schema. Old style ones don't
+      # And we have to diff parsed SQL against parsed SQL.
+      my $dest_schema = $sqlt_schema;
+
+      unless ( "SQL::Translator::Producer::$db"->can('preprocess_schema') ) {
+        my $t = SQL::Translator->new($sqltargs);
+        $t->debug( 0 );
+        $t->trace( 0 );
+        $t->parser( $db )                    or die $t->error;
+        $t = $self->configure_sqlt($t, $db);
+        my $out = $t->translate( $filename ) or die $t->error;
+        $dest_schema = $t->schema;
+        $dest_schema->name( $filename )
+          unless $dest_schema->name;
+      }
+
+      $DB::single = 1;
+      my $diff = SQL::Translator::Diff::schema_diff($source_schema, $db,
+                                                    $dest_schema,   $db,
+                                                    $sqltargs
+                                                   );
       if(!open $file, ">$difffile")
       { 
         $self->throw_exception("Can't write to $difffile ($!)");
@@ -1479,7 +1611,7 @@ sub deployment_statements {
       return join('', @rows);
   }
 
-  $self->throw_exception(q{Can't deploy without SQL::Translator 0.08: '}
+  $self->throw_exception(q{Can't deploy without SQL::Translator 0.09: '}
       . $self->_check_sqlt_message . q{'})
           if !$self->_check_sqlt_version;
 
@@ -1564,9 +1696,9 @@ sub build_datetime_parser {
     my $_check_sqlt_message; # private
     sub _check_sqlt_version {
         return $_check_sqlt_version if defined $_check_sqlt_version;
-        eval 'use SQL::Translator 0.08';
-        $_check_sqlt_message = $@ ? $@ : '';
-        $_check_sqlt_version = $@ ? 0 : 1;
+        eval 'use SQL::Translator "0.09"';
+        $_check_sqlt_message = $@ || '';
+        $_check_sqlt_version = !$@;
     }
 
     sub _check_sqlt_message {

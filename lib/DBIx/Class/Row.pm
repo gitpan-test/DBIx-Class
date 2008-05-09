@@ -50,7 +50,9 @@ sub new {
   my ($class, $attrs) = @_;
   $class = ref $class if ref $class;
 
-  my $new = { _column_data => {} };
+  my $new = {
+      _column_data          => {},
+  };
   bless $new, $class;
 
   if (my $handle = delete $attrs->{-source_handle}) {
@@ -138,6 +140,9 @@ be set, or the class to have a result_source_instance method. To insert
 an entirely new object into the database, use C<create> (see
 L<DBIx::Class::ResultSet/create>).
 
+To fetch an uninserted row object, call
+L<new|DBIx::Class::ResultSet/new> on a resultset.
+
 This will also insert any uninserted, related objects held inside this
 one, see L<DBIx::Class::ResultSet/create> for more details.
 
@@ -204,7 +209,8 @@ sub insert {
     }
   }
 
-  $source->storage->insert($source, { $self->get_columns });
+  my $updated_cols = $source->storage->insert($source, { $self->get_columns });
+  $self->set_columns($updated_cols);
 
   ## PK::Auto
   my @auto_pri = grep {
@@ -259,7 +265,13 @@ sub insert {
   $obj->in_storage; # Get value
   $obj->in_storage(1); # Set value
 
-Indicates whether the object exists as a row in the database or not
+Indicates whether the object exists as a row in the database or
+not. This is set to true when L<DBIx::Class::ResultSet/find>,
+L<DBIx::Class::ResultSet/create> or L<DBIx::Class::ResultSet/insert>
+are used. 
+
+Creating a row object using L<DBIx::Class::ResultSet/new>, or calling
+L</delete> on one, sets it to false.
 
 =cut
 
@@ -353,10 +365,11 @@ sub delete {
 
   my $val = $obj->get_column($col);
 
-Gets a column value from a row object. Does not do any queries; the column 
-must have already been fetched from the database and stored in the object. If 
-there is an inflated value stored that has not yet been deflated, it is deflated
-when the method is invoked.
+Returns a raw column value from the row object, if it has already
+been fetched from the database or set by an accessor.
+
+If an L<inflated value|DBIx::Class::InflateColumn> has been set, it
+will be deflated and returned.
 
 =cut
 
@@ -394,7 +407,7 @@ sub has_column_loaded {
 
   my %data = $obj->get_columns;
 
-Does C<get_column>, for all column values at once.
+Does C<get_column>, for all loaded column values at once.
 
 =cut
 
@@ -425,9 +438,10 @@ sub get_dirty_columns {
 
 =head2 get_inflated_columns
 
-  my $inflated_data = $obj->get_inflated_columns;
+  my %inflated_data = $obj->get_inflated_columns;
 
-Similar to get_columns but objects are returned for inflated columns instead of their raw non-inflated values.
+Similar to get_columns but objects are returned for inflated columns
+instead of their raw non-inflated values.
 
 =cut
 
@@ -443,8 +457,12 @@ sub get_inflated_columns {
 
   $obj->set_column($col => $val);
 
-Sets a column value. If the new value is different from the old one,
+Sets a raw column value. If the new value is different from the old one,
 the column is marked as dirty for when you next call $obj->update.
+
+If passed an object or reference, this will happily attempt store the
+value, and a later insert/update will try and stringify/numify as
+appropriate.
 
 =cut
 
@@ -455,7 +473,11 @@ sub set_column {
   my $old = $self->get_column($column);
   my $ret = $self->store_column(@_);
   $self->{_dirty_columns}{$column} = 1
-    if (defined $old ^ defined $ret) || (defined $old && $old ne $ret);
+    if (defined $old xor defined $ret) || (defined $old && $old ne $ret);
+
+  # XXX clear out the relation cache for this column
+  delete $self->{related_resultsets}{$column};
+
   return $ret;
 }
 
@@ -525,7 +547,9 @@ sub set_inflated_columns {
 
   my $copy = $orig->copy({ change => $to, ... });
 
-Inserts a new row with the specified changes.
+Inserts a new row with the specified changes. If the row has related
+objects in a C<has_many> then those objects may be copied too depending
+on the C<cascade_copy> relationship attribute.
 
 =cut
 
@@ -659,7 +683,8 @@ sub inflate_result {
 
   $obj->update_or_insert
 
-Updates the object if it's already in the db, else inserts it.
+Updates the object if it's already in the database, according to
+L</in_storage>, else inserts it.
 
 =head2 insert_or_update
 

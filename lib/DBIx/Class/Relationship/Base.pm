@@ -109,6 +109,13 @@ is creating constraints where it shouldn't, or not creating them where it
 should, set this attribute to a true or false value to override the detection
 of when to create constraints.
 
+=item is_deferrable
+
+Tells L<SQL::Translator> that the foreign key constraint it creates should be
+deferrable. In other words, the user may request that the constraint be ignored
+until the end of the transaction. Currently, only the PostgreSQL producer
+actually supports this.
+
 =back
 
 =head2 register_relationship
@@ -201,7 +208,7 @@ sub search_related {
   ( $objects_rs ) = $rs->search_related_rs('relname', $cond, $attrs);
 
 This method works exactly the same as search_related, except that 
-it garauntees a restultset, even in list context.
+it guarantees a restultset, even in list context.
 
 =cut
 
@@ -288,7 +295,8 @@ L<DBIx::Class::Row/insert> on it.
 
 sub find_or_new_related {
   my $self = shift;
-  return $self->find_related(@_) || $self->new_related(@_);
+  my $obj = $self->find_related(@_);
+  return defined $obj ? $obj : $self->new_related(@_);
 }
 
 =head2 find_or_create_related

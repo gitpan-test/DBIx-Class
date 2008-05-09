@@ -9,12 +9,12 @@ package # hide from PAUSE
 
 use strict;
 use warnings;
-use vars qw($DEBUG $VERSION @EXPORT_OK);
+use vars qw($DEBUG @EXPORT_OK);
 $DEBUG = 0 unless defined $DEBUG;
-$VERSION = sprintf "%d.%02d", q$Revision 1.0$ =~ /(\d+)\.(\d+)/;
 
 use Exporter;
 use Data::Dumper;
+use Digest::SHA1 qw( sha1_hex );
 use SQL::Translator::Utils qw(debug normalize_name);
 
 use base qw(Exporter);
@@ -30,26 +30,25 @@ use base qw(Exporter);
 sub parse {
     my ($tr, $data)   = @_;
     my $args          = $tr->parser_args;
-    my $dbixschema    = $args->{'DBIx::Schema'} || $data;
-    $dbixschema     ||= $args->{'package'};
+    my $dbicschema    = $args->{'DBIx::Class::Schema'} ||  $args->{"DBIx::Schema"} ||$data;
+    $dbicschema     ||= $args->{'package'};
     my $limit_sources = $args->{'sources'};
     
-    die 'No DBIx::Schema' unless ($dbixschema);
-    if (!ref $dbixschema) {
-      eval "use $dbixschema;";
-      die "Can't load $dbixschema ($@)" if($@);
+    die 'No DBIx::Class::Schema' unless ($dbicschema);
+    if (!ref $dbicschema) {
+      eval "use $dbicschema;";
+      die "Can't load $dbicschema ($@)" if($@);
     }
 
     my $schema      = $tr->schema;
     my $table_no    = 0;
 
-#    print Dumper($dbixschema->registered_classes);
-
-    #foreach my $tableclass ($dbixschema->registered_classes)
+    $schema->name( ref($dbicschema) . " v" . ($dbicschema->VERSION || '1.x'))
+      unless ($schema->name);
 
     my %seen_tables;
 
-    my @monikers = $dbixschema->sources;
+    my @monikers = sort $dbicschema->sources;
     if ($limit_sources) {
         my $ref = ref $limit_sources || '';
         die "'sources' parameter must be an array or hash ref" unless $ref eq 'ARRAY' || ref eq 'HASH';
@@ -67,8 +66,9 @@ sub parse {
 
     foreach my $moniker (sort @monikers)
     {
-        my $source = $dbixschema->source($moniker);
+        my $source = $dbicschema->source($moniker);
 
+        # Its possible to have multiple DBIC source using same table
         next if $seen_tables{$source->name}++;
 
         my $table = $schema->add_table(
@@ -97,11 +97,11 @@ sub parse {
 
         my @primary = $source->primary_columns;
         my %unique_constraints = $source->unique_constraints;
-        foreach my $uniq (keys %unique_constraints) {
+        foreach my $uniq (sort keys %unique_constraints) {
             if (!$source->compare_relationship_keys($unique_constraints{$uniq}, \@primary)) {
                 $table->add_constraint(
                             type             => 'unique',
-                            name             => "$uniq",
+                            name             => _create_unique_symbol($uniq),
                             fields           => $unique_constraints{$uniq}
                 );
             }
@@ -139,6 +139,8 @@ sub parse {
                     $on_update = $otherrelationship->{'attrs'}->{cascade_copy} ? 'CASCADE' : '';
                 }
 
+                my $is_deferrable = $rel_info->{attrs}{is_deferrable};
+
                 # Make sure we dont create the same foreign key constraint twice
                 my $key_test = join("\x00", @keys);
 
@@ -148,23 +150,37 @@ sub parse {
                 # If the sets are different, then we assume it's a foreign key from
                 # us to another table.
                 # OR: If is_foreign_key_constraint attr is explicity set (or set to false) on the relation
-                if ( ! exists $created_FK_rels{$rel_table}->{$key_test} &&
-                     ( exists $rel_info->{attrs}{is_foreign_key_constraint} ?
-                       $rel_info->{attrs}{is_foreign_key_constraint} :
-                       !$source->compare_relationship_keys(\@keys, \@primary)
-		     )
-                   )
-                {
-                    $created_FK_rels{$rel_table}->{$key_test} = 1;
-                    $table->add_constraint(
-                                type             => 'foreign_key',
-                                name             => "fk_$keys[0]",
-                                fields           => \@keys,
-                                reference_fields => \@refkeys,
-                                reference_table  => $rel_table,
-                                on_delete        => $on_delete,
-                                on_update        => $on_update
-                    );
+                next if ( exists $created_FK_rels{$rel_table}->{$key_test} );
+                if ( exists $rel_info->{attrs}{is_foreign_key_constraint}) {
+                  # not is this attr set to 0 but definitely if set to 1
+                  next unless ($rel_info->{attrs}{is_foreign_key_constraint});
+                } else {
+                  # not if might have
+                  # next if ($rel_info->{attrs}{accessor} eq 'single' && exists $rel_info->{attrs}{join_type} && uc($rel_info->{attrs}{join_type}) eq 'LEFT');
+                  # not sure about this one
+                  next if $source->compare_relationship_keys(\@keys, \@primary);
+                }
+
+                $created_FK_rels{$rel_table}->{$key_test} = 1;
+                if (scalar(@keys)) {
+                  $table->add_constraint(
+                                    type             => 'foreign_key',
+                                    name             => _create_unique_symbol($table->name
+                                                                            . '_fk_'
+                                                                            . join('_', @keys)),
+                                    fields           => \@keys,
+                                    reference_fields => \@refkeys,
+                                    reference_table  => $rel_table,
+                                    on_delete        => $on_delete,
+                                    on_update        => $on_update,
+                                    (defined $is_deferrable ? ( deferrable => $is_deferrable ) : ()),
+                  );
+                    
+                  my $index = $table->add_index(
+                                    name   => _create_unique_symbol(join('_', @keys)),
+                                    fields => \@keys,
+                                    type   => 'NORMAL',
+                  );
                 }
             }
         }
@@ -174,12 +190,38 @@ sub parse {
         }
     }
 
-    if ($dbixschema->can('sqlt_deploy_hook')) {
-      $dbixschema->sqlt_deploy_hook($schema);
+    if ($dbicschema->can('sqlt_deploy_hook')) {
+      $dbicschema->sqlt_deploy_hook($schema);
     }
 
     return 1;
 }
 
-1;
+# TODO - is there a reasonable way to pass configuration?
+# Default of 64 comes from mysql's limit.
+our $MAX_SYMBOL_LENGTH    ||= 64;
+our $COLLISION_TAG_LENGTH ||= 8;
 
+# -------------------------------------------------------------------
+# $resolved_name = _create_unique_symbol($desired_name)
+#
+# If desired_name is really long, it will be truncated in a way that
+# has a high probability of leaving it unique.
+# -------------------------------------------------------------------
+sub _create_unique_symbol {
+    my $desired_name = shift;
+    return $desired_name if length $desired_name <= $MAX_SYMBOL_LENGTH;
+
+    my $truncated_name = substr $desired_name, 0, $MAX_SYMBOL_LENGTH - $COLLISION_TAG_LENGTH - 1;
+
+    # Hex isn't the most space-efficient, but it skirts around allowed
+    # charset issues
+    my $digest = sha1_hex($desired_name);
+    my $collision_tag = substr $digest, 0, $COLLISION_TAG_LENGTH;
+
+    return $truncated_name
+         . '_'
+         . $collision_tag;
+}
+
+1;

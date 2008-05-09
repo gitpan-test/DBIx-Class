@@ -1,5 +1,21 @@
 Revision history for DBIx::Class
 
+0.08099_01 2008-05-07 20:50
+        - make ash's build_requires/META.yml fixes work better
+        - is_deferable support on relations used by the SQL::Translator
+          parser
+        - Refactored DBIx::Class::Schema::Versioned
+        - Syntax errors from resultset components are now reported correctly
+        - sqltargs respected correctly in deploy et al.
+        - Added support for savepoints, and using them automatically in
+          nested transactions if auto_savepoint is set in connect_info.
+        - Changed naming scheme for constraints and keys in the sqlt parser;
+          names should now be consistent and collision-free.
+        - Improve handling of explicit key attr in ResultSet::find
+        - Add warnings for non-unique ResultSet::find queries
+        - Changed Storage::DBI::Replication to Storage::DBI::Replicated, fixed
+		  some problems using this with versioned databases, added some docs
+
 0.08010 2008-03-01 10:30
         - Fix t/94versioning.t so it passes with latest SQL::Translator
 
