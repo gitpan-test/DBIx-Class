@@ -58,6 +58,7 @@ lib/DBIx/Class/Manual/FAQ.pod
 lib/DBIx/Class/Manual/Glossary.pod
 lib/DBIx/Class/Manual/Intro.pod
 lib/DBIx/Class/Manual/Joining.pod
+lib/DBIx/Class/Manual/Reading.pod
 lib/DBIx/Class/Manual/Troubleshooting.pod
 lib/DBIx/Class/Ordered.pm
 lib/DBIx/Class/PK.pm
@@ -305,6 +306,7 @@ t/lib/DBICTest/Schema/Dummy.pm
 t/lib/DBICTest/Schema/Employee.pm
 t/lib/DBICTest/Schema/Event.pm
 t/lib/DBICTest/Schema/EventTZ.pm
+t/lib/DBICTest/Schema/EventTZ.pm.rej
 t/lib/DBICTest/Schema/FileColumn.pm
 t/lib/DBICTest/Schema/ForceForeign.pm
 t/lib/DBICTest/Schema/FourKeys.pm
