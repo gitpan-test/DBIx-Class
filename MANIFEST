@@ -155,6 +155,7 @@ t/46where_attribute.t
 t/47bind_attribute.t
 t/50fork.t
 t/51threads.t
+t/51threadtxn.t
 t/52cycle.t
 t/53delete_related.t
 t/54taint.t
@@ -214,6 +215,7 @@ t/96file_column.t
 t/96multi_create.t
 t/97result_class.t
 t/98savepoints.t
+t/99dbic_sqlt_parser.t
 t/bindtype_columns.t
 t/cdbi-abstract/search_where.t
 t/cdbi-DeepAbstractSearch/01_search.t
@@ -306,14 +308,12 @@ t/lib/DBICTest/Schema/Dummy.pm
 t/lib/DBICTest/Schema/Employee.pm
 t/lib/DBICTest/Schema/Event.pm
 t/lib/DBICTest/Schema/EventTZ.pm
-t/lib/DBICTest/Schema/EventTZ.pm.rej
 t/lib/DBICTest/Schema/FileColumn.pm
 t/lib/DBICTest/Schema/ForceForeign.pm
 t/lib/DBICTest/Schema/FourKeys.pm
 t/lib/DBICTest/Schema/FourKeys_to_TwoKeys.pm
 t/lib/DBICTest/Schema/LinerNotes.pm
 t/lib/DBICTest/Schema/Link.pm
-t/lib/DBICTest/Schema/LongColumns.pm
 t/lib/DBICTest/Schema/NoPrimaryKey.pm
 t/lib/DBICTest/Schema/OneKey.pm
 t/lib/DBICTest/Schema/Owners.pm

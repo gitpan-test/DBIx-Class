@@ -2,6 +2,12 @@
 abstract: Extensible and flexible object <-> relational mapper.
 author: 
   - "mst: Matt S. Trout <mst@shadowcatsystems.co.uk>"
+build_requires: 
+  DBD::SQLite: 1.13
+  Test::Builder: 0.33
+  Test::Exception: 0
+  Test::NoWarnings: 0.08
+  Test::Warn: 0.08
 distribution_type: module
 generated_by: Module::Install version 0.68
 license: perl
@@ -14,19 +20,23 @@ no_index:
     - inc
     - t
 provides: 
-  DBIC::SQL::Abstract: 
-    file: lib/DBIx/Class/Storage/DBI.pm
-  DBIC::SQL::Abstract::Oracle: 
-    file: lib/DBIx/Class/Storage/DBI/Oracle/WhereJoins.pm
   DBIx::Class: 
     file: lib/DBIx/Class.pm
-    version: 0.08010
+    version: 0.08099_03
   DBIx::Class::AccessorGroup: 
     file: lib/DBIx/Class/AccessorGroup.pm
   DBIx::Class::CDBICompat: 
     file: lib/DBIx/Class/CDBICompat.pm
   DBIx::Class::CDBICompat::ColumnGroups::GrouperShim: 
     file: lib/DBIx/Class/CDBICompat/ColumnGroups.pm
+  DBIx::Class::CDBICompat::Iterator: 
+    file: lib/DBIx/Class/CDBICompat/Iterator.pm
+  DBIx::Class::CDBICompat::Iterator::ResultSet: 
+    file: lib/DBIx/Class/CDBICompat/Iterator.pm
+  DBIx::Class::CDBICompat::SQLTransformer: 
+    file: lib/DBIx/Class/CDBICompat/SQLTransformer.pm
+  DBIx::Class::CDBICompat::Tied::ColumnValue: 
+    file: lib/DBIx/Class/CDBICompat/ColumnsAsHash.pm
   DBIx::Class::Core: 
     file: lib/DBIx/Class/Core.pm
   DBIx::Class::Cursor: 
@@ -93,6 +103,8 @@ provides:
     file: lib/DBIx/Class/Storage/DBI/NoBindVars.pm
   DBIx::Class::Storage::DBI::ODBC: 
     file: lib/DBIx/Class/Storage/DBI/ODBC.pm
+  DBIx::Class::Storage::DBI::ODBC::ACCESS: 
+    file: lib/DBIx/Class/Storage/DBI/ODBC/ACCESS.pm
   DBIx::Class::Storage::DBI::ODBC::DB2_400_SQL: 
     file: lib/DBIx/Class/Storage/DBI/ODBC/DB2_400_SQL.pm
   DBIx::Class::Storage::DBI::ODBC::Microsoft_SQL_Server: 
@@ -105,8 +117,10 @@ provides:
     file: lib/DBIx/Class/Storage/DBI/Oracle/WhereJoins.pm
   DBIx::Class::Storage::DBI::Pg: 
     file: lib/DBIx/Class/Storage/DBI/Pg.pm
-  DBIx::Class::Storage::DBI::Replication: 
-    file: lib/DBIx/Class/Storage/DBI/Replication.pm
+  DBIx::Class::Storage::DBI::Replicated: 
+    file: lib/DBIx/Class/Storage/DBI/Replicated.pm
+  DBIx::Class::Storage::DBI::Role::QueryCounter: 
+    file: lib/DBIx/Class/Storage/DBI/Role/QueryCounter.pm
   DBIx::Class::Storage::DBI::SQLite: 
     file: lib/DBIx/Class/Storage/DBI/SQLite.pm
   DBIx::Class::Storage::DBI::Sybase: 
@@ -121,21 +135,28 @@ provides:
     file: lib/DBIx/Class/Test/SQLite.pm
   DBIx::Class::UTF8Columns: 
     file: lib/DBIx/Class/UTF8Columns.pm
-  DBIx::Class::Version: 
-    file: lib/DBIx/Class/Schema/Versioned.pm
-  DBIx::Class::Version::Table: 
-    file: lib/DBIx/Class/Schema/Versioned.pm
-  DBIx::Class::Version::TableCompat: 
-    file: lib/DBIx/Class/Schema/Versioned.pm
-  DBIx::Class::VersionCompat: 
-    file: lib/DBIx/Class/Schema/Versioned.pm
   SQL::Translator::Producer::DBIx::Class::File: 
     file: lib/SQL/Translator/Producer/DBIx/Class/File.pm
     version: 0.1
-  TestRHBug: 
-    file: lib/DBIx/Class/StartupCheck.pm
+requires: 
+  Carp::Clan: 0
+  Class::Accessor::Grouped: 0.05002
+  Class::C3: 0.13
+  Class::C3::Componentised: 0
+  Class::Inspector: 0
+  DBI: 1.4
+  Data::Page: 2
+  JSON::Any: 1
+  Module::Find: 0
+  Path::Class: 0
+  SQL::Abstract: 1.2
+  SQL::Abstract::Limit: 0.101
+  Scalar::Util: 0
+  Scope::Guard: 0.03
+  Storable: 0
+  perl: 5.6.1
 resources: 
   IRC: irc://irc.perl.org/#dbix-class
   MailingList: http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class
 tests: t/*.t t/*/*.t
-version: 0.08010
+version: 0.08099_03

@@ -613,19 +613,6 @@ sub compose_namespace {
   return $schema;
 }
 
-=head2 setup_connection_class
-
-=over 4
-
-=item Arguments: $target, @info
-
-=back
-
-Sets up a database connection class to inject between the schema and the
-subclasses that the schema creates.
-
-=cut
-
 sub setup_connection_class {
   my ($class, $target, @info) = @_;
   $class->inject_base($target => 'DBIx::Class::DB');
@@ -734,9 +721,10 @@ sub txn_do {
   $self->storage->txn_do(@_);
 }
 
-=head2 txn_scope_guard
+=head2 txn_scope_guard (EXPERIMENTAL)
 
-Runs C<txn_scope_guard> on the schema's storage.
+Runs C<txn_scope_guard> on the schema's storage. See 
+L<DBIx::Class::Storage/txn_scope_guard>.
 
 =cut
 
@@ -1028,7 +1016,9 @@ produced include a DROP TABLE statement for each table created.
 
 Additionally, the DBIx::Class parser accepts a C<sources> parameter as a hash 
 ref or an array ref, containing a list of source to deploy. If present, then 
-only the sources listed will get deployed.
+only the sources listed will get deployed. Furthermore, you can use the
+C<add_fk_index> parser parameter to prevent the parser from creating an index for each
+FK.
 
 =cut
 
@@ -1082,6 +1072,8 @@ override this method in your schema if you would like a different file
 name format. For the ALTER file, the same format is used, replacing
 $version in the name with "$preversion-$version".
 
+See L<DBIx::Class::Schema/deploy> for details of $sqlt_args.
+
 If no arguments are passed, then the following default values are used:
 
 =over 4
@@ -1110,15 +1102,15 @@ sub create_ddl_dir {
   $self->storage->create_ddl_dir($self, @_);
 }
 
-=head2 ddl_filename (EXPERIMENTAL)
+=head2 ddl_filename
 
 =over 4
 
-=item Arguments: $directory, $database-type, $version, $preversion
+=item Arguments: $database-type, $version, $directory, $preversion
 
 =back
 
-  my $filename = $table->ddl_filename($type, $dir, $version, $preversion)
+  my $filename = $table->ddl_filename($type, $version, $dir, $preversion)
 
 This method is called by C<create_ddl_dir> to compose a file name out of
 the supplied directory, database type and version number. The default file
@@ -1130,14 +1122,14 @@ format.
 =cut
 
 sub ddl_filename {
-    my ($self, $type, $dir, $version, $pversion) = @_;
+  my ($self, $type, $version, $dir, $preversion) = @_;
 
-    my $filename = ref($self);
-    $filename =~ s/::/-/g;
-    $filename = File::Spec->catfile($dir, "$filename-$version-$type.sql");
-    $filename =~ s/$version/$pversion-$version/ if($pversion);
-
-    return $filename;
+  my $filename = ref($self);
+  $filename =~ s/::/-/g;
+  $filename = File::Spec->catfile($dir, "$filename-$version-$type.sql");
+  $filename =~ s/$version/$preversion-$version/ if($preversion);
+  
+  return $filename;
 }
 
 =head2 sqlt_deploy_hook($sqlt_schema)
@@ -1185,6 +1177,29 @@ sub dclone {
   my ($self, $obj) = @_;
   local $DBIx::Class::ResultSourceHandle::thaw_schema = $self;
   return Storable::dclone($obj);
+}
+
+=head2 schema_version
+
+Returns the current schema class' $VERSION
+
+=cut
+
+sub schema_version {
+  my ($self) = @_;
+  my $class = ref($self)||$self;
+
+  # does -not- use $schema->VERSION
+  # since that varies in results depending on if version.pm is installed, and if
+  # so the perl or XS versions. If you want this to change, bug the version.pm
+  # author to make vpp and vxs behave the same.
+
+  my $version;
+  {
+    no strict 'refs';
+    $version = ${"${class}::VERSION"};
+  }
+  return $version;
 }
 
 1;

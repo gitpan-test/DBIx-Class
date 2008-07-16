@@ -24,7 +24,7 @@ sub component_base_class { 'DBIx::Class' }
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
 
-$VERSION = '0.08099_02';
+$VERSION = '0.08099_03';
 
 $VERSION = eval $VERSION; # numify for warning-free dev releases
 
@@ -215,6 +215,8 @@ blblack: Brandon L. Black <blblack@gmail.com>
 
 bluefeet: Aran Deltac <bluefeet@cpan.org>
 
+bricas: Brian Cassidy <bricas@cpan.org>
+
 captainL: Luke Saunders <luke.saunders@gmail.com>
 
 castaway: Jess Robinson
@@ -230,8 +232,6 @@ debolaz: Anders Nor Berle <berle@cpan.org>
 dkubb: Dan Kubb <dan.kubb-cpan@onautopilot.com>
 
 dnm: Justin Wheeler <jwheeler@datademons.com>
-
-draven: Marcus Ramberg <mramberg@cpan.org>
 
 dwc: Daniel Westermann-Clark <danieltwc@cpan.org>
 
@@ -251,7 +251,7 @@ jshirley: J. Shirley <jshirley@gmail.com>
 
 konobi: Scott McWhirter
 
-LTJake: Brian Cassidy <bricas@cpan.org>
+marcus: Marcus Ramberg <mramberg@cpan.org>
 
 mattlaw: Matt Lawrence
 

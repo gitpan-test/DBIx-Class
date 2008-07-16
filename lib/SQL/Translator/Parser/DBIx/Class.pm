@@ -14,7 +14,6 @@ $DEBUG = 0 unless defined $DEBUG;
 
 use Exporter;
 use Data::Dumper;
-use Digest::SHA1 qw( sha1_hex );
 use SQL::Translator::Utils qw(debug normalize_name);
 
 use base qw(Exporter);
@@ -23,6 +22,9 @@ use base qw(Exporter);
 
 # -------------------------------------------------------------------
 # parse($tr, $data)
+#
+# setting parser_args => { add_fk_index => 0 } will prevent
+# the auto-generation of an index for each FK.
 #
 # Note that $data, in the case of this parser, is not useful.
 # We're working with DBIx::Class Schemas, not data streams.
@@ -67,6 +69,9 @@ sub parse {
     foreach my $moniker (sort @monikers)
     {
         my $source = $dbicschema->source($moniker);
+        
+        # Skip custom query sources
+        next if ref($source->name);
 
         # Its possible to have multiple DBIC source using same table
         next if $seen_tables{$source->name}++;
@@ -101,7 +106,7 @@ sub parse {
             if (!$source->compare_relationship_keys($unique_constraints{$uniq}, \@primary)) {
                 $table->add_constraint(
                             type             => 'unique',
-                            name             => _create_unique_symbol($uniq),
+                            name             => $uniq,
                             fields           => $unique_constraints{$uniq}
                 );
             }
@@ -110,6 +115,9 @@ sub parse {
         my @rels = $source->relationships();
 
         my %created_FK_rels;
+        
+        # global add_fk_index set in parser_args
+        my $add_fk_index = (exists $args->{add_fk_index} && ($args->{add_fk_index} == 0)) ? 0 : 1;
 
         foreach my $rel (sort @rels)
         {
@@ -140,6 +148,9 @@ sub parse {
                 }
 
                 my $is_deferrable = $rel_info->{attrs}{is_deferrable};
+                
+                # global parser_args add_fk_index param can be overridden on the rel def
+                my $add_fk_index_rel = (exists $rel_info->{attrs}{add_fk_index}) ? $rel_info->{attrs}{add_fk_index} : $add_fk_index;
 
                 # Make sure we dont create the same foreign key constraint twice
                 my $key_test = join("\x00", @keys);
@@ -165,9 +176,7 @@ sub parse {
                 if (scalar(@keys)) {
                   $table->add_constraint(
                                     type             => 'foreign_key',
-                                    name             => _create_unique_symbol($table->name
-                                                                            . '_fk_'
-                                                                            . join('_', @keys)),
+                                    name             => join('_', $table->name, 'fk', @keys),
                                     fields           => \@keys,
                                     reference_fields => \@refkeys,
                                     reference_table  => $rel_table,
@@ -176,15 +185,17 @@ sub parse {
                                     (defined $is_deferrable ? ( deferrable => $is_deferrable ) : ()),
                   );
                     
-                  my $index = $table->add_index(
-                                    name   => _create_unique_symbol(join('_', $table->name, 'idx', @keys)),
-                                    fields => \@keys,
-                                    type   => 'NORMAL',
-                  );
-                }
+                  if ($add_fk_index_rel) {
+                      my $index = $table->add_index(
+                                                    name   => join('_', $table->name, 'idx', @keys),
+                                                    fields => \@keys,
+                                                    type   => 'NORMAL',
+                                                    );
+                  }
+              }
             }
         }
-
+		
         if ($source->result_class->can('sqlt_deploy_hook')) {
           $source->result_class->sqlt_deploy_hook($table);
         }
@@ -195,33 +206,6 @@ sub parse {
     }
 
     return 1;
-}
-
-# TODO - is there a reasonable way to pass configuration?
-# Default of 64 comes from mysql's limit.
-our $MAX_SYMBOL_LENGTH    ||= 64;
-our $COLLISION_TAG_LENGTH ||= 8;
-
-# -------------------------------------------------------------------
-# $resolved_name = _create_unique_symbol($desired_name)
-#
-# If desired_name is really long, it will be truncated in a way that
-# has a high probability of leaving it unique.
-# -------------------------------------------------------------------
-sub _create_unique_symbol {
-    my $desired_name = shift;
-    return $desired_name if length $desired_name <= $MAX_SYMBOL_LENGTH;
-
-    my $truncated_name = substr $desired_name, 0, $MAX_SYMBOL_LENGTH - $COLLISION_TAG_LENGTH - 1;
-
-    # Hex isn't the most space-efficient, but it skirts around allowed
-    # charset issues
-    my $digest = sha1_hex($desired_name);
-    my $collision_tag = substr $digest, 0, $COLLISION_TAG_LENGTH;
-
-    return $truncated_name
-         . '_'
-         . $collision_tag;
 }
 
 1;
