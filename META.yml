@@ -1,7 +1,6 @@
 --- 
 abstract: Extensible and flexible object <-> relational mapper.
-author: 
-  - "mst: Matt S. Trout <mst@shadowcatsystems.co.uk>"
+author: "mst: Matt S. Trout <mst@shadowcatsystems.co.uk>"
 build_requires: 
   DBD::SQLite: 1.13
   Test::Builder: 0.33
@@ -9,7 +8,7 @@ build_requires:
   Test::NoWarnings: 0.08
   Test::Warn: 0.08
 distribution_type: module
-generated_by: Module::Install version 0.68
+generated_by: Module::Install version 0.67
 license: perl
 meta-spec: 
   url: http://module-build.sourceforge.net/META-spec-v1.3.html
@@ -22,7 +21,7 @@ no_index:
 provides: 
   DBIx::Class: 
     file: lib/DBIx/Class.pm
-    version: 0.08099_03
+    version: 0.08099_04
   DBIx::Class::AccessorGroup: 
     file: lib/DBIx/Class/AccessorGroup.pm
   DBIx::Class::CDBICompat: 
@@ -119,6 +118,16 @@ provides:
     file: lib/DBIx/Class/Storage/DBI/Pg.pm
   DBIx::Class::Storage::DBI::Replicated: 
     file: lib/DBIx/Class/Storage/DBI/Replicated.pm
+  DBIx::Class::Storage::DBI::Replicated::Balancer: 
+    file: lib/DBIx/Class/Storage/DBI/Replicated/Balancer.pm
+  DBIx::Class::Storage::DBI::Replicated::Balancer::First: 
+    file: lib/DBIx/Class/Storage/DBI/Replicated/Balancer/First.pm
+  DBIx::Class::Storage::DBI::Replicated::Balancer::Random: 
+    file: lib/DBIx/Class/Storage/DBI/Replicated/Balancer/Random.pm
+  DBIx::Class::Storage::DBI::Replicated::Pool: 
+    file: lib/DBIx/Class/Storage/DBI/Replicated/Pool.pm
+  DBIx::Class::Storage::DBI::Replicated::Replicant: 
+    file: lib/DBIx/Class/Storage/DBI/Replicated/Replicant.pm
   DBIx::Class::Storage::DBI::Role::QueryCounter: 
     file: lib/DBIx/Class/Storage/DBI/Role/QueryCounter.pm
   DBIx::Class::Storage::DBI::SQLite: 
@@ -147,6 +156,7 @@ requires:
   DBI: 1.4
   Data::Page: 2
   JSON::Any: 1
+  List::Util: 1.19
   Module::Find: 0
   Path::Class: 0
   SQL::Abstract: 1.2
@@ -159,4 +169,4 @@ resources:
   IRC: irc://irc.perl.org/#dbix-class
   MailingList: http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class
 tests: t/*.t t/*/*.t
-version: 0.08099_03
+version: 0.08099_04

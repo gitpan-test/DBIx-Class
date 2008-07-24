@@ -23,6 +23,7 @@ requires 'Class::Accessor::Grouped'  => 0.05002;
 requires 'JSON::Any'                 => 1.00; 
 requires 'Scope::Guard'              => 0.03;
 requires 'Path::Class'               => 0;
+requires 'List::Util'                => 1.19;
 
 # Perl 5.8.0 doesn't have utf8::is_utf8()
 requires 'Encode'                    => 0 if ($] <= 5.008000);  
@@ -43,6 +44,9 @@ my @force_build_requires_if_author = qw(
   DBIx::ContextualFetch
   Class::Trigger
   Time::Piece
+  Clone
+  Test::Pod::Coverage
+  Test::Memory::Cycle
 );
 
 if ($Module::Install::AUTHOR) {

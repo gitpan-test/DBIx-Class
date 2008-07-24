@@ -111,6 +111,11 @@ lib/DBIx/Class/Storage/DBI/Oracle/Generic.pm
 lib/DBIx/Class/Storage/DBI/Oracle/WhereJoins.pm
 lib/DBIx/Class/Storage/DBI/Pg.pm
 lib/DBIx/Class/Storage/DBI/Replicated.pm
+lib/DBIx/Class/Storage/DBI/Replicated/Balancer.pm
+lib/DBIx/Class/Storage/DBI/Replicated/Balancer/First.pm
+lib/DBIx/Class/Storage/DBI/Replicated/Balancer/Random.pm
+lib/DBIx/Class/Storage/DBI/Replicated/Pool.pm
+lib/DBIx/Class/Storage/DBI/Replicated/Replicant.pm
 lib/DBIx/Class/Storage/DBI/Role/QueryCounter.pm
 lib/DBIx/Class/Storage/DBI/SQLite.pm
 lib/DBIx/Class/Storage/DBI/Sybase.pm
@@ -211,6 +216,7 @@ t/93storage_replication.t
 t/94pk_mutation.t
 t/94versioning.t
 t/95sql_maker_quote.t
+t/96_is_deteministic_value.t
 t/96file_column.t
 t/96multi_create.t
 t/97result_class.t
