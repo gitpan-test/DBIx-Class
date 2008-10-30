@@ -51,16 +51,16 @@ my $newartist2 = $schema->resultset('Artist')->find_or_create({ name => 'Fred 3'
 
 is($newartist2->name, 'Fred 3', 'Created new artist with cds via find_or_create');
 
-my $artist2 = $schema->resultset('Artist')->create({ artistid => 1000,
+my $artist2 = $schema->resultset('Artist')->create({
                                                     name => 'Fred 3',
                                                      cds => [
-                                                             { artist => 1000,
+                                                             {
                                                                title => 'Music to code by',
                                                                year => 2007,
                                                              },
                                                              ],
                                                     cds_unordered => [
-                                                             { artist => 1000,
+                                                             {
                                                                title => 'Music to code by',
                                                                year => 2007,
                                                              },
@@ -202,7 +202,7 @@ my $new_artist = $schema->resultset("Artist")->create({ artistid => 18, name => 
 eval {
 	$schema->resultset("CD")->create({ 
               cdid => 28, 
-               title => 'Boogie Wiggle', 
+              title => 'Boogie Wiggle', 
               year => '2007', 
               artist => { artistid => 18, name => 'larry' }
              });
@@ -211,9 +211,101 @@ is($@, '', 'new cd created without clash on related artist');
 
 # Make sure exceptions from errors in created rels propogate
 eval {
-    my $t = $schema->resultset("Track")->new({});
-    $t->cd($t->new_related('cd', { artist => undef } ) );
-    $t->{_rel_in_storage} = 0;
+    my $t = $schema->resultset("Track")->new({ cd => { artist => undef } });
+    #$t->cd($t->new_related('cd', { artist => undef } ) );
+    #$t->{_rel_in_storage} = 0;
     $t->insert;
 };
 like($@, qr/cd.artist may not be NULL/, "Exception propogated properly");
+
+# Test multi create over many_to_many
+$schema->resultset('CD')->create ({
+    artist => $new_artist,
+    title => 'Warble Marble',
+    year => '2009',
+    cd_to_producer => [
+        { producer => { name => 'Cowboy Neal' } },
+    ],
+});
+
+my $m2m_cd = $schema->resultset('CD')->search ({ title => 'Warble Marble'});
+is ($m2m_cd->count, 1, 'One CD row created via M2M create');
+is ($m2m_cd->first->producers->count, 1, 'CD row created with one producer');
+is ($m2m_cd->first->producers->first->name, 'Cowboy Neal', 'Correct producer row created');
+
+# and some insane multicreate 
+# (should work, despite the fact that no one will probably use it this way)
+
+# first count how many rows do we have
+
+my $counts;
+$counts->{$_} = $schema->resultset($_)->count for qw/Artist CD Genre Producer/;
+
+# do the crazy create
+$schema->resultset('CD')->create ({
+    artist => $new_artist,
+    title => 'Greatest hits 1',
+    year => '2012',
+    genre => {
+      name => '"Greatest" collections',
+    },
+    cd_to_producer => [
+      {
+        producer => {
+          name => 'Dirty Harry',
+          producer_to_cd => [
+            {
+              cd => { 
+                artist => {
+                  name => 'Dirty Harry himself',
+                },
+                title => 'Greatest hits 2',
+                year => 2012,
+                genre => {
+                  name => '"Greatest" collections',
+                },
+              },
+            },
+            {
+              cd => { 
+                artist => {
+                  name => 'Dirty Harry himself',
+                },
+                title => 'Greatest hits 3',
+                year => 2012,
+                genre => {
+                  name => '"Greatest" collections',
+                },
+              },
+            },
+            {
+              cd => { 
+                artist => $new_artist,
+                title => 'Greatest hits 4',
+                year => 2012,
+              },
+            },
+          ],
+        },
+      },
+    ],
+});
+
+is ($schema->resultset ('Artist')->count, $counts->{Artist} + 1, 'One new artists created');  # even though the 'name' is not uniquely constrained find_or_create will arguably DWIM
+is ($schema->resultset ('Genre')->count, $counts->{Genre} + 1, 'One additional genre created');
+is ($schema->resultset ('Producer')->count, $counts->{Producer} + 1, 'One new producer');
+is ($schema->resultset ('CD')->count, $counts->{CD} + 4, '4 new CDs');
+
+my $harry_cds = $schema->resultset ('Artist')->single ({name => 'Dirty Harry himself'})->cds;
+is ($harry_cds->count, 2, 'Two CDs created by Harry');
+ok ($harry_cds->single ({title => 'Greatest hits 2'}), 'First CD name correct');
+ok ($harry_cds->single ({title => 'Greatest hits 3'}), 'Second CD name correct');
+
+my $harry_productions = $schema->resultset ('Producer')->single ({name => 'Dirty Harry'})
+    ->search_related ('producer_to_cd', {})->search_related ('cd', {});
+is ($harry_productions->count, 4, 'All 4 CDs are produced by Harry');
+is ($harry_productions->search ({ year => 2012 })->count, 4, 'All 4 CDs have the correct year');
+
+my $hits_genre = $schema->resultset ('Genre')->single ({name => '"Greatest" collections'});
+ok ($hits_genre, 'New genre row found');
+is ($hits_genre->cds->count, 3, 'Three of the new CDs fall into the new genre');

@@ -8,7 +8,6 @@ inc/Module/Install/Fetch.pm
 inc/Module/Install/Include.pm
 inc/Module/Install/Makefile.pm
 inc/Module/Install/Metadata.pm
-inc/Module/Install/Scripts.pm
 inc/Module/Install/Win32.pm
 inc/Module/Install/WriteAll.pm
 lib/DBIx/Class.pm
@@ -135,8 +134,10 @@ t/02pod.t
 t/03podcoverage.t
 t/04dont_break_c3.t
 t/05components.t
+t/100extra_source.t
 t/100populate.t
 t/101populate_rs.t
+t/102load_classes.t
 t/18inserterror.t
 t/19quotes.t
 t/19quotes_newstyle.t
@@ -162,6 +163,7 @@ t/50fork.t
 t/51threads.t
 t/51threadtxn.t
 t/52cycle.t
+t/53delete_chained.t
 t/53delete_related.t
 t/54taint.t
 t/55storage_stress.t
@@ -188,6 +190,7 @@ t/746mssql.t
 t/74mssql.t
 t/75limit.t
 t/76joins.t
+t/76select.t
 t/77join_count.t
 t/77prefetch.t
 t/78self_referencial.t
@@ -220,8 +223,10 @@ t/96_is_deteministic_value.t
 t/96file_column.t
 t/96multi_create.t
 t/97result_class.t
+t/98rows_prefetch.t
 t/98savepoints.t
 t/99dbic_sqlt_parser.t
+t/99rh_perl_perf_bug.t
 t/bindtype_columns.t
 t/cdbi-abstract/search_where.t
 t/cdbi-DeepAbstractSearch/01_search.t
@@ -268,9 +273,9 @@ t/discard_changes_in_DESTROY.t
 t/examples/Schema/db/example.sql
 t/examples/Schema/insertdb.pl
 t/examples/Schema/MyDatabase/Main.pm
-t/examples/Schema/MyDatabase/Main/Artist.pm
-t/examples/Schema/MyDatabase/Main/Cd.pm
-t/examples/Schema/MyDatabase/Main/Track.pm
+t/examples/Schema/MyDatabase/Main/Result/Artist.pm
+t/examples/Schema/MyDatabase/Main/Result/Cd.pm
+t/examples/Schema/MyDatabase/Main/Result/Track.pm
 t/examples/Schema/testdb.pl
 t/lib/DBICNGTest/Schema.pm
 t/lib/DBICNGTest/Schema/Result.pm
@@ -318,9 +323,11 @@ t/lib/DBICTest/Schema/FileColumn.pm
 t/lib/DBICTest/Schema/ForceForeign.pm
 t/lib/DBICTest/Schema/FourKeys.pm
 t/lib/DBICTest/Schema/FourKeys_to_TwoKeys.pm
+t/lib/DBICTest/Schema/Genre.pm
 t/lib/DBICTest/Schema/LinerNotes.pm
 t/lib/DBICTest/Schema/Link.pm
 t/lib/DBICTest/Schema/NoPrimaryKey.pm
+t/lib/DBICTest/Schema/NoSuchClass.pm
 t/lib/DBICTest/Schema/OneKey.pm
 t/lib/DBICTest/Schema/Owners.pm
 t/lib/DBICTest/Schema/Producer.pm

@@ -1,6 +1,29 @@
 Revision history for DBIx::Class
 
+0.08099_05 2008-10-30 21:30:00 (UTC)
+        - Rewritte of Storage::DBI::connect_info(), extended with an
+          additional argument format type
+        - InflateColumn::DateTime: add warning about floating timezone
+        - InflateColumn::DateTime: possible to enforce/skip inflation
+        - delete throws exception if passed arguments to prevent drunken mishaps. (purge)
+        - Fix storage to copy scalar conds before regexping to avoid
+          trying to modify a constant in odd edge cases
+        - Related resultsets on uninserted objects are now empty
+        - Fixed up related resultsets and multi-create
+        - Fixed superfluous connection in ODBC::_rebless
+        - Fixed undef PK for first insert in ODBC::Microsoft_SQL_Server
+        - Added virtual method to Versioned so a user can create upgrade 
+          path across multiple versions (jgoulah)
+        - Better (and marginally faster) implementation of the HashRefInflator
+          hash construction algorithm
+        - Allow explicit specification of ON DELETE/ON UPDATE constraints
+          when using the SQLT parser
+
 0.08099_04 2008-07-24 01:00:00
+        - Functionality to storage to enable a sub to be run without FK checks
+        - Fixed $schema->clone bug which caused clone and source to share 
+          internal hash refs
+        - Added register_extra_source methods for additional sources
         - Added datetime_undef_if_invalid for InflateColumn::DateTime to
           return undef on invalid date/time values
         - Added search_related_rs method to ResultSet
@@ -28,6 +51,8 @@ Revision history for DBIx::Class
           names
         - Add ResultSet::_is_deterministic_value, make new_result filter the
           values passed to new to drop values that would generate invalid SQL.
+        - Use Sub::Name to name closures before installing them. Fixes 
+          incompatibility with Moose method modifiers on generated methods.
 
 0.08010 2008-03-01 10:30
         - Fix t/94versioning.t so it passes with latest SQL::Translator

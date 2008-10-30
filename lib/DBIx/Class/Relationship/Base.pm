@@ -109,6 +109,19 @@ is creating constraints where it shouldn't, or not creating them where it
 should, set this attribute to a true or false value to override the detection
 of when to create constraints.
 
+=item on_delete / on_update
+
+If you are using L<SQL::Translator> to create SQL for you, you can use these
+attributes to explicitly set the desired C<ON DELETE> or C<ON UPDATE> constraint 
+type. If not supplied the SQLT parser will attempt to infer the constraint type by 
+interrogating the attributes of the B<opposite> relationship. For any 'multi'
+relationship with C<< cascade_delete => 1 >>, the corresponding belongs_to 
+relationship will be created with an C<ON DELETE CASCADE> constraint. For any 
+relationship bearing C<< cascade_copy => 1 >> the resulting belongs_to constraint
+will be C<ON UPDATE CASCADE>. If you wish to disable this autodetection, and just
+use the RDBMS' default constraint type, pass C<< on_delete => undef >> or 
+C<< on_delete => '' >>, and the same for C<on_update> respectively.
+
 =item is_deferrable
 
 Tells L<SQL::Translator> that the foreign key constraint it creates should be
@@ -173,16 +186,36 @@ sub related_resultset {
       if (@_ > 1 && (@_ % 2 == 1));
     my $query = ((@_ > 1) ? {@_} : shift);
 
-    my $cond = $self->result_source->resolve_condition(
+    my $source = $self->result_source;
+    my $cond = $source->resolve_condition(
       $rel_obj->{cond}, $rel, $self
     );
+    if ($cond eq $DBIx::Class::ResultSource::UNRESOLVABLE_CONDITION) {
+      my $reverse = $source->reverse_relationship_info($rel);
+      foreach my $rev_rel (keys %$reverse) {
+        if ($reverse->{$rev_rel}{attrs}{accessor} eq 'multi') {
+          $attrs->{related_objects}{$rev_rel} = [ $self ];
+          Scalar::Util::weaken($attrs->{related_object}{$rev_rel}[0]);
+        } else {
+          $attrs->{related_objects}{$rev_rel} = $self;
+          Scalar::Util::weaken($attrs->{related_object}{$rev_rel});
+        }
+      }
+    }
     if (ref $cond eq 'ARRAY') {
-      $cond = [ map { my $hash;
-        foreach my $key (keys %$_) {
-          my $newkey = $key =~ /\./ ? "me.$key" : $key;
-          $hash->{$newkey} = $_->{$key};
-        }; $hash } @$cond ];
-    } else {
+      $cond = [ map {
+        if (ref $_ eq 'HASH') {
+          my $hash;
+          foreach my $key (keys %$_) {
+            my $newkey = $key =~ /\./ ? "me.$key" : $key;
+            $hash->{$newkey} = $_->{$key};
+          }
+          $hash;
+        } else {
+          $_;
+        }
+      } @$cond ];
+    } elsif (ref $cond eq 'HASH') {
       foreach my $key (grep { ! /\./ } keys %$cond) {
         $cond->{"me.$key"} = delete $cond->{$key};
       }

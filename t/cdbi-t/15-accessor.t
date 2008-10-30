@@ -4,7 +4,6 @@ use Test::More;
 BEGIN {
   eval "use DBIx::Class::CDBICompat;";
   if ($@) {
-      diag $@;
     plan (skip_all => 'Class::Trigger and DBIx::ContextualFetch required');
     next;
   }
@@ -42,7 +41,7 @@ sub Actor::accessor_name_for {
 	return $col;
 }
 
-# This is a class with accessor_name_for() but no corresponding mutatori_name_for()
+# This is a class with accessor_name_for() but no corresponding mutator_name_for()
 sub Director::accessor_name_for {
     my($class, $col) = @_;
     return "nutty_as_a_fruitcake" if lc $col eq "isinsane";
@@ -213,5 +212,4 @@ eval {
 	like $@, qr/read only/, "And can't delete 4 Days in July";
 	my $abigail = eval { Film->create({ title => "Abigail's Party" }) };
 	like $@, qr/read only/, "Or create new films";
-	$SIG{__WARN__} = sub { };
 }

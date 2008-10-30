@@ -200,7 +200,7 @@ sub search_rs {
   my $new_attrs = { %{$our_attrs}, %{$attrs} };
 
   # merge new attrs into inherited
-  foreach my $key (qw/join prefetch/) {
+  foreach my $key (qw/join prefetch +select +as/) {
     next unless exists $attrs->{$key};
     $new_attrs->{$key} = $self->_merge_attr($our_attrs->{$key}, $attrs->{$key});
   }
@@ -307,7 +307,7 @@ sub search_literal {
 
 =item Arguments: @values | \%cols, \%attrs?
 
-=item Return Value: $row_object
+=item Return Value: $row_object | undef
 
 =back
 
@@ -573,19 +573,29 @@ sub cursor {
   my $cd = $schema->resultset('CD')->single({ year => 2001 });
 
 Inflates the first result without creating a cursor if the resultset has
-any records in it; if not returns nothing. Used by L</find> as an optimisation.
+any records in it; if not returns nothing. Used by L</find> as a lean version of
+L</search>.
 
-Can optionally take an additional condition B<only> - this is a fast-code-path
-method; if you need to add extra joins or similar call L</search> and then
-L</single> without a condition on the L<DBIx::Class::ResultSet> returned from
-that.
+While this method can take an optional search condition (just like L</search>)
+being a fast-code-path it does not recognize search attributes. If you need to
+add extra joins or similar, call L</search> and then chain-call L</single> on the
+L<DBIx::Class::ResultSet> returned.
 
-B<Note>: As of 0.08100, this method assumes that the query returns only one
-row. If more than one row is returned, you will receive a warning:
+=over
+
+=item B<Note>
+
+As of 0.08100, this method enforces the assumption that the preceeding
+query returns only one row. If more than one row is returned, you will receive
+a warning:
 
   Query returned more than one row
 
-In this case, you should be using L</first> or L</find> instead.
+In this case, you should be using L</first> or L</find> instead, or if you really
+know what you are doing, use the L</rows> attribute to explicitly limit the size 
+of the resultset.
+
+=back
 
 =cut
 
@@ -1283,11 +1293,26 @@ Deletes the contents of the resultset from its result source. Note that this
 will not run DBIC cascade triggers. See L</delete_all> if you need triggers
 to run. See also L<DBIx::Class::Row/delete>.
 
+delete may not generate correct SQL for a query with joins or a resultset
+chained from a related resultset.  In this case it will generate a warning:-
+
+  WARNING! Currently $rs->delete() does not generate proper SQL on
+  joined resultsets, and may delete rows well outside of the contents
+  of $rs. Use at your own risk
+
+In these cases you may find that delete_all is more appropriate, or you
+need to respecify your query in a way that can be expressed without a join.
+
 =cut
 
 sub delete {
   my ($self) = @_;
-
+  $self->throw_exception("Delete should not be passed any arguments")
+    if $_[1];
+  carp(   'WARNING! Currently $rs->delete() does not generate proper SQL'
+        . ' on joined resultsets, and may delete rows well outside of the'
+        . ' contents of $rs. Use at your own risk' )
+    if ( $self->{attrs}{seen_join} );
   my $cond = $self->_cond_for_update_delete;
 
   $self->result_source->storage->delete($self->result_source, $cond);
@@ -1502,7 +1527,7 @@ sub page {
 
 =item Arguments: \%vals
 
-=item Return Value: $object
+=item Return Value: $rowobject
 
 =back
 
@@ -1519,23 +1544,36 @@ sub new_result {
   my ($self, $values) = @_;
   $self->throw_exception( "new_result needs a hash" )
     unless (ref $values eq 'HASH');
-  $self->throw_exception(
-    "Can't abstract implicit construct, condition not a hash"
-  ) if ($self->{cond} && !(ref $self->{cond} eq 'HASH'));
 
-  my $alias = $self->{attrs}{alias};
-  my $collapsed_cond = $self->{cond} ? $self->_collapse_cond($self->{cond}) : {};
-
-  # precendence must be given to passed values over values inherited from the cond, 
-  # so the order here is important.
   my %new;
-  my %implied =  %{$self->_remove_alias($collapsed_cond, $alias)};
-  while( my($col,$value) = each %implied ){
-    if(ref($value) eq 'HASH' && keys(%$value) && (keys %$value)[0] eq '='){
-      $new{$col} = $value->{'='};
-      next;
+  my $alias = $self->{attrs}{alias};
+
+  if (
+    defined $self->{cond}
+    && $self->{cond} eq $DBIx::Class::ResultSource::UNRESOLVABLE_CONDITION
+  ) {
+    %new = %{$self->{attrs}{related_objects}};
+  } else {
+    $self->throw_exception(
+      "Can't abstract implicit construct, condition not a hash"
+    ) if ($self->{cond} && !(ref $self->{cond} eq 'HASH'));
+  
+    my $collapsed_cond = (
+      $self->{cond}
+        ? $self->_collapse_cond($self->{cond})
+        : {}
+    );
+  
+    # precendence must be given to passed values over values inherited from
+    # the cond, so the order here is important.
+    my %implied =  %{$self->_remove_alias($collapsed_cond, $alias)};
+    while( my($col,$value) = each %implied ){
+      if(ref($value) eq 'HASH' && keys(%$value) && (keys %$value)[0] eq '='){
+        $new{$col} = $value->{'='};
+        next;
+      }
+      $new{$col} = $value if $self->_is_deterministic_value($value);
     }
-    $new{$col} = $value if $self->_is_deterministic_value($value);
   }
 
   %new = (
@@ -1626,15 +1664,32 @@ sub _remove_alias {
 
 =item Arguments: \%vals, \%attrs?
 
-=item Return Value: $object
+=item Return Value: $rowobject
 
 =back
 
-Find an existing record from this resultset. If none exists, instantiate a new
-result object and return it. The object will not be saved into your storage
+  my $artist = $schema->resultset('Artist')->find_or_new(
+    { artist => 'fred' }, { key => 'artists' });
+
+  $cd->cd_to_producer->find_or_new({ producer => $producer },
+                                   { key => 'primary });
+
+Find an existing record from this resultset, based on it's primary
+key, or a unique constraint. If none exists, instantiate a new result
+object and return it. The object will not be saved into your storage
 until you call L<DBIx::Class::Row/insert> on it.
 
+You most likely want this method when looking for existing rows using
+a unique constraint that is not the primary key, or looking for
+related rows.
+
 If you want objects to be saved immediately, use L</find_or_create> instead.
+
+B<Note>: C<find_or_new> is probably not what you want when creating a
+new row in a table that uses primary keys supplied by the
+database. Passing in a primary key column with a value of I<undef>
+will cause L</find> to attempt to search for a row with a value of
+I<NULL>.
 
 =cut
 
@@ -1724,13 +1779,14 @@ sub create {
 
 =item Arguments: \%vals, \%attrs?
 
-=item Return Value: $object
+=item Return Value: $rowobject
 
 =back
 
-  $class->find_or_create({ key => $val, ... });
+  $cd->cd_to_producer->find_or_create({ producer => $producer },
+                                      { key => 'primary });
 
-Tries to find a record based on its primary key or unique constraint; if none
+Tries to find a record based on its primary key or unique constraints; if none
 is found, creates one and returns that instead.
 
   my $cd = $schema->resultset('CD')->find_or_create({
@@ -1751,6 +1807,18 @@ constraint. For example:
     { key => 'cd_artist_title' }
   );
 
+B<Note>: Because find_or_create() reads from the database and then
+possibly inserts based on the result, this method is subject to a race
+condition. Another process could create a record in the table after
+the find has completed and before the create has started. To avoid
+this problem, use find_or_create() inside a transaction.
+
+B<Note>: C<find_or_create> is probably not what you want when creating
+a new row in a table that uses primary keys supplied by the
+database. Passing in a primary key column with a value of I<undef>
+will cause L</find> to attempt to search for a row with a value of
+I<NULL>.
+
 See also L</find> and L</update_or_create>. For information on how to declare
 unique constraints, see L<DBIx::Class::ResultSource/add_unique_constraint>.
 
@@ -1770,11 +1838,11 @@ sub find_or_create {
 
 =item Arguments: \%col_values, { key => $unique_constraint }?
 
-=item Return Value: $object
+=item Return Value: $rowobject
 
 =back
 
-  $class->update_or_create({ col => $val, ... });
+  $resultset->update_or_create({ col => $val, ... });
 
 First, searches for an existing row matching one of the unique constraints
 (including the primary key) on the source of this resultset. If a row is
@@ -1794,6 +1862,14 @@ For example:
     { key => 'cd_artist_title' }
   );
 
+  $cd->cd_to_producer->update_or_create({ 
+    producer => $producer, 
+    name => 'harry',
+  }, { 
+    key => 'primary,
+  });
+
+
 If no C<key> is specified, it searches on all unique constraints defined on the
 source, including the primary key.
 
@@ -1801,6 +1877,12 @@ If the C<key> is specified as C<primary>, it searches only on the primary key.
 
 See also L</find> and L</find_or_create>. For information on how to declare
 unique constraints, see L<DBIx::Class::ResultSource/add_unique_constraint>.
+
+B<Note>: C<update_or_create> is probably not what you want when
+looking for a row in a table that uses primary keys supplied by the
+database, unless you actually have a key value. Passing in a primary
+key column with a value of I<undef> will cause L</find> to attempt to
+search for a row with a value of I<NULL>.
 
 =cut
 
@@ -2152,44 +2234,44 @@ sub _calculate_score {
 }
 
 sub _merge_attr {
-  my ($self, $a, $b) = @_;
+  my ($self, $orig, $import) = @_;
 
-  return $b unless defined($a);
-  return $a unless defined($b);
+  return $import unless defined($orig);
+  return $orig unless defined($import);
   
-  $a = $self->_rollout_attr($a);
-  $b = $self->_rollout_attr($b);
+  $orig = $self->_rollout_attr($orig);
+  $import = $self->_rollout_attr($import);
 
   my $seen_keys;
-  foreach my $b_element ( @{$b} ) {
-    # find best candidate from $a to merge $b_element into
+  foreach my $import_element ( @{$import} ) {
+    # find best candidate from $orig to merge $b_element into
     my $best_candidate = { position => undef, score => 0 }; my $position = 0;
-    foreach my $a_element ( @{$a} ) {
-      my $score = $self->_calculate_score( $a_element, $b_element );
+    foreach my $orig_element ( @{$orig} ) {
+      my $score = $self->_calculate_score( $orig_element, $import_element );
       if ($score > $best_candidate->{score}) {
         $best_candidate->{position} = $position;
         $best_candidate->{score} = $score;
       }
       $position++;
     }
-    my ($b_key) = ( ref $b_element eq 'HASH' ) ? keys %{$b_element} : ($b_element);
+    my ($import_key) = ( ref $import_element eq 'HASH' ) ? keys %{$import_element} : ($import_element);
 
-    if ($best_candidate->{score} == 0 || exists $seen_keys->{$b_key}) {
-      push( @{$a}, $b_element );
+    if ($best_candidate->{score} == 0 || exists $seen_keys->{$import_key}) {
+      push( @{$orig}, $import_element );
     } else {
-      my $a_best = $a->[$best_candidate->{position}];
-      # merge a_best and b_element together and replace original with merged
-      if (ref $a_best ne 'HASH') {
-        $a->[$best_candidate->{position}] = $b_element;
-      } elsif (ref $b_element eq 'HASH') {
-        my ($key) = keys %{$a_best};
-        $a->[$best_candidate->{position}] = { $key => $self->_merge_attr($a_best->{$key}, $b_element->{$key}) };
+      my $orig_best = $orig->[$best_candidate->{position}];
+      # merge orig_best and b_element together and replace original with merged
+      if (ref $orig_best ne 'HASH') {
+        $orig->[$best_candidate->{position}] = $import_element;
+      } elsif (ref $import_element eq 'HASH') {
+        my ($key) = keys %{$orig_best};
+        $orig->[$best_candidate->{position}] = { $key => $self->_merge_attr($orig_best->{$key}, $import_element->{$key}) };
       }
     }
-    $seen_keys->{$b_key} = 1; # don't merge the same key twice
+    $seen_keys->{$import_key} = 1; # don't merge the same key twice
   }
 
-  return $a;
+  return $orig;
 }
 
 sub result_source {

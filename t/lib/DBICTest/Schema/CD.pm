@@ -20,11 +20,19 @@ __PACKAGE__->add_columns(
     data_type => 'varchar',
     size      => 100,
   },
+  'genreid' => { 
+    data_type => 'integer',
+    is_nullable => 1,
+  }
 );
 __PACKAGE__->set_primary_key('cdid');
 __PACKAGE__->add_unique_constraint([ qw/artist title/ ]);
 
-__PACKAGE__->belongs_to( artist => 'DBICTest::Schema::Artist', undef, { is_deferrable => 1 } );
+__PACKAGE__->belongs_to( artist => 'DBICTest::Schema::Artist', undef, { 
+    is_deferrable => 1, 
+    on_delete => undef,
+    on_update => 'SET NULL',
+});
 
 __PACKAGE__->has_many( tracks => 'DBICTest::Schema::Track' );
 __PACKAGE__->has_many(
@@ -44,5 +52,15 @@ __PACKAGE__->many_to_many(
     producers_sorted => cd_to_producer => 'producer',
     { order_by => 'producer.name' },
 );
+
+__PACKAGE__->belongs_to('genre', 'DBICTest::Schema::Genre',
+    { 'foreign.genreid' => 'self.genreid' },
+    { join_type => 'left' },
+);
+
+#__PACKAGE__->add_relationship('genre', 'DBICTest::Schema::Genre',
+#    { 'foreign.genreid' => 'self.genreid' },
+#    { 'accessor' => 'single' }
+#);
 
 1;

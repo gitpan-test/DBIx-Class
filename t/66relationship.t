@@ -7,7 +7,7 @@ use DBICTest;
 
 my $schema = DBICTest->init_schema();
 
-plan tests => 63;
+plan tests => 67;
 
 # has_a test
 my $cd = $schema->resultset("CD")->find(4);
@@ -212,8 +212,12 @@ is( $twokey->fourkeys_to_twokeys->count, 0,
 
 my $undef_artist_cd = $schema->resultset("CD")->new_result({ 'title' => 'badgers', 'year' => 2007 });
 is($undef_artist_cd->has_column_loaded('artist'), '', 'FK not loaded');
-is($undef_artist_cd->search_related('artist')->count, 3, 'open search on undef FK');
-
+is($undef_artist_cd->search_related('artist')->count, 0, '0=1 search when FK does not exist and object not yet in db');
+eval{ 
+     $undef_artist_cd->related_resultset('artist')->new({name => 'foo'});
+};
+is( $@, '', "Object created on a resultset related to not yet inserted object");
+ 
 my $def_artist_cd = $schema->resultset("CD")->new_result({ 'title' => 'badgers', 'year' => 2007, artist => undef });
 is($def_artist_cd->has_column_loaded('artist'), 1, 'FK loaded');
 is($def_artist_cd->search_related('artist')->count, 0, 'closed search on null FK');
@@ -250,3 +254,12 @@ $artist->cds->update({artist => $nartist->id});
 cmp_ok($artist->cds->count, '==', 0, "Correct new #cds for artist");
 cmp_ok($nartist->cds->count, '==', 2, "Correct new #cds for artist");
 
+my $new_artist = $schema->resultset("Artist")->new_result({ 'name' => 'Depeche Mode' });
+my $new_related_cd = $new_artist->new_related('cds', { 'title' => 'Leave in Silence', 'year' => 1982});
+eval {
+       $new_artist->insert;
+       $new_related_cd->insert;
+};
+is ($@, '', 'Staged insertion successful');
+ok($new_artist->in_storage, 'artist inserted');
+ok($new_related_cd->in_storage, 'new_related_cd inserted');

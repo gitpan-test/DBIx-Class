@@ -768,6 +768,49 @@ sub resolve_join {
   }
 }
 
+=head2 pk_depends_on
+
+=over 4
+
+=item Arguments: $relname, $rel_data
+
+=back
+
+Determines whether a relation is dependent on an object from this source
+having already been inserted. Takes the name of the relationship and a
+hashref of columns of the related object.
+
+=cut
+
+sub pk_depends_on {
+  my ($self, $relname, $rel_data) = @_;
+  my $cond = $self->relationship_info($relname)->{cond};
+
+  return 0 unless ref($cond) eq 'HASH';
+
+  # map { foreign.foo => 'self.bar' } to { bar => 'foo' }
+
+  my $keyhash = { map { my $x = $_; $x =~ s/.*\.//; $x; } reverse %$cond };
+
+  # assume anything that references our PK probably is dependent on us
+  # rather than vice versa, unless the far side is (a) defined or (b)
+  # auto-increment
+
+  my $rel_source = $self->related_source($relname);
+
+  foreach my $p ($self->primary_columns) {
+    if (exists $keyhash->{$p}) {
+      unless (defined($rel_data->{$keyhash->{$p}})
+              || $rel_source->column_info($keyhash->{$p})
+                            ->{is_auto_increment}) {
+        return 0;
+      }
+    }
+  }
+
+  return 1;
+}
+
 =head2 resolve_condition
 
 =over 4
@@ -781,6 +824,8 @@ returns a join condition; if given an object, inverts that object to produce
 a related conditional from that object.
 
 =cut
+
+our $UNRESOLVABLE_CONDITION = \'1 = 0';
 
 sub resolve_condition {
   my ($self, $cond, $as, $for) = @_;
@@ -796,7 +841,14 @@ sub resolve_condition {
         $self->throw_exception("Invalid rel cond val ${v}");
       if (ref $for) { # Object
         #warn "$self $k $for $v";
-        $ret{$k} = $for->get_column($v) if $for->has_column_loaded($v);
+        unless ($for->has_column_loaded($v)) {
+          if ($for->in_storage) {
+            $self->throw_exception("Column ${v} not loaded on ${for} trying to reolve relationship");
+          }
+          return $UNRESOLVABLE_CONDITION;
+        }
+        $ret{$k} = $for->get_column($v);
+        #$ret{$k} = $for->get_column($v) if $for->has_column_loaded($v);
         #warn %ret;
       } elsif (!defined $for) { # undef, i.e. "no object"
         $ret{$k} = undef;
@@ -909,11 +961,16 @@ sub resolve_prefetch {
       if (my ($fail) = grep { @{[$_ =~ m/\./g]} == $dots }
                          keys %{$collapse}) {
         my ($last) = ($fail =~ /([^\.]+)$/);
-        $self->throw_exception(
-          "Can't prefetch multiple has_many rels ${last} and ${pre}"
-          .(length($as_prefix) ? "at the same level (${as_prefix})"
-                               : "at top level"
-        ));
+        carp (
+          "Prefetching multiple has_many rels ${last} and ${pre} "
+          .(length($as_prefix)
+            ? "at the same level (${as_prefix}) "
+            : "at top level "
+          )
+          . 'will currently disrupt both the functionality of $rs->count(), '
+          . 'and the amount of objects retrievable via $rs->next(). '
+          . 'Use at your own risk.'
+        );
       }
       #my @col = map { (/^self\.(.+)$/ ? ("${as_prefix}.$1") : ()); }
       #              values %{$rel_info->{cond}};

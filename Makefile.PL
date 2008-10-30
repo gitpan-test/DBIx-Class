@@ -24,14 +24,14 @@ requires 'JSON::Any'                 => 1.00;
 requires 'Scope::Guard'              => 0.03;
 requires 'Path::Class'               => 0;
 requires 'List::Util'                => 1.19;
+requires 'Sub::Name'                 => 0.04;
 
 # Perl 5.8.0 doesn't have utf8::is_utf8()
 requires 'Encode'                    => 0 if ($] <= 5.008000);  
 
 test_requires 'DBD::SQLite'         => 1.13;
 test_requires 'Test::Builder'       => 0.33;
-test_requires 'Test::Warn'          => 0.08;
-test_requires 'Test::NoWarnings'    => 0.08;
+test_requires 'Test::Warn'          => 0.11;
 test_requires 'Test::Exception'     => 0;
 
 install_script 'script/dbicadmin';
@@ -89,6 +89,8 @@ if ($Module::Install::AUTHOR) {
   Meta->{values}{resources} = [ 
     [ 'MailingList', 'http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class' ],
     [ 'IRC', 'irc://irc.perl.org/#dbix-class' ],
+    [ 'license', 'http://dev.perl.org/licenses/' ],
+    [ 'repository', 'http://dev.catalyst.perl.org/svnweb/bast/browse/DBIx-Class/' ],
   ];
   Meta->write;
 }

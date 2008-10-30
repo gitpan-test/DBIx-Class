@@ -68,6 +68,41 @@ This results in the following C<WHERE> clause:
 For more information on generating complex queries, see
 L<SQL::Abstract/WHERE CLAUSES>.
 
+=head2 Retrieve one and only one row from a resultset
+
+Sometimes you need only the first "top" row of a resultset. While this can be
+easily done with L<< $rs->first|DBIx::Class::ResultSet/first >>, it is suboptimal,
+as a full blown cursor for the resultset will be created and then immediately
+destroyed after fetching the first row object. 
+L<< $rs->single|DBIx::Class::ResultSet/single >> is
+designed specifically for this case - it will grab the first returned result
+without even instantiating a cursor. 
+
+Before replacing all your calls to C<first()> with C<single()> please observe the 
+following CAVEATS:
+
+=over
+
+=item *
+While single() takes a search condition just like search() does, it does
+_not_ accept search attributes. However one can always chain a single() to
+a search():
+
+  my $top_cd = $cd_rs -> search({}, { order_by => 'rating' }) -> single;
+
+
+=item *
+Since single() is the engine behind find(), it is designed to fetch a
+single row per database query. Thus a warning will be issued when the
+underlying SELECT returns more than one row. Sometimes however this usage
+is valid: i.e. we have an arbitrary number of cd's but only one of them is
+at the top of the charts at any given time. If you know what you are doing,
+you can silence the warning by explicitly limiting the resultset size:
+
+  my $top_cd = $cd_rs -> search ({}, { order_by => 'rating', rows => 1 }) -> single;
+
+=back
+
 =head2 Arbitrary SQL through a custom ResultSource
 
 Sometimes you have to run arbitrary SQL because your query is too complex
@@ -216,15 +251,15 @@ L<DBIx::Class> supports C<GROUP BY> as follows:
     {},
     {
       join     => [qw/ cds /],
-      select   => [ 'name', { count => 'cds.cdid' } ],
+      select   => [ 'name', { count => 'cds.id' } ],
       as       => [qw/ name cd_count /],
       group_by => [qw/ name /]
     }
   );
 
   # Equivalent SQL:
-  # SELECT name, COUNT( cds.cdid ) FROM artist me
-  # LEFT JOIN cd cds ON ( cds.artist = me.artistid )
+  # SELECT name, COUNT( cd.id ) FROM artist
+  # LEFT JOIN cd ON artist.id = cd.artist
   # GROUP BY name
 
 Please see L<DBIx::Class::ResultSet/ATTRIBUTES> documentation if you
@@ -312,7 +347,7 @@ a particular artist name:
       'artist.name' => 'Bob Marley'    
     },
     {
-      join => [qw/artist/], # join the artist table
+      join => 'artist', # join the artist table
     }
   );
 
@@ -329,7 +364,7 @@ it in your C<order_by> attribute:
       'artist.name' => 'Bob Marley'
     },
     {
-      join     => [qw/ artist /],
+      join     => 'artist',
       order_by => [qw/ artist.name /]
     }
   );
@@ -370,9 +405,9 @@ This allows you to fetch results from related tables in advance:
       'artist.name' => 'Bob Marley'
     },
     {
-      join     => [qw/ artist /],
+      join     => 'artist',
       order_by => [qw/ artist.name /],
-      prefetch => [qw/ artist /] # return artist data too!
+      prefetch => 'artist' # return artist data too!
     }
   );
 
@@ -399,6 +434,34 @@ Also note that C<prefetch> should only be used when you know you will
 definitely use data from a related table. Pre-fetching related tables when you
 only need columns from the main table will make performance worse!
 
+=head2 Multiple joins
+
+In the examples above, the C<join> attribute was a scalar.  If you
+pass an array reference instead, you can join to multiple tables.  In
+this example, we want to limit the search further, using
+C<LinerNotes>:
+
+  # Relationships defined elsewhere:
+  # CD->belongs_to('artist' => 'Artist');
+  # CD->has_one('liner_notes' => 'LinerNotes', 'cd');
+  my $rs = $schema->resultset('CD')->search(
+    {
+      'artist.name' => 'Bob Marley'
+      'liner_notes.notes' => { 'like', '%some text%' },
+    },
+    {
+      join     => [qw/ artist liner_notes /],
+      order_by => [qw/ artist.name /],
+    }
+  );
+
+  # Equivalent SQL:
+  # SELECT cd.*, artist.*, liner_notes.* FROM cd
+  # JOIN artist ON cd.artist = artist.id
+  # JOIN liner_notes ON cd.id = liner_notes.cd
+  # WHERE artist.name = 'Bob Marley'
+  # ORDER BY artist.name
+
 =head2 Multi-step joins
 
 Sometimes you want to join more than one relationship deep. In this example,
@@ -422,8 +485,8 @@ contain a specific string:
 
   # Equivalent SQL:
   # SELECT artist.* FROM artist
-  # JOIN ( cd ON artist.id = cd.artist )
-  # JOIN ( liner_notes ON cd.id = liner_notes.cd )
+  # LEFT JOIN cd ON artist.id = cd.artist
+  # LEFT JOIN liner_notes ON cd.id = liner_notes.cd
   # WHERE liner_notes.notes LIKE '%some text%'
 
 Joins can be nested to an arbitrary level. So if we decide later that we
@@ -449,11 +512,38 @@ notes:
 
   # Equivalent SQL:
   # SELECT artist.* FROM artist
-  # JOIN ( cd ON artist.id = cd.artist )
-  # JOIN ( liner_notes ON cd.id = liner_notes.cd )
-  # JOIN ( author ON author.id = liner_notes.author )
+  # LEFT JOIN cd ON artist.id = cd.artist
+  # LEFT JOIN liner_notes ON cd.id = liner_notes.cd
+  # LEFT JOIN author ON author.id = liner_notes.author
   # WHERE liner_notes.notes LIKE '%some text%'
   # AND author.name = 'A. Writer'
+
+=head2 Multi-step and multiple joins
+
+With various combinations of array and hash references, you can join
+tables in any combination you desire.  For example, to join Artist to
+CD and Concert, and join CD to LinerNotes:
+
+  # Relationships defined elsewhere:
+  # Artist->has_many('concerts' => 'Concert', 'artist');
+
+  my $rs = $schema->resultset('Artist')->search(
+    { },
+    {
+      join => [
+        {
+          cds => 'liner_notes'
+        },
+        'concerts'
+      ],
+    }
+  );
+
+  # Equivalent SQL:
+  # SELECT artist.* FROM artist
+  # LEFT JOIN cd ON artist.id = cd.artist
+  # LEFT JOIN liner_notes ON cd.id = liner_notes.cd
+  # LEFT JOIN concert ON artist.id = concert.artist
 
 =head2 Multi-step prefetch
 
@@ -471,8 +561,8 @@ deep using the same syntax as a multi-step join:
 
   # Equivalent SQL:
   # SELECT tag.*, cd.*, artist.* FROM tag
-  # JOIN cd ON tag.cd = cd.cdid
-  # JOIN artist ON cd.artist = artist.artistid
+  # JOIN cd ON tag.cd = cd.id
+  # JOIN artist ON cd.artist = artist.id
 
 Now accessing our C<cd> and C<artist> relationships does not need additional
 SQL statements:
@@ -678,7 +768,7 @@ B<Test File> test.pl
     ### The statement below will print 
     print "I can do admin stuff\n" if $admin->can('do_admin_stuff'); 
 
-=head2 Skip object creation for faster results
+=head2 Skip row object creation for faster results
 
 DBIx::Class is not built for speed, it's built for convenience and
 ease of use, but sometimes you just need to get the data, and skip the
@@ -691,7 +781,7 @@ To do this simply use L<DBIx::Class::ResultClass::HashRefInflator>.
  $rs->result_class('DBIx::Class::ResultClass::HashRefInflator');
  
  my $hash_ref = $rs->find(1);
-  
+
 Wasn't that easy?
   
 =head2 Get raw data for blindingly fast results
@@ -814,6 +904,12 @@ To order C<< $book->pages >> by descending page_number, create the relation
 as follows:
 
   __PACKAGE__->has_many('pages' => 'Page', 'book', { order_by => \'page_number DESC'} );
+
+=head2 Filtering a relationship result set
+
+If you want to get a filtered result set, you can just add add to $attr as follows:
+
+ __PACKAGE__->has_many('pages' => 'Page', 'book', { where => { scrap => 0 } } );
 
 =head2 Many-to-many relationships
 
