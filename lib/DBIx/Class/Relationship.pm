@@ -39,6 +39,9 @@ See L<DBIx::Class::Manual::Cookbook> for more.
 
 =head1 DESCRIPTION
 
+The word I<Relationship> has a specific meaning in DBIx::Class, see
+the definition in the L<Glossary|DBIx::Class::Manual::Glossary/Relationship>.
+
 This class provides methods to set up relationships between the tables
 in your database model. Relationships are the most useful and powerful
 technique that L<DBIx::Class> provides. To create efficient database queries,
@@ -102,29 +105,29 @@ L<DBIx::Class::Relationship::Base>.
 
 All helper methods are called similar to the following template:
 
-  __PACKAGE__->$method_name('relname', 'Foreign::Class', $cond, $attrs);
+  __PACKAGE__->$method_name('relname', 'Foreign::Class', \%cond | \@cond, \%attrs);
   
 Both C<$cond> and C<$attrs> are optional. Pass C<undef> for C<$cond> if
-you want to use the default value for it, but still want to set C<$attrs>.
+you want to use the default value for it, but still want to set C<\%attrs>.
 
 See L<DBIx::Class::Relationship::Base> for documentation on the
-attrubutes that are allowed in the C<$attrs> argument.
+attrubutes that are allowed in the C<\%attrs> argument.
 
 
 =head2 belongs_to
 
 =over 4
 
-=item Arguments: $accessor_name, $related_class, $fk_column|\%cond|\@cond?, \%attr?
+=item Arguments: $accessor_name, $related_class, $our_fk_column|\%cond|\@cond?, \%attrs?
 
 =back
 
 Creates a relationship where the calling class stores the foreign
-class's primary key in one (or more) of its columns. This relationship
-defaults to using C<$accessor_name> as the column in this class
-to resolve the join against the primary key from C<$related_class>,
-unless C<$fk_column> specifies the foreign key column in this class or
-C<cond> specifies a reference to a join condition hash.
+class's primary key in one (or more) of the calling class columns.
+This relationship defaults to using C<$accessor_name> as the column
+name in this class to resolve the join against the primary key from
+C<$related_class>, unless C<$our_fk_column> specifies the foreign key column
+in this class or C<cond> specifies a reference to a join condition hash.
 
 =over
 
@@ -144,7 +147,7 @@ indicated by this relationship.
 This is the class name of the table referenced by the foreign key in
 this class.
 
-=item fk_column
+=item our_fk_column
 
 The column name on this class that contains the foreign key.
 
@@ -153,7 +156,7 @@ OR
 =item cond
 
 A hashref where the keys are C<foreign.$column_on_related_table> and
-the values are C<self.$foreign_key_column>. This is useful for
+the values are C<self.$our_fk_column>. This is useful for
 relations that are across multiple columns.
 
 =back
@@ -208,25 +211,32 @@ Cascading deletes are off by default on a C<belongs_to>
 relationship. To turn them on, pass C<< cascade_delete => 1 >>
 in the $attr hashref.
 
+By default, DBIC will return undef and avoid querying the database if a
+C<belongs_to> accessor is called when any part of the foreign key IS NULL. To
+disable this behavior, pass C<< undef_on_null_fk => 0 >> in the C<$attr>
+hashref.
+
 NOTE: If you are used to L<Class::DBI> relationships, this is the equivalent
 of C<has_a>.
 
 See L<DBIx::Class::Relationship::Base> for documentation on relationship
-methods and valid relationship attributes.
+methods and valid relationship attributes. Also see L<DBIx::Class::ResultSet>
+for a L<list of standard resultset attributes|DBIx::Class::ResultSet/ATTRIBUTES>
+which can be assigned to relationships as well.
 
 =head2 has_many
 
 =over 4
 
-=item Arguments: $accessor_name, $related_class, $foreign_key_column|\%cond|\@cond?, \%attr?
+=item Arguments: $accessor_name, $related_class, $their_fk_column|\%cond|\@cond?, \%attrs?
 
 =back
 
 Creates a one-to-many relationship, where the corresponding elements
 of the foreign class store the calling class's primary key in one (or
-more) of its columns. This relationship defaults to using the end of
-this classes namespace as the foreign key in C<$related_class> to
-resolve the join, unless C<$foreign_key_column> specifies the foreign
+more) of the foreign class columns. This relationship defaults to using
+the end of this classes namespace as the foreign key in C<$related_class>
+to resolve the join, unless C<$their_fk_column> specifies the foreign
 key column in C<$related_class> or C<cond> specifies a reference to a
 join condition hash.
 
@@ -249,7 +259,7 @@ indicated by this relationship.
 This is the class name of the table which contains a foreign key
 column containing PK values of this class.
 
-=item foreign_key_column
+=item their_fk_column
 
 The column name on the related class that contains the foreign key.
 
@@ -257,7 +267,7 @@ OR
 
 =item cond
 
-A hashref where the keys are C<foreign.$foreign_key_column> and
+A hashref where the keys are C<foreign.$their_fk_column> and
 the values are C<self.$matching_column>. This is useful for
 relations that are across multiple columns.
 
@@ -343,19 +353,21 @@ pass C<< cascade_copy => 0 >> in the C<$attr> hashref. The behaviour
 defaults to C<< cascade_copy => 1 >>.
 
 See L<DBIx::Class::Relationship::Base> for documentation on relationship
-methods and valid relationship attributes.
+methods and valid relationship attributes. Also see L<DBIx::Class::ResultSet>
+for a L<list of standard resultset attributes|DBIx::Class::ResultSet/ATTRIBUTES>
+which can be assigned to relationships as well.
 
 =head2 might_have
 
 =over 4
 
-=item Arguments: $accessor_name, $related_class, $foreign_key_column|\%cond|\@cond?, \%attr?
+=item Arguments: $accessor_name, $related_class, $their_fk_column|\%cond|\@cond?, \%attrs?
 
 =back
 
 Creates an optional one-to-one relationship with a class. This relationship
 defaults to using C<$accessor_name> as the foreign key in C<$related_class> to
-resolve the join, unless C<$foreign_key_column> specifies the foreign key
+resolve the join, unless C<$their_fk_column> specifies the foreign key
 column in C<$related_class> or C<cond> specifies a reference to a join
 condition hash.
 
@@ -377,7 +389,7 @@ indicated by this relationship.
 This is the class name of the table which contains a foreign key
 column containing PK values of this class.
 
-=item foreign_key_column
+=item their_fk_column
 
 The column name on the related class that contains the foreign key.
 
@@ -385,7 +397,7 @@ OR
 
 =item cond
 
-A hashref where the keys are C<foreign.$column_on_related_table> and
+A hashref where the keys are C<foreign.$their_fk_column> and
 the values are C<self.$matching_column>. This is useful for
 relations that are across multiple columns.
 
@@ -425,19 +437,21 @@ will have deleted/updated the related records or raised an exception
 before DBIx::Class gets to perform the cascaded operation.
 
 See L<DBIx::Class::Relationship::Base> for documentation on relationship
-methods and valid relationship attributes.
+methods and valid relationship attributes. Also see L<DBIx::Class::ResultSet>
+for a L<list of standard resultset attributes|DBIx::Class::ResultSet/ATTRIBUTES>
+which can be assigned to relationships as well.
 
 =head2 has_one
 
 =over 4
 
-=item Arguments: $accessor_name, $related_class, $foreign_key_column|\%cond|\@cond?, \%attr?
+=item Arguments: $accessor_name, $related_class, $their_fk_column|\%cond|\@cond?, \%attrs?
 
 =back
 
 Creates a one-to-one relationship with a class. This relationship
 defaults to using C<$accessor_name> as the foreign key in C<$related_class> to
-resolve the join, unless C<$foreign_key_column> specifies the foreign key
+resolve the join, unless C<$their_fk_column> specifies the foreign key
 column in C<$related_class> or C<cond> specifies a reference to a join
 condition hash.
 
@@ -459,7 +473,7 @@ indicated by this relationship.
 This is the class name of the table which contains a foreign key
 column containing PK values of this class.
 
-=item foreign_key_column
+=item their_fk_column
 
 The column name on the related class that contains the foreign key.
 
@@ -467,7 +481,7 @@ OR
 
 =item cond
 
-A hashref where the keys are C<foreign.$column_on_related_table> and
+A hashref where the keys are C<foreign.$their_fk_column> and
 the values are C<self.$matching_column>. This is useful for
 relations that are across multiple columns.
 
@@ -510,15 +524,21 @@ In the above example, each Book in the database is associated with exactly one
 ISBN object.
 
 See L<DBIx::Class::Relationship::Base> for documentation on relationship
-methods and valid relationship attributes.
+methods and valid relationship attributes. Also see L<DBIx::Class::ResultSet>
+for a L<list of standard resultset attributes|DBIx::Class::ResultSet/ATTRIBUTES>
+which can be assigned to relationships as well.
 
 =head2 many_to_many
 
 =over 4
 
-=item Arguments: $accessor_name, $link_rel_name, $foreign_rel_name, \%attr?
+=item Arguments: $accessor_name, $link_rel_name, $foreign_rel_name, \%attrs?
 
 =back
+
+C<many_to_many> is a I<Relationship bridge> which has a specific
+meaning in DBIx::Class, see the definition in the
+L<Glossary|DBIx::Class::Manual::Glossary/Relationship bridge>.
 
 C<many_to_many> is not strictly a relationship in its own right. Instead, it is
 a bridge between two resultsets which provide the same kind of convenience
@@ -593,7 +613,9 @@ will be created for the Role class for the C<actors> many_to_many
 relationship.
 
 See L<DBIx::Class::Relationship::Base> for documentation on relationship
-methods and valid relationship attributes.
+methods and valid relationship attributes. Also see L<DBIx::Class::ResultSet>
+for a L<list of standard resultset attributes|DBIx::Class::ResultSet/ATTRIBUTES>
+which can be assigned to relationships as well.
 
 =cut
 

@@ -1,6 +1,6 @@
 -- 
 -- Created by SQL::Translator::Producer::SQLite
--- Created on Fri Oct 24 21:31:55 2008
+-- Created on Sat Jan 17 19:40:47 2009
 -- 
 BEGIN TRANSACTION;
 
@@ -11,7 +11,8 @@ BEGIN TRANSACTION;
 CREATE TABLE artist (
   artistid INTEGER PRIMARY KEY NOT NULL,
   name varchar(100),
-  rank integer NOT NULL DEFAULT '13'
+  rank integer NOT NULL DEFAULT '13',
+  charfield char(10)
 );
 
 
@@ -26,6 +27,26 @@ CREATE TABLE artist_undirected_map (
 
 CREATE INDEX artist_undirected_map_idx_id1_ ON artist_undirected_map (id1);
 CREATE INDEX artist_undirected_map_idx_id2_ ON artist_undirected_map (id2);
+
+--
+-- Table: cd_artwork
+--
+CREATE TABLE cd_artwork (
+  cd_id INTEGER PRIMARY KEY NOT NULL
+);
+
+CREATE INDEX cd_artwork_idx_cd_id_cd_artwor ON cd_artwork (cd_id);
+
+--
+-- Table: bindtype_test
+--
+CREATE TABLE bindtype_test (
+  id INTEGER PRIMARY KEY NOT NULL,
+  bytea blob,
+  blob blob,
+  clob clob
+);
+
 
 --
 -- Table: bookmark
@@ -44,7 +65,8 @@ CREATE TABLE books (
   id INTEGER PRIMARY KEY NOT NULL,
   source varchar(100) NOT NULL,
   owner integer NOT NULL,
-  title varchar(100) NOT NULL
+  title varchar(100) NOT NULL,
+  price integer
 );
 
 
@@ -56,11 +78,13 @@ CREATE TABLE cd (
   artist integer NOT NULL,
   title varchar(100) NOT NULL,
   year varchar(100) NOT NULL,
-  genreid integer
+  genreid integer,
+  single_track integer
 );
 
 CREATE INDEX cd_idx_artist_cd ON cd (artist);
 CREATE INDEX cd_idx_genreid_cd ON cd (genreid);
+CREATE INDEX cd_idx_single_track_cd ON cd (single_track);
 CREATE UNIQUE INDEX cd_artist_title_cd ON cd (artist, title);
 
 --
@@ -117,7 +141,7 @@ CREATE TABLE event (
   created_on timestamp NOT NULL,
   varchar_date varchar(20),
   varchar_datetime varchar(20),
-  skip_inflation datetime(20)
+  skip_inflation datetime
 );
 
 
@@ -181,6 +205,18 @@ CREATE TABLE genre (
 CREATE UNIQUE INDEX genre_name_genre ON genre (name);
 
 --
+-- Table: images
+--
+CREATE TABLE images (
+  id INTEGER PRIMARY KEY NOT NULL,
+  artwork_id integer NOT NULL,
+  name varchar(100) NOT NULL,
+  data blob
+);
+
+CREATE INDEX images_idx_artwork_id_images ON images (artwork_id);
+
+--
 -- Table: liner_notes
 --
 CREATE TABLE liner_notes (
@@ -188,6 +224,7 @@ CREATE TABLE liner_notes (
   notes varchar(100) NOT NULL
 );
 
+CREATE INDEX liner_notes_idx_liner_id_liner ON liner_notes (liner_id);
 
 --
 -- Table: link
@@ -198,6 +235,27 @@ CREATE TABLE link (
   title varchar(100)
 );
 
+
+--
+-- Table: lyric_versions
+--
+CREATE TABLE lyric_versions (
+  id INTEGER PRIMARY KEY NOT NULL,
+  lyric_id integer NOT NULL,
+  text varchar(100) NOT NULL
+);
+
+CREATE INDEX lyric_versions_idx_lyric_id_ly ON lyric_versions (lyric_id);
+
+--
+-- Table: lyrics
+--
+CREATE TABLE lyrics (
+  lyric_id INTEGER PRIMARY KEY NOT NULL,
+  track_id integer NOT NULL
+);
+
+CREATE INDEX lyrics_idx_track_id_lyrics ON lyrics (track_id);
 
 --
 -- Table: noprimarykey

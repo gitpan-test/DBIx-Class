@@ -138,6 +138,7 @@ t/100extra_source.t
 t/100populate.t
 t/101populate_rs.t
 t/102load_classes.t
+t/103many_to_many_warning.t
 t/18inserterror.t
 t/19quotes.t
 t/19quotes_newstyle.t
@@ -175,7 +176,6 @@ t/65multipk.t
 t/66relationship.t
 t/67pager.t
 t/68inflate.t
-t/68inflate_has_a.t
 t/68inflate_resultclass_hashrefinflator.t
 t/68inflate_serialize.t
 t/69update.t
@@ -218,6 +218,7 @@ t/93single_accessor_object.t
 t/93storage_replication.t
 t/94pk_mutation.t
 t/94versioning.t
+t/95sql_maker.t
 t/95sql_maker_quote.t
 t/96_is_deteministic_value.t
 t/96file_column.t
@@ -253,6 +254,7 @@ t/cdbi-t/23-cascade.t
 t/cdbi-t/24-meta_info.t
 t/cdbi-t/26-mutator.t
 t/cdbi-t/30-pager.t
+t/cdbi-t/68-inflate_has_a.t
 t/cdbi-t/98-failure.t
 t/cdbi-t/columns_as_hashes.t
 t/cdbi-t/columns_dont_override_custom_accessors.t
@@ -262,6 +264,7 @@ t/cdbi-t/early_column_heisenbug.t
 t/cdbi-t/has_many_loads_foreign_class.t
 t/cdbi-t/hasa_without_loading.t
 t/cdbi-t/max_min_value_of.t
+t/cdbi-t/mk_group_accessors.t
 t/cdbi-t/multi_column_set.t
 t/cdbi-t/object_cache.t
 t/cdbi-t/retrieve_from_sql_with_limit.t
@@ -277,6 +280,8 @@ t/examples/Schema/MyDatabase/Main/Result/Artist.pm
 t/examples/Schema/MyDatabase/Main/Result/Cd.pm
 t/examples/Schema/MyDatabase/Main/Result/Track.pm
 t/examples/Schema/testdb.pl
+t/lib/DBIC/DebugObj.pm
+t/lib/DBIC/SqlMakerTest.pm
 t/lib/DBICNGTest/Schema.pm
 t/lib/DBICNGTest/Schema/Result.pm
 t/lib/DBICNGTest/Schema/Result/FriendList.pm
@@ -309,6 +314,8 @@ t/lib/DBICTest/Schema/Artist.pm
 t/lib/DBICTest/Schema/ArtistSourceName.pm
 t/lib/DBICTest/Schema/ArtistSubclass.pm
 t/lib/DBICTest/Schema/ArtistUndirectedMap.pm
+t/lib/DBICTest/Schema/Artwork.pm
+t/lib/DBICTest/Schema/BindType.pm
 t/lib/DBICTest/Schema/Bookmark.pm
 t/lib/DBICTest/Schema/BooksInLibrary.pm
 t/lib/DBICTest/Schema/CD.pm
@@ -324,8 +331,11 @@ t/lib/DBICTest/Schema/ForceForeign.pm
 t/lib/DBICTest/Schema/FourKeys.pm
 t/lib/DBICTest/Schema/FourKeys_to_TwoKeys.pm
 t/lib/DBICTest/Schema/Genre.pm
+t/lib/DBICTest/Schema/Image.pm
 t/lib/DBICTest/Schema/LinerNotes.pm
 t/lib/DBICTest/Schema/Link.pm
+t/lib/DBICTest/Schema/Lyrics.pm
+t/lib/DBICTest/Schema/LyricVersion.pm
 t/lib/DBICTest/Schema/NoPrimaryKey.pm
 t/lib/DBICTest/Schema/NoSuchClass.pm
 t/lib/DBICTest/Schema/OneKey.pm

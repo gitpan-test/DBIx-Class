@@ -302,7 +302,7 @@ sub insert {
         my $reverse = $source->reverse_relationship_info($relname);
         foreach my $obj (@cands) {
           $obj->set_from_related($_, $self) for keys %$reverse;
-          my $them = { $obj->get_inflated_columns };
+          my $them = { %{$obj->{_relationship_data} || {} }, $obj->get_inflated_columns };
           if ($self->__their_pk_needs_us($relname, $them)) {
             $obj = $self->find_or_create_related($relname, $them);
           } else {
@@ -449,6 +449,14 @@ this behaviour off, pass C<< cascade_delete => 0 >> in the C<$attr>
 hashref of the relationship, see L<DBIx::Class::Relationship>. Any
 database-level cascade or restrict will take precedence over a
 DBIx-Class-based cascading delete. 
+
+If you delete an object within a txn_do() (see L<DBIx::Class::Storage/txn_do>)
+and the transaction subsequently fails, the row object will remain marked as
+not being in storage. If you know for a fact that the object is still in
+storage (i.e. by inspecting the cause of the transaction's failure), you can
+use C<< $obj->in_storage(1) >> to restore consistency between the object and
+the database. This would allow a subsequent C<< $obj->delete >> to work
+as expected.
 
 See also L<DBIx::Class::ResultSet/delete>.
 
@@ -761,24 +769,17 @@ sub set_inflated_columns {
       {
         my $rel = delete $upd->{$key};
         $self->set_from_related($key => $rel);
-        $self->{_relationship_data}{$key} = $rel;          
+        $self->{_relationship_data}{$key} = $rel;
       } elsif ($info && $info->{attrs}{accessor}
-        && $info->{attrs}{accessor} eq 'multi'
-        && ref $upd->{$key} eq 'ARRAY') {
-        my $others = delete $upd->{$key};
-        foreach my $rel_obj (@$others) {
-          if(!Scalar::Util::blessed($rel_obj)) {
-            $rel_obj = $self->create_related($key, $rel_obj);
-          }
-        }
-        $self->{_relationship_data}{$key} = $others; 
-#            $related->{$key} = $others;
-        next;
+        && $info->{attrs}{accessor} eq 'multi') {
+          $self->throw_exception(
+            "Recursive update is not supported over relationships of type multi ($key)"
+          );
       }
       elsif ($self->has_column($key)
         && exists $self->column_info($key)->{_inflate_info})
       {
-        $self->set_inflated_column($key, delete $upd->{$key});          
+        $self->set_inflated_column($key, delete $upd->{$key});
       }
     }
   }

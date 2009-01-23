@@ -8,6 +8,7 @@ no warnings qw/qw/;
 __PACKAGE__->load_classes(qw/
   Artist
   SequenceTest
+  BindType
   Employee
   CD
   FileColumn
@@ -20,6 +21,10 @@ __PACKAGE__->load_classes(qw/
   /,
   { 'DBICTest::Schema' => [qw/
     LinerNotes
+    Artwork
+    Image
+    Lyrics
+    LyricVersion
     OneKey
     #dummy
     TwoKeys

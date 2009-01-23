@@ -165,6 +165,8 @@ CONTRIBUTORS
 
     bricas: Brian Cassidy <bricas@cpan.org>
 
+    caelum: Rafael Kitover <rkitover@cpan.org>
+
     captainL: Luke Saunders <luke.saunders@gmail.com>
 
     castaway: Jess Robinson
@@ -233,7 +235,9 @@ CONTRIBUTORS
 
     rdj: Ryan D Johnson <ryan@innerfence.com>
 
-    ribasushi: Peter Rabbitson <rabbit@rabbit.us>
+    ribasushi: Peter Rabbitson <rabbit+dbic@rabbit.us>
+
+    rjbs: Ricardo Signes <rjbs@cpan.org>
 
     sc_: Just Another Perl Hacker
 
@@ -258,6 +262,8 @@ CONTRIBUTORS
     willert: Sebastian Willert <willert@cpan.org>
 
     zamolxes: Bogdan Lucaciu <bogdan@wiz.ro>
+
+    norbi: Norbert Buchmuller <norbi@nix.hu>
 
 LICENSE
     You may distribute this code under the same terms as Perl itself.

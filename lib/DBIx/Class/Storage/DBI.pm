@@ -50,27 +50,6 @@ sub new {
   $self;
 }
 
-sub _RowNumberOver {
-  my ($self, $sql, $order, $rows, $offset ) = @_;
-
-  $offset += 1;
-  my $last = $rows + $offset;
-  my ( $order_by ) = $self->_order_by( $order );
-
-  $sql = <<"";
-SELECT * FROM
-(
-   SELECT Q1.*, ROW_NUMBER() OVER( ) AS ROW_NUM FROM (
-      $sql
-      $order_by
-   ) Q1
-) Q2
-WHERE ROW_NUM BETWEEN $offset AND $last
-
-  return $sql;
-}
-
-
 # While we're at it, this should make LIMIT queries more efficient,
 #  without digging into things too deeply
 use Scalar::Util 'blessed';
@@ -86,7 +65,12 @@ sub _find_syntax {
 
 sub select {
   my ($self, $table, $fields, $where, $order, @rest) = @_;
-  $table = $self->_quote($table) unless ref($table);
+  if (ref $table eq 'SCALAR') {
+    $table = $$table;
+  }
+  elsif (not ref $table) {
+    $table = $self->_quote($table);
+  }
   local $self->{rownum_hack_count} = 1
     if (defined $rest[0] && $self->{limit_dialect} eq 'RowNum');
   @rest = (-1) unless defined $rest[0];
@@ -176,6 +160,9 @@ sub _order_by {
     }
     if (defined $_[0]->{order_by}) {
       $ret .= $self->_order_by($_[0]->{order_by});
+    }
+    if (grep { $_ =~ /^-(desc|asc)/i } keys %{$_[0]}) {
+      return $self->SUPER::_order_by($_[0]);
     }
   } elsif (ref $_[0] eq 'SCALAR') {
     $ret = $self->_sqlcase(' order by ').${ $_[0] };
@@ -875,7 +862,7 @@ sub dbh {
 sub _sql_maker_args {
     my ($self) = @_;
     
-    return ( bindtype=>'columns', limit_dialect => $self->dbh, %{$self->_sql_maker_opts} );
+    return ( bindtype=>'columns', array_datatypes => 1, limit_dialect => $self->dbh, %{$self->_sql_maker_opts} );
 }
 
 sub sql_maker {
@@ -906,11 +893,11 @@ sub _populate_dbh {
     }
   }
 
-  my $connection_do = $self->on_connect_do;
-  $self->_do_connection_actions($connection_do) if ref($connection_do);
-
   $self->_conn_pid($$);
   $self->_conn_tid(threads->tid) if $INC{'threads.pm'};
+
+  my $connection_do = $self->on_connect_do;
+  $self->_do_connection_actions($connection_do) if ref($connection_do);
 }
 
 sub _do_connection_actions {
@@ -921,7 +908,7 @@ sub _do_connection_actions {
     $self->_do_query($_) foreach @$connection_do;
   }
   elsif (ref $connection_do eq 'CODE') {
-    $connection_do->();
+    $connection_do->($self);
   }
 
   return $self;
@@ -1216,7 +1203,8 @@ sub _dbh_execute {
     }
 
     foreach my $data (@data) {
-      $data = ref $data ? ''.$data : $data; # stringify args
+      my $ref = ref $data;
+      $data = $ref && $ref ne 'ARRAY' ? ''.$data : $data; # stringify args (except arrayrefs)
 
       $sth->bind_param($placeholder_index, $data, $attributes);
       $placeholder_index++;
@@ -1406,7 +1394,8 @@ sub select_single {
   my $self = shift;
   my ($rv, $sth, @bind) = $self->_select(@_);
   my @row = $sth->fetchrow_array;
-  if(@row && $sth->fetchrow_array) {
+  my @nextrow = $sth->fetchrow_array if @row;
+  if(@row && @nextrow) {
     carp "Query returned more than one row.  SQL that returns multiple rows is DEPRECATED for ->find and ->single";
   }
   # Need to call finish() to work round broken DBDs
@@ -1578,7 +1567,10 @@ sub create_ddl_dir {
   }
   $databases ||= ['MySQL', 'SQLite', 'PostgreSQL'];
   $databases = [ $databases ] if(ref($databases) ne 'ARRAY');
-  $version ||= $schema->VERSION || '1.x';
+
+  my $schema_version = $schema->schema_version || '1.x';
+  $version ||= $schema_version;
+
   $sqltargs = {
     add_drop_table => 1, 
     ignore_constraint_names => 1,
@@ -1603,7 +1595,7 @@ sub create_ddl_dir {
 
     my $file;
     my $filename = $schema->ddl_filename($db, $version, $dir);
-    if (-e $filename && (!$version || ($version == $schema->schema_version()))) {
+    if (-e $filename && ($version eq $schema_version )) {
       # if we are dumping the current version, overwrite the DDL
       warn "Overwriting existing DDL file - $filename";
       unlink($filename);
@@ -1720,7 +1712,7 @@ sub deployment_statements {
   # Need to be connected to get the correct sqlt_type
   $self->ensure_connected() unless $type;
   $type ||= $self->sqlt_type;
-  $version ||= $schema->VERSION || '1.x';
+  $version ||= $schema->schema_version || '1.x';
   $dir ||= './';
   my $filename = $schema->ddl_filename($type, $dir, $version);
   if(-f $filename)

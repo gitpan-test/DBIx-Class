@@ -29,10 +29,11 @@ requires 'Sub::Name'                 => 0.04;
 # Perl 5.8.0 doesn't have utf8::is_utf8()
 requires 'Encode'                    => 0 if ($] <= 5.008000);  
 
-test_requires 'DBD::SQLite'         => 1.13;
+test_requires 'DBD::SQLite'         => 1.14;
 test_requires 'Test::Builder'       => 0.33;
 test_requires 'Test::Warn'          => 0.11;
 test_requires 'Test::Exception'     => 0;
+test_requires 'Test::Deep'          => 0;
 
 install_script 'script/dbicadmin';
 
@@ -61,6 +62,56 @@ if ($Module::Install::AUTHOR) {
 auto_provides;
 
 auto_install;
+
+# Have all prerequisites, check DBD::SQLite sanity
+{
+  my $pid = fork();
+  if (not defined $pid) {
+      die "Unable to fork(): $!";
+  }
+  elsif (! $pid) {
+      require DBI;
+      for (1 .. 10) {
+          my $dbh;
+          $dbh = DBI->connect ('dbi:SQLite::memory:', undef, undef, {
+              AutoCommit => 1,
+              RaiseError => 0,
+              PrintError => 0,
+          })
+              or die "Unable to connect to database: $@";
+          $dbh->do ('CREATE TABLE name_with_no_columns');   # a subtle syntax error
+          $dbh->do ('COMMIT');                              # followed by commit
+          $dbh->disconnect;
+      }
+
+      exit 0;
+  }
+  else {
+      wait();
+      my $sig = $? & 127;
+      if ($sig == 11) {
+          warn (<<EOE);
+
+############################### WARNING ###################################
+#                                                                         #
+# You are running a buggy version of DBD::SQLite known to randomly        #
+# segfault on errors. Even if you have the latest CPAN module version,    #
+# the actual sqlite3.so might have been compiled against an older buggy   #
+# sqlite3 dev library. You are strongly advised to update DBD::SQLite.    #
+#                                                                         #
+###########################################################################
+
+EOE
+          my $ans = prompt (
+            "The test suite of this module is almost certain to fail.\n"
+            . 'Do you really want to continue?',
+            'no',
+          );
+          exit 0 unless ($ans =~ /^y(es)?$/i);
+      }
+  }
+}
+
 
 WriteAll;
 
