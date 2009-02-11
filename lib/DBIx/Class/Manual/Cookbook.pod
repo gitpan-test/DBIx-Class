@@ -68,41 +68,6 @@ This results in the following C<WHERE> clause:
 For more information on generating complex queries, see
 L<SQL::Abstract/WHERE CLAUSES>.
 
-=head2 Retrieve one and only one row from a resultset
-
-Sometimes you need only the first "top" row of a resultset. While this can be
-easily done with L<< $rs->first|DBIx::Class::ResultSet/first >>, it is suboptimal,
-as a full blown cursor for the resultset will be created and then immediately
-destroyed after fetching the first row object. 
-L<< $rs->single|DBIx::Class::ResultSet/single >> is
-designed specifically for this case - it will grab the first returned result
-without even instantiating a cursor. 
-
-Before replacing all your calls to C<first()> with C<single()> please observe the 
-following CAVEATS:
-
-=over
-
-=item *
-While single() takes a search condition just like search() does, it does
-_not_ accept search attributes. However one can always chain a single() to
-a search():
-
-  my $top_cd = $cd_rs -> search({}, { order_by => 'rating' }) -> single;
-
-
-=item *
-Since single() is the engine behind find(), it is designed to fetch a
-single row per database query. Thus a warning will be issued when the
-underlying SELECT returns more than one row. Sometimes however this usage
-is valid: i.e. we have an arbitrary number of cd's but only one of them is
-at the top of the charts at any given time. If you know what you are doing,
-you can silence the warning by explicitly limiting the resultset size:
-
-  my $top_cd = $cd_rs -> search ({}, { order_by => 'rating', rows => 1 }) -> single;
-
-=back
-
 =head2 Arbitrary SQL through a custom ResultSource
 
 Sometimes you have to run arbitrary SQL because your query is too complex
@@ -141,7 +106,7 @@ you have to add to your User class:
   SQL 
 
   # Finally, register your new ResultSource with your Schema
-  My::Schema->register_extra_source( 'UserFriendsComplex' => $new_source );
+  My::Schema->register_source( 'UserFriendsComplex' => $new_source );
 
 Next, you can execute your complex query using bind parameters like this:
 
@@ -151,36 +116,7 @@ Next, you can execute your complex query using bind parameters like this:
     }
   ) ];
   
-... and you'll get back a perfect L<DBIx::Class::ResultSet> (except, of course,
-that you cannot modify the rows it contains, ie. cannot call L</update>,
-L</delete>, ...  on it).
-
-If you prefer to have the definitions of these custom ResultSources in separate
-files (instead of stuffing all of them into the same resultset class), you can
-achieve the same with subclassing the resultset class and defining the
-ResultSource there:
-
-  package My::Schema::UserFriendsComplex;
-
-  use My::Schema::User;
-  use base qw/My::Schema::User/;
-
-  __PACKAGE__->table('dummy');  # currently must be called before anything else
-
-  # Hand in your query as a scalar reference
-  # It will be added as a sub-select after FROM,
-  # so pay attention to the surrounding brackets!
-  __PACKAGE__->name( \<<SQL );
-  ( SELECT u.* FROM user u
-  INNER JOIN user_friends f ON u.id = f.user_id
-  WHERE f.friend_user_id = ?
-  UNION
-  SELECT u.* FROM user u
-  INNER JOIN user_friends f ON u.id = f.friend_user_id
-  WHERE f.user_id = ? )
-  SQL
-
-TIMTOWDI.
+... and you'll get back a perfect L<DBIx::Class::ResultSet>.
 
 =head2 Using specific columns
 
@@ -258,6 +194,8 @@ any of your aliases using either of these:
     }
   );
 
+  my $count = $rs->next->get_column('count');
+
 =head2 SELECT COUNT(DISTINCT colname)
 
   my $rs = $schema->resultset('Foo')->search(
@@ -270,8 +208,6 @@ any of your aliases using either of these:
     }
   );
 
-  my $count = $rs->next->get_column('count');
-
 =head2 Grouping results
 
 L<DBIx::Class> supports C<GROUP BY> as follows:
@@ -280,15 +216,15 @@ L<DBIx::Class> supports C<GROUP BY> as follows:
     {},
     {
       join     => [qw/ cds /],
-      select   => [ 'name', { count => 'cds.id' } ],
+      select   => [ 'name', { count => 'cds.cdid' } ],
       as       => [qw/ name cd_count /],
       group_by => [qw/ name /]
     }
   );
 
   # Equivalent SQL:
-  # SELECT name, COUNT( cd.id ) FROM artist
-  # LEFT JOIN cd ON artist.id = cd.artist
+  # SELECT name, COUNT( cds.cdid ) FROM artist me
+  # LEFT JOIN cd cds ON ( cds.artist = me.artistid )
   # GROUP BY name
 
 Please see L<DBIx::Class::ResultSet/ATTRIBUTES> documentation if you
@@ -319,14 +255,7 @@ and define often used searches as methods:
 To use your resultset, first tell DBIx::Class to create an instance of it
 for you, in your My::DBIC::Schema::CD class:
 
-  # class definition as normal
-  __PACKAGE__->load_components(qw/ Core /);
-  __PACKAGE__->table('cd');
-
-  # tell DBIC to use the custom ResultSet class
   __PACKAGE__->resultset_class('My::DBIC::ResultSet::CD');
-
-Note that C<resultset_class> must be called after C<load_components> and C<table>, or you will get errors about missing methods.
 
 Then call your new method in your code:
 
@@ -376,7 +305,7 @@ a particular artist name:
       'artist.name' => 'Bob Marley'    
     },
     {
-      join => 'artist', # join the artist table
+      join => [qw/artist/], # join the artist table
     }
   );
 
@@ -393,7 +322,7 @@ it in your C<order_by> attribute:
       'artist.name' => 'Bob Marley'
     },
     {
-      join     => 'artist',
+      join     => [qw/ artist /],
       order_by => [qw/ artist.name /]
     }
   );
@@ -434,9 +363,9 @@ This allows you to fetch results from related tables in advance:
       'artist.name' => 'Bob Marley'
     },
     {
-      join     => 'artist',
+      join     => [qw/ artist /],
       order_by => [qw/ artist.name /],
-      prefetch => 'artist' # return artist data too!
+      prefetch => [qw/ artist /] # return artist data too!
     }
   );
 
@@ -463,34 +392,6 @@ Also note that C<prefetch> should only be used when you know you will
 definitely use data from a related table. Pre-fetching related tables when you
 only need columns from the main table will make performance worse!
 
-=head2 Multiple joins
-
-In the examples above, the C<join> attribute was a scalar.  If you
-pass an array reference instead, you can join to multiple tables.  In
-this example, we want to limit the search further, using
-C<LinerNotes>:
-
-  # Relationships defined elsewhere:
-  # CD->belongs_to('artist' => 'Artist');
-  # CD->has_one('liner_notes' => 'LinerNotes', 'cd');
-  my $rs = $schema->resultset('CD')->search(
-    {
-      'artist.name' => 'Bob Marley'
-      'liner_notes.notes' => { 'like', '%some text%' },
-    },
-    {
-      join     => [qw/ artist liner_notes /],
-      order_by => [qw/ artist.name /],
-    }
-  );
-
-  # Equivalent SQL:
-  # SELECT cd.*, artist.*, liner_notes.* FROM cd
-  # JOIN artist ON cd.artist = artist.id
-  # JOIN liner_notes ON cd.id = liner_notes.cd
-  # WHERE artist.name = 'Bob Marley'
-  # ORDER BY artist.name
-
 =head2 Multi-step joins
 
 Sometimes you want to join more than one relationship deep. In this example,
@@ -514,8 +415,8 @@ contain a specific string:
 
   # Equivalent SQL:
   # SELECT artist.* FROM artist
-  # LEFT JOIN cd ON artist.id = cd.artist
-  # LEFT JOIN liner_notes ON cd.id = liner_notes.cd
+  # JOIN ( cd ON artist.id = cd.artist )
+  # JOIN ( liner_notes ON cd.id = liner_notes.cd )
   # WHERE liner_notes.notes LIKE '%some text%'
 
 Joins can be nested to an arbitrary level. So if we decide later that we
@@ -541,38 +442,11 @@ notes:
 
   # Equivalent SQL:
   # SELECT artist.* FROM artist
-  # LEFT JOIN cd ON artist.id = cd.artist
-  # LEFT JOIN liner_notes ON cd.id = liner_notes.cd
-  # LEFT JOIN author ON author.id = liner_notes.author
+  # JOIN ( cd ON artist.id = cd.artist )
+  # JOIN ( liner_notes ON cd.id = liner_notes.cd )
+  # JOIN ( author ON author.id = liner_notes.author )
   # WHERE liner_notes.notes LIKE '%some text%'
   # AND author.name = 'A. Writer'
-
-=head2 Multi-step and multiple joins
-
-With various combinations of array and hash references, you can join
-tables in any combination you desire.  For example, to join Artist to
-CD and Concert, and join CD to LinerNotes:
-
-  # Relationships defined elsewhere:
-  # Artist->has_many('concerts' => 'Concert', 'artist');
-
-  my $rs = $schema->resultset('Artist')->search(
-    { },
-    {
-      join => [
-        {
-          cds => 'liner_notes'
-        },
-        'concerts'
-      ],
-    }
-  );
-
-  # Equivalent SQL:
-  # SELECT artist.* FROM artist
-  # LEFT JOIN cd ON artist.id = cd.artist
-  # LEFT JOIN liner_notes ON cd.id = liner_notes.cd
-  # LEFT JOIN concert ON artist.id = concert.artist
 
 =head2 Multi-step prefetch
 
@@ -590,8 +464,8 @@ deep using the same syntax as a multi-step join:
 
   # Equivalent SQL:
   # SELECT tag.*, cd.*, artist.* FROM tag
-  # JOIN cd ON tag.cd = cd.id
-  # JOIN artist ON cd.artist = artist.id
+  # JOIN cd ON tag.cd = cd.cdid
+  # JOIN artist ON cd.artist = artist.artistid
 
 Now accessing our C<cd> and C<artist> relationships does not need additional
 SQL statements:
@@ -797,7 +671,7 @@ B<Test File> test.pl
     ### The statement below will print 
     print "I can do admin stuff\n" if $admin->can('do_admin_stuff'); 
 
-=head2 Skip row object creation for faster results
+=head2 Skip object creation for faster results
 
 DBIx::Class is not built for speed, it's built for convenience and
 ease of use, but sometimes you just need to get the data, and skip the
@@ -810,7 +684,7 @@ To do this simply use L<DBIx::Class::ResultClass::HashRefInflator>.
  $rs->result_class('DBIx::Class::ResultClass::HashRefInflator');
  
  my $hash_ref = $rs->find(1);
-
+  
 Wasn't that easy?
   
 =head2 Get raw data for blindingly fast results
@@ -820,7 +694,7 @@ above is not fast enough for you, you can use a DBIx::Class to return values
 exactly as they come out of the data base with none of the convenience methods
 wrapped round them.
 
-This is used like so:
+This is used like so:-
 
   my $cursor = $rs->cursor
   while (my @vals = $cursor->next) {
@@ -889,23 +763,6 @@ This will cause the following SQL statement to be run:
 Which will of course only work if your database supports this function.
 See L<DBIx::Class::ResultSetColumn> for more documentation.
 
-=head2 Creating a result set from a set of rows
-
-Sometimes you have a (set of) row objects that you want to put into a 
-resultset without the need to hit the DB again. You can do that by using the
-L<set_cache|DBIx::Class::Resultset/set_cache> method:
-
- my @uploadable_groups;
- while (my $group = $groups->next) {
-   if ($group->can_upload($self)) {
-     push @uploadable_groups, $group;
-   }
- }
- my $new_rs = $self->result_source->resultset;
- $new_rs->set_cache(\@uploadable_groups);
- return $new_rs;
-
-
 =head1 USING RELATIONSHIPS
 
 =head2 Create a new row in a related table
@@ -933,12 +790,6 @@ To order C<< $book->pages >> by descending page_number, create the relation
 as follows:
 
   __PACKAGE__->has_many('pages' => 'Page', 'book', { order_by => \'page_number DESC'} );
-
-=head2 Filtering a relationship result set
-
-If you want to get a filtered result set, you can just add add to $attr as follows:
-
- __PACKAGE__->has_many('pages' => 'Page', 'book', { where => { scrap => 0 } } );
 
 =head2 Many-to-many relationships
 
@@ -1167,9 +1018,7 @@ C<oracles.heavily(nested(functions_can('take', 'lots'), OF), 'args')>
 
 Often you will want indexes on columns on your table to speed up searching. To
 do this, create a method called C<sqlt_deploy_hook> in the relevant source 
-class (refer to the advanced 
-L<callback system|DBIx::Class::ResultSource/sqlt_deploy_callback> if you wish
-to share a hook between multiple sources):
+class:
 
  package My::Schema::Artist;
 
@@ -1203,11 +1052,9 @@ created:
    $sqlt_schema->drop_table('table_name');
  }
 
-You could also add views, procedures or triggers to the output using
-L<SQL::Translator::Schema/add_view>,
-L<SQL::Translator::Schema/add_procedure> or
-L<SQL::Translator::Schema/add_trigger>.
-
+You could also add views or procedures to the output using 
+L<SQL::Translator::Schema/add_view> or 
+L<SQL::Translator::Schema/add_procedure>.
 
 =head2 Schema versioning
 
@@ -1276,7 +1123,7 @@ B<Deploy update to customers>
 
 Add the L<DBIx::Class::Schema::Versioned> schema component to your
 Schema class. This will add a new table to your database called
-C<dbix_class_schema_vesion> which will keep track of which version is installed
+C<SchemaVersions> which will keep track of which version is installed
 and warn if the user trys to run a newer schema version than the
 database thinks it has.
 
@@ -1301,7 +1148,7 @@ characters to use. C<name_sep> needs to be set to allow the SQL
 generator to put the quotes the correct place.
 
 In most cases you should set these as part of the arguments passed to 
-L<DBIx::Class::Schema/connect>:
+L<DBIx::Class::Schema/conect>:
 
  my $schema = My::Schema->connect(
   'dbi:mysql:my_db',
@@ -1330,40 +1177,6 @@ that Microsoft doesn't deliver native client libraries for. (e.g. Linux)
 
 The limit dialect can also be set at connect time by specifying a 
 C<limit_dialect> key in the final hash as shown above.
-
-=head2 Working with PostgreSQL array types
-
-If your SQL::Abstract version (>= 1.50) supports it, you can assign to
-PostgreSQL array values by passing array references in the C<\%columns>
-(C<\%vals>) hashref of the L<DBIx::Class::ResultSet/create> and
-L<DBIx::Class::Row/update> family of methods:
-
-  $resultset->create({
-    numbers => [1, 2, 3]
-  });
-
-  $row->update(
-    {
-      numbers => [1, 2, 3]
-    },
-    {
-      day => '2008-11-24'
-    }
-  );
-
-In conditions (eg. C<\%cond> in the L<DBIx::Class::ResultSet/search> family of
-methods) you cannot directly use array references (since this is interpreted as
-a list of values to be C<OR>ed), but you can use the following syntax to force
-passing them as bind values:
-
-  $resultset->search(
-    {
-      numbers => \[ '= ?', [1, 2, 3] ]
-    }
-  );
-
-See L<SQL::Abstract/array_datatypes> and L<SQL::Abstract/Literal SQL with
-placeholders and bind values (subqueries)> for more explanation.
 
 =head1 BOOTSTRAPPING/MIGRATING 
 

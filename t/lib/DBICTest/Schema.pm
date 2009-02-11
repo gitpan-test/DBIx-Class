@@ -7,12 +7,9 @@ no warnings qw/qw/;
 
 __PACKAGE__->load_classes(qw/
   Artist
-  SequenceTest
-  BindType
   Employee
   CD
   FileColumn
-  Genre
   Link
   Bookmark
   #dummy
@@ -21,10 +18,6 @@ __PACKAGE__->load_classes(qw/
   /,
   { 'DBICTest::Schema' => [qw/
     LinerNotes
-    Artwork
-    Image
-    Lyrics
-    LyricVersion
     OneKey
     #dummy
     TwoKeys
@@ -40,10 +33,12 @@ __PACKAGE__->load_classes(qw/
     'ArtistSubclass',
     'Producer',
     'CD_to_Producer',
+    'Dummy',
   ),
   qw/SelfRefAlias TreeLike TwoKeyTreeLike Event EventTZ NoPrimaryKey/,
-  qw/Collection CollectionObject TypedObject Owners BooksInLibrary/,
-  qw/ForceForeign/,
+  qw/Collection CollectionObject TypedObject/,
+  qw/Owners BooksInLibrary/,
+  qw/ForceForeign/  
 );
 
 sub sqlt_deploy_hook {

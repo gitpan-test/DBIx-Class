@@ -7,14 +7,6 @@ use base qw/DBIx::Class::Storage::DBI/;
 
 # __PACKAGE__->load_components(qw/PK::Auto/);
 
-sub with_deferred_fk_checks {
-  my ($self, $sub) = @_;
-
-  $self->dbh->do('SET foreign_key_checks=0');
-  $sub->();
-  $self->dbh->do('SET foreign_key_checks=1');
-}
-
 sub _dbh_last_insert_id {
   my ($self, $dbh, $source, $col) = @_;
   $dbh->{mysql_insertid};
@@ -22,33 +14,6 @@ sub _dbh_last_insert_id {
 
 sub sqlt_type {
   return 'MySQL';
-}
-
-sub _svp_begin {
-    my ($self, $name) = @_;
-
-    $self->dbh->do("SAVEPOINT $name");
-}
-
-sub _svp_release {
-    my ($self, $name) = @_;
-
-    $self->dbh->do("RELEASE SAVEPOINT $name");
-}
-
-sub _svp_rollback {
-    my ($self, $name) = @_;
-
-    $self->dbh->do("ROLLBACK TO SAVEPOINT $name")
-}
- 
-sub is_replicating {
-    my $status = shift->dbh->selectrow_hashref('show slave status');
-    return ($status->{Slave_IO_Running} eq 'Yes') && ($status->{Slave_SQL_Running} eq 'Yes');
-}
-
-sub lag_behind_master {
-    return shift->dbh->selectrow_hashref('show slave status')->{Seconds_Behind_Master};
 }
 
 1;

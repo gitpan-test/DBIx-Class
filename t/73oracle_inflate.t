@@ -7,18 +7,16 @@ use DBICTest;
 
 my ($dsn, $user, $pass) = @ENV{map { "DBICTEST_ORA_${_}" } qw/DSN USER PASS/};
 
-if (not ($dsn && $user && $pass)) {
+eval "use DateTime; use DateTime::Format::Oracle;";
+if ($@) {
+    plan skip_all => 'needs DateTime and DateTime::Format::Oracle for testing';
+}
+elsif (not ($dsn && $user && $pass)) {
     plan skip_all => 'Set $ENV{DBICTEST_ORA_DSN}, _USER and _PASS to run this test. ' .
          'Warning: This test drops and creates a table called \'track\'';
 }
 else {
-    eval "use DateTime; use DateTime::Format::Oracle;";
-    if ($@) {
-        plan skip_all => 'needs DateTime and DateTime::Format::Oracle for testing';
-    }
-    else {
-        plan tests => 4;
-    }
+    plan tests => 4;
 }
 
 # DateTime::Format::Oracle needs this set

@@ -1,7 +1,7 @@
 use strict;
 use warnings;
 
-use Test::More tests => 10;
+use Test::More tests => 9;
 
 use lib qw(t/lib);
 use base 'DBICTest';
@@ -33,11 +33,11 @@ ok $@, 'Searching for nonexistent table dies';
 
 $schema->storage->disconnect();
 
-my($connected, $disconnected, @cb_args);
+my($connected, $disconnected);
 ok $schema->connection(
     DBICTest->_database,
     {
-        on_connect_do       => sub { $connected = 1; @cb_args = @_; },
+        on_connect_do       => sub { $connected = 1 },
         on_disconnect_do    => sub { $disconnected = 1 },
     },
 ), 'second connection()';
@@ -47,7 +47,6 @@ ok ! $disconnected, 'on_disconnect_do() not called after connect()';
 $schema->storage->disconnect();
 ok $disconnected, 'on_disconnect_do() called after disconnect()';
 
-isa_ok($cb_args[0], 'DBIx::Class::Storage', 'first arg to on_connect_do hook');
 
 sub check_exists {
     my $storage = shift;

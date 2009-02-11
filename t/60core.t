@@ -7,7 +7,7 @@ use DBICTest;
 
 my $schema = DBICTest->init_schema();
 
-plan tests => 86;
+plan tests => 78;
 
 eval { require DateTime::Format::MySQL };
 my $NO_DTFM = $@ ? 1 : 0;
@@ -37,25 +37,9 @@ $art->name('We Are In Rehab');
 
 is($art->name, 'We Are In Rehab', "Accessor update ok");
 
-my %dirty = $art->get_dirty_columns();
-cmp_ok(scalar(keys(%dirty)), '==', 1, '1 dirty column');
-ok(grep($_ eq 'name', keys(%dirty)), 'name is dirty');
-
 is($art->get_column("name"), 'We Are In Rehab', 'And via get_column');
 
 ok($art->update, 'Update run');
-
-my %not_dirty = $art->get_dirty_columns();
-cmp_ok(scalar(keys(%not_dirty)), '==', 0, 'Nothing is dirty');
-
-eval {
-  my $ret = $art->make_column_dirty('name2');
-};
-ok(defined($@), 'Failed to make non-existent column dirty');
-$art->make_column_dirty('name');
-my %fake_dirty = $art->get_dirty_columns();
-cmp_ok(scalar(keys(%fake_dirty)), '==', 1, '1 fake dirty column');
-ok(grep($_ eq 'name', keys(%fake_dirty)), 'name is fake dirty');
 
 my $record_jp = $schema->resultset("Artist")->search(undef, { join => 'cds' })->search(undef, { prefetch => 'cds' })->next;
 
@@ -153,7 +137,7 @@ is($schema->resultset("Artist")->count, 4, 'count ok');
 my $cd = $schema->resultset("CD")->find(1);
 my %cols = $cd->get_columns;
 
-cmp_ok(keys %cols, '==', 6, 'get_columns number of columns ok');
+cmp_ok(keys %cols, '==', 4, 'get_columns number of columns ok');
 
 is($cols{title}, 'Spoonful of bees', 'get_columns values ok');
 
@@ -169,7 +153,7 @@ $cd->discard_changes;
 # check whether ResultSource->columns returns columns in order originally supplied
 my @cd = $schema->source("CD")->columns;
 
-is_deeply( \@cd, [qw/cdid artist title year genreid single_track/], 'column order');
+is_deeply( \@cd, [qw/cdid artist title year/], 'column order');
 
 $cd = $schema->resultset("CD")->search({ title => 'Spoonful of bees' }, { columns => ['title'] })->next;
 is($cd->title, 'Spoonful of bees', 'subset of columns returned correctly');
@@ -335,29 +319,10 @@ ok(!$@, "stringify to false value doesn't cause error");
 
 # test remove_columns
 {
-  is_deeply(
-    [$schema->source('CD')->columns],
-    [qw/cdid artist title year genreid single_track/],
-    'initial columns',
-  );
-
-  $schema->source('CD')->remove_columns('coolyear'); #should not delete year
-  is_deeply(
-    [$schema->source('CD')->columns],
-    [qw/cdid artist title year genreid single_track/],
-    'nothing removed when removing a non-existent column',
-  );
-
-  $schema->source('CD')->remove_columns('genreid', 'year');
-  is_deeply(
-    [$schema->source('CD')->columns],
-    [qw/cdid artist title single_track/],
-    'removed two columns',
-  );
-
-  my $priv_columns = $schema->source('CD')->_columns;
-  ok(! exists $priv_columns->{'year'}, 'year purged from _columns');
-  ok(! exists $priv_columns->{'genreid'}, 'genreid purged from _columns');
+  is_deeply([$schema->source('CD')->columns], [qw/cdid artist title year/]);
+  $schema->source('CD')->remove_columns('year');
+  is_deeply([$schema->source('CD')->columns], [qw/cdid artist title/]);
+  ok(! exists $schema->source('CD')->_columns->{'year'}, 'year still exists in _columns');
 }
 
 # test get_inflated_columns with objects

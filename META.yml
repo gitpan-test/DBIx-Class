@@ -3,15 +3,12 @@ abstract: 'Extensible and flexible object <-> relational mapper.'
 author:
   - 'mst: Matt S. Trout <mst@shadowcatsystems.co.uk>'
 build_requires:
+  Class::Trigger: 0
   DBD::SQLite: 1.14
+  DBIx::ContextualFetch: 0
   Test::Builder: 0.33
-  Test::Deep: 0
-  Test::Exception: 0
-  Test::Warn: 0.11
-configure_requires:
-  ExtUtils::MakeMaker: 6.42
 distribution_type: module
-generated_by: 'Module::Install version 0.77'
+generated_by: 'Module::Install version 0.79'
 license: perl
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
@@ -21,30 +18,22 @@ no_index:
   directory:
     - inc
     - t
-    - inc
-    - t
 requires:
   Carp::Clan: 0
-  Class::Accessor::Grouped: 0.05002
-  Class::C3: 0.13
+  Class::Accessor::Grouped: 0.08002
+  Class::C3: 0.2
   Class::C3::Componentised: 0
   Class::Inspector: 0
   DBI: 1.4
   Data::Page: 2
-  JSON::Any: 1
-  List::Util: 1.19
+  JSON::Any: 1.17
   Module::Find: 0
-  Path::Class: 0
-  SQL::Abstract: 1.2
-  SQL::Abstract::Limit: 0.101
+  SQL::Abstract: 1.24
+  SQL::Abstract::Limit: 0.13
   Scalar::Util: 0
   Scope::Guard: 0.03
   Storable: 0
-  Sub::Name: 0.04
   perl: 5.6.1
 resources:
-  IRC: irc://irc.perl.org/#dbix-class
-  MailingList: http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class
   license: http://dev.perl.org/licenses/
-  repository: http://dev.catalyst.perl.org/svnweb/bast/browse/DBIx-Class/
-version: 0.08099_06
+version: 0.08011

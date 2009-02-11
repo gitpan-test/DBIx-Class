@@ -4,15 +4,11 @@ package # hide from PAUSE
 use strict;
 use warnings;
 use DBIx::ContextualFetch;
-use Sub::Name ();
 
-use base qw(Class::Data::Inheritable);
-
-__PACKAGE__->mk_classdata('sql_transformer_class' =>
-                          'DBIx::Class::CDBICompat::SQLTransformer');
+use base qw/DBIx::Class/;
 
 __PACKAGE__->mk_classdata('_transform_sql_handler_order'
-                            => [ qw/TABLE ESSENTIAL JOIN IDENTIFIER/ ] );
+                            => [ qw/TABLE ESSENTIAL JOIN/ ] );
 
 __PACKAGE__->mk_classdata('_transform_sql_handlers' =>
   {
@@ -28,14 +24,8 @@ __PACKAGE__->mk_classdata('_transform_sql_handlers' =>
     'ESSENTIAL' =>
       sub {
         my ($self, $class, $data) = @_;
-        $class = $data ? $self->{_classes}{$data} : $class;
-        return join(', ', $class->columns('Essential'));
-      },
-    'IDENTIFIER' =>
-      sub {
-        my ($self, $class, $data) = @_;
-        $class = $data ? $self->{_classes}{$data} : $class;
-        return join ' AND ', map  "$_ = ?", $class->primary_columns;
+        return join(' ', $class->columns('Essential')) unless $data;
+        return join(' ', $self->{_classes}{$data}->columns('Essential'));
       },
     'JOIN' =>
       sub {
@@ -80,47 +70,42 @@ sub __driver {
 sub set_sql {
   my ($class, $name, $sql) = @_;
   no strict 'refs';
-  my $sql_name = "sql_${name}";
-  my $full_sql_name = join '::', $class, $sql_name;
-  *$full_sql_name = Sub::Name::subname $full_sql_name,
+  *{"${class}::sql_${name}"} =
     sub {
       my $sql = $sql;
       my $class = shift;
       return $class->storage->sth($class->transform_sql($sql, @_));
     };
   if ($sql =~ /select/i) {
-    my $search_name = "search_${name}";
-    my $full_search_name = join '::', $class, $search_name;
-    *$full_search_name = Sub::Name::subname $full_search_name,
+    my $meth = "sql_${name}";
+    *{"${class}::search_${name}"} =
       sub {
         my ($class, @args) = @_;
-        my $sth = $class->$sql_name;
-        return $class->sth_to_objects($sth, \@args);
+        my $sth = $class->$meth;
+        $sth->execute(@args);
+        return $class->sth_to_objects($sth);
       };
   }
 }
 
 sub sth_to_objects {
-  my ($class, $sth, $execute_args) = @_;
-
-  $sth->execute(@$execute_args);
-
+  my ($class, $sth) = @_;
   my @ret;
   while (my $row = $sth->fetchrow_hashref) {
     push(@ret, $class->inflate_result($class->result_source_instance, $row));
   }
-
   return @ret;
 }
 
 sub transform_sql {
   my ($class, $sql, @args) = @_;
-  
-  my $tclass = $class->sql_transformer_class;
-  $class->ensure_class_loaded($tclass);
-  my $t = $tclass->new($class, $sql, @args);
-
-  return sprintf($t->sql, $t->args);
+  my $attrs = { };
+  foreach my $key (@{$class->_transform_sql_handler_order}) {
+    my $h = $class->_transform_sql_handlers->{$key};
+    $sql =~ s/__$key(?:\(([^\)]+)\))?__/$h->($attrs, $class, $1)/eg;
+  }
+  #warn $sql;
+  return sprintf($sql, @args);
 }
 
 package

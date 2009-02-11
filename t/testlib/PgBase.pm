@@ -2,7 +2,7 @@ package # hide from PAUSE
     PgBase;
 
 use strict;
-use base 'DBIx::Class::CDBICompat';
+use base 'DBIx::Class';
 
 my $db   = $ENV{DBD_PG_DBNAME} || 'template1';
 my $user = $ENV{DBD_PG_USER}   || 'postgres';

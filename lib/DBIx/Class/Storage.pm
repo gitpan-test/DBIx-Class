@@ -262,58 +262,11 @@ which allows the rollback to propagate to the outermost transaction.
 
 sub txn_rollback { die "Virtual method!" }
 
-=head2 svp_begin
-
-Arguments: $savepoint_name?
-
-Created a new savepoint using the name provided as argument. If no name
-is provided, a random name will be used.
-
-=cut
-
-sub svp_begin { die "Virtual method!" }
-
-=head2 svp_release
-
-Arguments: $savepoint_name?
-
-Release the savepoint provided as argument. If none is provided,
-release the savepoint created most recently. This will implicitly
-release all savepoints created after the one explicitly released as well.
-
-=cut
-
-sub svp_release { die "Virtual method!" }
-
-=head2 svp_rollback
-
-Arguments: $savepoint_name?
-
-Rollback to the savepoint provided as argument. If none is provided,
-rollback to the savepoint created most recently. This will implicitly
-release all savepoints created after the savepoint we rollback to.
-
-=cut
-
-sub svp_rollback { die "Virtual method!" }
-
 =for comment
 
-=head2 txn_scope_guard (EXPERIMENTAL)
+=head2 txn_scope_guard
 
-An alternative way of using transactions to C<txn_do>:
-
- my $txn = $storage->txn_scope_guard;
-
- $row->col1("val1");
- $row->update;
-
- $txn->commit;
-
-If a exception occurs, the transaction will be rolled back. This is still very
-experiemental, and we are not 100% sure it is working right when nested. The
-onus is on you as the user to make sure you dont forget to call
-$C<$txn->commit>.
+Return an object that does stuff.
 
 =cut
 
@@ -481,8 +434,7 @@ Old name for DBIC_TRACE
 
 =head1 SEE ALSO
 
-L<DBIx::Class::Storage::DBI> - reference storage implementation using
-SQL::Abstract and DBI.
+L<DBIx::Class::Storage::DBI> - reference storage inplementation using SQL::Abstract and DBI.
 
 =head1 AUTHORS
 

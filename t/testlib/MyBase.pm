@@ -2,14 +2,11 @@ package # hide from PAUSE
     MyBase;
 
 use strict;
-use base qw(DBIx::Class::CDBICompat);
-
-use DBI;
+use base qw(DBIx::Class);
 
 use vars qw/$dbh/;
 
-# temporary, might get switched to the new test framework someday
-my @connect = ("dbi:mysql:test", "", "", { PrintError => 0});
+my @connect = ("dbi:mysql:test", "", "");
 
 $dbh = DBI->connect(@connect) or die DBI->errstr;
 my @table;

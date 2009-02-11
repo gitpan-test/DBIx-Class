@@ -3,7 +3,6 @@ package DBIx::Class::ResultSourceHandle;
 use strict;
 use warnings;
 use Storable;
-use Carp;
 
 use base qw/DBIx::Class/;
 
@@ -78,8 +77,7 @@ sub STORABLE_freeze {
 
     my $to_serialize = { %$self };
     
-    my $class = $self->schema->class($self->source_moniker);
-    $to_serialize->{schema} = $class;
+    delete $to_serialize->{schema};
     return (Storable::freeze($to_serialize));
 }
 
@@ -95,17 +93,7 @@ C<$schema->thaw($ice)> which handles this for you.
 sub STORABLE_thaw {
     my ($self, $cloning,$ice) = @_;
     %$self = %{ Storable::thaw($ice) };
-
-    my $class = delete $self->{schema};
-    if( $thaw_schema ) {
-        $self->{schema} = $thaw_schema;
-    }
-    else {
-        my $rs = $class->result_source_instance;
-        $self->{schema} = $rs->schema if $rs;
-    }
-
-    carp "Unable to restore schema" unless $self->{schema};
+    $self->{schema} = $thaw_schema;
 }
 
 =head1 AUTHOR

@@ -16,35 +16,45 @@ my $schema = DBICTest::Schema->connection($dsn, $dbuser, $dbpass, { AutoCommit =
 
 my $dbh = $schema->storage->dbh;
 
-{
-    local $SIG{__WARN__} = sub {};
-    $dbh->do('DROP TABLE IF EXISTS artist');
+$dbh->do(qq[
 
-    # the blob/clob are for reference only, will be useful when we switch to SQLT and can test Oracle along the way
-    $dbh->do(qq[
-        CREATE TABLE bindtype_test 
-        (
-            id              serial       NOT NULL   PRIMARY KEY,
-            bytea           bytea        NULL,
-            blob            bytea        NULL,
-            clob            text         NULL
-        );
-    ],{ RaiseError => 1, PrintError => 1 });
-}
+	CREATE TABLE artist
+	(
+		artistid		serial	NOT NULL	PRIMARY KEY,
+		media			bytea	NOT NULL,
+		name			varchar NULL
+	);
+],{ RaiseError => 1, PrintError => 1 });
+
+
+$schema->class('Artist')->load_components(qw/ 
+
+	PK::Auto 
+	Core 
+/);
+
+$schema->class('Artist')->add_columns(
+	
+	"media", { 
+	
+		data_type => "bytea", 
+		is_nullable => 0,
+	},
+);
 
 # test primary key handling
 my $big_long_string	= 'abcd' x 250000;
 
-my $new = $schema->resultset('BindType')->create({ bytea => $big_long_string });
+my $new = $schema->resultset('Artist')->create({ media => $big_long_string });
 
-ok($new->id, "Created a bytea row");
-is($new->bytea, 	$big_long_string, "Set the blob correctly.");
+ok($new->artistid, "Created a blob row");
+is($new->media, 	$big_long_string, "Set the blob correctly.");
 
-my $rs = $schema->resultset('BindType')->find({ id => $new->id });
+my $rs = $schema->resultset('Artist')->find({artistid=>$new->artistid});
 
-is($rs->get_column('bytea'), $big_long_string, "Created the blob correctly.");
+is($rs->get_column('media'), $big_long_string, "Created the blob correctly.");
 
-$dbh->do("DROP TABLE bindtype_test");
+$dbh->do("DROP TABLE artist");
 
 
 

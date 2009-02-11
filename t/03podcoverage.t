@@ -1,10 +1,7 @@
 use Test::More;
 
-eval "use Pod::Coverage 0.19";
-plan skip_all => 'Pod::Coverage 0.19 required' if $@;
 eval "use Test::Pod::Coverage 1.04";
 plan skip_all => 'Test::Pod::Coverage 1.04 required' if $@;
-
 plan skip_all => 'set TEST_POD to enable this test'
   unless ($ENV{TEST_POD} || -e 'MANIFEST.SKIP');
 
@@ -34,27 +31,13 @@ my $exceptions = {
             qw(cursor)
         ]
     },
-    'DBIx::Class::Schema' => {
-        ignore => [
-            qw(setup_connection_class)
-        ]
-    },
     'DBIx::Class::CDBICompat::AccessorMapping'          => { skip => 1 },
-    'DBIx::Class::CDBICompat::AbstractSearch' => {
-        ignore => [qw(search_where)]
-    },
     'DBIx::Class::CDBICompat::AttributeAPI'             => { skip => 1 },
     'DBIx::Class::CDBICompat::AutoUpdate'               => { skip => 1 },
-    'DBIx::Class::CDBICompat::ColumnsAsHash' => {
-        ignore => [qw(inflate_result new update)]
-    },
     'DBIx::Class::CDBICompat::ColumnCase'               => { skip => 1 },
     'DBIx::Class::CDBICompat::ColumnGroups'             => { skip => 1 },
     'DBIx::Class::CDBICompat::Constraints'              => { skip => 1 },
     'DBIx::Class::CDBICompat::Constructor'              => { skip => 1 },
-    'DBIx::Class::CDBICompat::Copy' => {
-        ignore => [qw(copy)]
-    },
     'DBIx::Class::CDBICompat::DestroyWarning'           => { skip => 1 },
     'DBIx::Class::CDBICompat::GetSet'                   => { skip => 1 },
     'DBIx::Class::CDBICompat::HasA'                     => { skip => 1 },
@@ -63,13 +46,10 @@ my $exceptions = {
     'DBIx::Class::CDBICompat::LazyLoading'              => { skip => 1 },
     'DBIx::Class::CDBICompat::LiveObjectIndex'          => { skip => 1 },
     'DBIx::Class::CDBICompat::MightHave'                => { skip => 1 },
-    'DBIx::Class::CDBICompat::NoObjectIndex'            => { skip => 1 },
+    'DBIx::Class::CDBICompat::ObjIndexStubs'            => { skip => 1 },
     'DBIx::Class::CDBICompat::Pager'                    => { skip => 1 },
     'DBIx::Class::CDBICompat::ReadOnly'                 => { skip => 1 },
-    'DBIx::Class::CDBICompat::Relationship'             => { skip => 1 },
-    'DBIx::Class::CDBICompat::Relationships'            => { skip => 1 },
     'DBIx::Class::CDBICompat::Retrieve'                 => { skip => 1 },
-    'DBIx::Class::CDBICompat::SQLTransformer'           => { skip => 1 },
     'DBIx::Class::CDBICompat::Stringify'                => { skip => 1 },
     'DBIx::Class::CDBICompat::TempColumns'              => { skip => 1 },
     'DBIx::Class::CDBICompat::Triggers'                 => { skip => 1 },
@@ -84,7 +64,6 @@ my $exceptions = {
     'DBIx::Class::Relationship::ManyToMany'             => { skip => 1 },
     'DBIx::Class::Relationship::ProxyMethods'           => { skip => 1 },
     'DBIx::Class::ResultSetProxy'                       => { skip => 1 },
-    'DBIx::Class::ResultSetManager'                     => { skip => 1 },
     'DBIx::Class::ResultSourceProxy'                    => { skip => 1 },
     'DBIx::Class::Storage::DBI'                         => { skip => 1 },
     'DBIx::Class::Storage::DBI::DB2'                    => { skip => 1 },
@@ -107,8 +86,9 @@ my $exceptions = {
 
     'DBIx::Class::Schema::Versioned' => { ignore => [ qw(connection) ] },
 
-# don't bother since it's heavily deprecated
-    'DBIx::Class::ResultSetManager' => { skip => 1 },
+# must kill authors.
+
+    'DBIx::Class::Storage::DBI::Replication' => { skip => 1 },
 };
 
 foreach my $module (@modules) {
