@@ -25,7 +25,6 @@ sub _rebless {
     }
 }
 
-
 1;
 
 =head1 NAME

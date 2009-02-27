@@ -1,11 +1,98 @@
 Revision history for DBIx::Class
 
-0.08012 2009-02-13 12:00:00 (UTC)
-        - Add omitted dependencies in Makefile.PL
+0.08099_07 2009-02-27 02:00:00 (UTC)
+        - multi-create using find_or_create rather than _related for post-insert
+        - fix get_inflated_columns to check has_column_loaded
+        - Add DBIC_MULTICREATE_DEBUG env var (undocumented, quasi-internal)
+        - Fix up multi-create to:
+          - correctly propagate columns loaded during multi-insert of rels
+          - not try and insert things tagged on via new_related unless required
+        - Possible to set locale in IC::DateTime extra => {} config
+        - Calling the accessor of a belongs_to when the foreign_key
+          was NULL and the row was not stored would unexpectedly fail (groditi)
+        - Split sql statements for deploy only if SQLT::Producer returned a scalar
+          containing all statements to be executed
+        - Add as_query() for ResultSet and ResultSetColumn. This makes subqueries
+          possible. See the Cookbook for details. (robkinyon, michaelr)
+        - Massive rewrite of Ordered to properly handle position constraints and
+          to make it more matpath-friendly
+        - deploy_statements called ddl_filename with the $version and $dir arguments
+          in the wrong order. (groditi)
+        - columns/+columns attributes now support { as => select } hahsrefs
+        - support for views both in DBIC and via deploy() in SQLT
 
-0.08011 2009-02-11 16:30:00 (UTC)
-        - Maintenance release introducing compatibilty with upcoming
-          versions of SQL::Translator and SQL::Abstract
+0.08099_06 2009-01-23 07:30:00 (UTC)
+        - Allow a scalarref to be supplied to the 'from' resultset attribute
+        - Classes submitted as result_class for a resultsource are now
+          automatically loaded via ensure_loaded()
+        - 'result_class' resultset attribute, identical to result_class()
+        - add 'undef_on_null_fk' option for relationship accessors of type 'single'.
+          This will prevent DBIC from querying the database if one or more of
+          the key columns IS NULL
+        - for 'belongs_to' rels, 'undef_on_null_fk' defaults to true.
+        - fixed scope unaware last_insert_id fetching for MSSQL
+          (http://msdn.microsoft.com/en-us/library/ms190315.aspx)
+        - an sqlt_deploy_hook can now be shared between result sources using
+          a configurable callback trigger
+        - new order_by => { -desc => 'colname' } syntax supported
+        - PG array datatype supported
+        - insert should use store_column, not set_column to avoid marking
+          clean just-stored values as dirty. New test for this (groditi)
+        - regression test for source_name (groditi)
+
+0.08099_05 2008-10-30 21:30:00 (UTC)
+        - Rewritte of Storage::DBI::connect_info(), extended with an
+          additional argument format type
+        - InflateColumn::DateTime: add warning about floating timezone
+        - InflateColumn::DateTime: possible to enforce/skip inflation
+        - delete throws exception if passed arguments to prevent drunken mishaps. (purge)
+        - Fix storage to copy scalar conds before regexping to avoid
+          trying to modify a constant in odd edge cases
+        - Related resultsets on uninserted objects are now empty
+        - Fixed up related resultsets and multi-create
+        - Fixed superfluous connection in ODBC::_rebless
+        - Fixed undef PK for first insert in ODBC::Microsoft_SQL_Server
+        - Added virtual method to Versioned so a user can create upgrade 
+          path across multiple versions (jgoulah)
+        - Better (and marginally faster) implementation of the HashRefInflator
+          hash construction algorithm
+        - Allow explicit specification of ON DELETE/ON UPDATE constraints
+          when using the SQLT parser
+
+0.08099_04 2008-07-24 01:00:00
+        - Functionality to storage to enable a sub to be run without FK checks
+        - Fixed $schema->clone bug which caused clone and source to share 
+          internal hash refs
+        - Added register_extra_source methods for additional sources
+        - Added datetime_undef_if_invalid for InflateColumn::DateTime to
+          return undef on invalid date/time values
+        - Added search_related_rs method to ResultSet
+        - add a make_column_dirty method to Row to force updates
+        - throw a clear exception when user tries multi-has_many prefetch
+        - SQLT parser prefixes index names with ${table}_idx_ to avoid clashes
+        - mark ResultSetManager as deprecated and undocument it
+        - pod fix (RT #32988)
+        - add Test::Exception to test requirements (RT #34256)
+        - make ash's build_requires/META.yml fixes work better
+        - is_deferable support on relations used by the SQL::Translator
+          parser
+        - Refactored DBIx::Class::Schema::Versioned
+        - Syntax errors from resultset components are now reported correctly
+        - sqltargs respected correctly in deploy et al.
+        - Added support for savepoints, and using them automatically in
+          nested transactions if auto_savepoint is set in connect_info.
+        - Changed naming scheme for constraints and keys in the sqlt parser;
+          names should now be consistent and collision-free.
+        - Improve handling of explicit key attr in ResultSet::find
+        - Add warnings for non-unique ResultSet::find queries
+        - Changed Storage::DBI::Replication to Storage::DBI::Replicated and
+          refactored support.
+        - By default now deploy/diff et al. will ignore constraint and index 
+          names
+        - Add ResultSet::_is_deterministic_value, make new_result filter the
+          values passed to new to drop values that would generate invalid SQL.
+        - Use Sub::Name to name closures before installing them. Fixes 
+          incompatibility with Moose method modifiers on generated methods.
 
 0.08010 2008-03-01 10:30
         - Fix t/94versioning.t so it passes with latest SQL::Translator
@@ -17,6 +104,7 @@ Revision history for DBIx::Class
         - Added freeze, thaw and dclone methods to Schema so that thawed
           objects will get re-attached to the schema.
         - Moved dbicadmin to JSON::Any wrapped JSON.pm for a sane API
+          (also fixes RT #32393)
         - introduced DBIx::Class::set_inflated_columns
         - DBIx::Class::Row::copy uses set_inflated_columns
 

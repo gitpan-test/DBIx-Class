@@ -13,7 +13,7 @@ my ($dsn, $user, $pass) = @ENV{map { "DBICTEST_MYSQL_${_}" } qw/DSN USER PASS/};
 plan skip_all => 'Set $ENV{DBICTEST_MYSQL_DSN}, _USER and _PASS to run this test'
   unless ($dsn && $user);
 
-plan tests => 5;
+plan tests => 10;
 
 my $schema = DBICTest::Schema->connect($dsn, $user, $pass);
 
@@ -21,7 +21,7 @@ my $dbh = $schema->storage->dbh;
 
 $dbh->do("DROP TABLE IF EXISTS artist;");
 
-$dbh->do("CREATE TABLE artist (artistid INTEGER NOT NULL AUTO_INCREMENT PRIMARY KEY, name VARCHAR(255), charfield CHAR(10));");
+$dbh->do("CREATE TABLE artist (artistid INTEGER NOT NULL AUTO_INCREMENT PRIMARY KEY, name VARCHAR(100), rank INTEGER NOT NULL DEFAULT '13', charfield CHAR(10));");
 
 #'dbi:mysql:host=localhost;database=dbic_test', 'dbic_test', '');
 
@@ -57,8 +57,14 @@ my $test_type_info = {
     'name' => {
         'data_type' => 'VARCHAR',
         'is_nullable' => 1,
-        'size' => 255,
+        'size' => 100,
         'default_value' => undef,
+    },
+    'rank' => {
+        'data_type' => 'INT',
+        'is_nullable' => 0,
+        'size' => 11,
+        'default_value' => 13,
     },
     'charfield' => {
         'data_type' => 'CHAR',
@@ -85,7 +91,36 @@ SKIP: {
     is_deeply($type_info, $test_type_info, 'columns_info_for - column data types');
 }
 
+## Can we properly deal with the null search problem?
+##
+## Only way is to do a SET SQL_AUTO_IS_NULL = 0; on connect
+## But I'm not sure if we should do this or not (Ash, 2008/06/03)
+
+NULLINSEARCH: {
+    
+    ok my $artist1_rs = $schema->resultset('Artist')->search({artistid=>6666})
+    => 'Created an artist resultset of 6666';
+    
+    is $artist1_rs->count, 0
+    => 'Got no returned rows';
+    
+    ok my $artist2_rs = $schema->resultset('Artist')->search({artistid=>undef})
+    => 'Created an artist resultset of undef';
+    
+    TODO: {
+    	$TODO = "need to fix the row count =1 when select * from table where pk IS NULL problem";
+	    is $artist2_rs->count, 0
+	    => 'got no rows';    	
+    }
+
+    my $artist = $artist2_rs->single;
+    
+    is $artist => undef
+    => 'Nothing Found!';
+}
+    
+
 # clean up our mess
 END {
-    $dbh->do("DROP TABLE artist") if $dbh;
+    #$dbh->do("DROP TABLE artist") if $dbh;
 }

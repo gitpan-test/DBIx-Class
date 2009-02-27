@@ -19,7 +19,7 @@ sub backup
   $dir ||= './';
 
   ## Where is the db file?
-  my $dsn = $self->connect_info()->[0];
+  my $dsn = $self->_dbi_connect_info()->[0];
 
   my $dbname = $1 if($dsn =~ /dbname=([^;]+)/);
   if(!$dbname)
@@ -33,7 +33,7 @@ sub backup
 #  my $dbfile = file($dbname);
   my ($vol, $dbdir, $file) = File::Spec->splitpath($dbname);
 #  my $file = $dbfile->basename();
-  $file = strftime("%y%m%d%h%M%s", localtime()) . $file; 
+  $file = strftime("%Y-%m-%d-%H_%M_%S", localtime()) . $file; 
   $file = "B$file" while(-f $file);
 
   mkdir($dir) unless -f $dir;
@@ -43,6 +43,20 @@ sub backup
   $self->throw_exception("Backup failed! ($!)") if(!$res);
 
   return $backupfile;
+}
+
+sub disconnect {
+
+  # As described in this node http://www.perlmonks.org/?node_id=666210
+  # there seems to be no sane way to ->disconnect a SQLite database with
+  # cached statement handles. As per mst we just zap the cache and 
+  # proceed as normal.
+
+  my $self = shift;
+  if ($self->connected) {
+    $self->_dbh->{CachedKids} = {};
+    $self->next::method (@_);
+  }
 }
 
 

@@ -3,6 +3,8 @@ package # hide from PAUSE
 
 use strict;
 use warnings;
+use Sub::Name ();
+use Class::Inspector ();
 
 sub register_relationship {
   my ($class, $rel, $info) = @_;
@@ -16,6 +18,7 @@ sub add_relationship_accessor {
   my ($class, $rel, $acc_type) = @_;
   my %meth;
   if ($acc_type eq 'single') {
+    my $rel_info = $class->relationship_info($rel);
     $meth{$rel} = sub {
       my $self = shift;
       if (@_) {
@@ -24,6 +27,13 @@ sub add_relationship_accessor {
       } elsif (exists $self->{_relationship_data}{$rel}) {
         return $self->{_relationship_data}{$rel};
       } else {
+        my $cond = $self->result_source->resolve_condition(
+          $rel_info->{cond}, $rel, $self
+        );
+        if ($rel_info->{attrs}->{undef_on_null_fk}){
+          return unless ref($cond) eq 'HASH';
+          return if grep { not defined } values %$cond;
+        }
         my $val = $self->find_related($rel, {}, {});
         return unless $val;
         return $self->{_relationship_data}{$rel} = $val;
@@ -36,7 +46,7 @@ sub add_relationship_accessor {
     $class->inflate_column($rel,
       { inflate => sub {
           my ($val, $self) = @_;
-          return $self->find_or_create_related($rel, {}, {});
+          return $self->find_or_new_related($rel, {}, {});
         },
         deflate => sub {
           my ($val, $self) = @_;
@@ -57,7 +67,8 @@ sub add_relationship_accessor {
     no strict 'refs';
     no warnings 'redefine';
     foreach my $meth (keys %meth) {
-      *{"${class}::${meth}"} = $meth{$meth};
+      my $name = join '::', $class, $meth;
+      *$name = Sub::Name::subname($name, $meth{$meth});
     }
   }
 }

@@ -60,7 +60,7 @@ $new_source->name(\<<'');
   join cd on cd.artist=a.artistid
   where cd.year=?)
 
-$schema->register_source('Complex' => $new_source);
+$schema->register_extra_source('Complex' => $new_source);
 
 $rs = $schema->resultset('Complex')->search({}, { bind => [ 1999 ] });
 is ( $rs->count, 1, 'cookbook arbitrary sql example' );
@@ -73,6 +73,10 @@ $rs = $schema->resultset('Complex')->search({}, { bind => [ 1999 ] })
 is ( $rs->count, 1, '...cookbook (bind first) + chained search' );
 
 TODO: {
+    # not sure what causes an uninit warning here, please remove when the TODO starts to pass,
+    # so the real reason for the warning can be found and fixed
+    local $SIG{__WARN__} = sub { warn @_ unless $_[0] =~ /uninitialized/ };
+
     local $TODO = 'bind args order needs fixing (semifor)';
     $rs = $schema->resultset('Complex')->search({}, { bind => [ 1999 ] })
         ->search({ 'artistid' => 1 }, {
