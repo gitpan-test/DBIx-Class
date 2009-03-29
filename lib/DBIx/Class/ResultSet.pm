@@ -102,6 +102,21 @@ another.
     });
   }
 
+=head3 Resolving conditions and attributes
+
+When a resultset is chained from another resultset, conditions and
+attributes with the same keys need resolving.
+
+L</join>, L</prefetch>, L</+select>, L</+as> attributes are merged
+into the existing ones from the original resultset.
+
+The L</where>, L</having> attribute, and any search conditions are
+merged with an SQL C<AND> to the existing condition from the original
+resultset.
+
+All other attributes are overridden by any new ones supplied in the
+search attributes.
+
 =head2 Multiple queries
 
 Since a resultset just defines a query, you can do all sorts of
@@ -264,6 +279,11 @@ always return a resultset, even in list context.
 sub search_rs {
   my $self = shift;
 
+  # Special-case handling for (undef, undef).
+  if ( @_ == 2 && !defined $_[1] && !defined $_[0] ) {
+    pop(@_); pop(@_);
+  }
+
   my $attrs = {};
   $attrs = pop(@_) if @_ > 1 and ref $_[$#_] eq 'HASH';
   my $our_attrs = { %{$self->{attrs}} };
@@ -373,19 +393,29 @@ Pass a literal chunk of SQL to be added to the conditional part of the
 resultset query.
 
 CAVEAT: C<search_literal> is provided for Class::DBI compatibility and should
-only be used in that context. There are known problems using C<search_literal>
-in chained queries; it can result in bind values in the wrong order.  See
-L<DBIx::Class::Manual::Cookbook/Searching> and
+only be used in that context. C<search_literal> is a convenience method. 
+It is equivalent to calling $schema->search(\[]), but if you want to ensure
+columns are bound correctly, use C<search>.
+
+Example of how to use C<search> instead of C<search_literal>
+
+  my @cds = $cd_rs->search_literal('cdid = ? AND (artist = ? OR artist = ?)', (2, 1, 2));
+  my @cds = $cd_rs->search(\[ 'cdid = ? AND (artist = ? OR artist = ?)', [ 'cdid', 2 ], [ 'artist', 1 ], [ 'artist', 2 ] ]);
+
+
+See L<DBIx::Class::Manual::Cookbook/Searching> and 
 L<DBIx::Class::Manual::FAQ/Searching> for searching techniques that do not
 require C<search_literal>.
 
 =cut
 
 sub search_literal {
-  my ($self, $cond, @vals) = @_;
-  my $attrs = (ref $vals[$#vals] eq 'HASH' ? { %{ pop(@vals) } } : {});
-  $attrs->{bind} = [ @{$self->{attrs}{bind}||[]}, @vals ];
-  return $self->search(\$cond, $attrs);
+  my ($self, $sql, @bind) = @_; 
+  my $attr;
+  if ( @bind && ref($bind[-1]) eq 'HASH' ) {
+    $attr = pop @bind;
+  }
+  return $self->search(\[ $sql, map [ __DUMMY__ => $_ ], @bind ], ($attr || () ));
 }
 
 =head2 find
@@ -830,10 +860,20 @@ You most likely want to use L</search> with specific operators.
 
 For more information, see L<DBIx::Class::Manual::Cookbook>.
 
+This method is deprecated and will be removed in 0.09. Use L</search()>
+instead. An example conversion is:
+
+  ->search_like({ foo => 'bar' });
+
+  # Becomes
+
+  ->search({ foo => { like => 'bar' } });
+
 =cut
 
 sub search_like {
   my $class = shift;
+  carp "search_like() is deprecated and will be removed in 0.09. Use search() instead.";
   my $attrs = (@_ > 1 && ref $_[$#_] eq 'HASH' ? pop(@_) : {});
   my $query = ref $_[0] eq 'HASH' ? { %{shift()} }: {@_};
   $query->{$_} = { 'like' => $query->{$_} } for keys %$query;
@@ -1636,6 +1676,9 @@ sub _normalize_populate_args {
 Return Value a L<Data::Page> object for the current resultset. Only makes
 sense for queries with a C<page> attribute.
 
+To get the full count of entries for a paged resultset, call
+C<total_entries> on the L<Data::Page> object.
+
 =cut
 
 sub pager {
@@ -1807,7 +1850,7 @@ sub _remove_alias {
   return \%unaliased;
 }
 
-=head2 as_query
+=head2 as_query (EXPERIMENTAL)
 
 =over 4
 
@@ -1820,6 +1863,8 @@ sub _remove_alias {
 Returns the SQL query and bind vars associated with the invocant.
 
 This is generally used as the RHS for a subquery.
+
+B<NOTE>: This feature is still experimental.
 
 =cut
 
@@ -2854,6 +2899,10 @@ identical to creating a non-pages resultset and then calling ->page($page)
 on it.
 
 If L<rows> attribute is not specified it defualts to 10 rows per page.
+
+When you have a paged resultset, L</count> will only return the number
+of rows in the page. To get the total, use the L</pager> and call
+C<total_entries> on it.
 
 =head2 rows
 

@@ -165,7 +165,6 @@ t/39load_namespaces_1.t
 t/39load_namespaces_2.t
 t/39load_namespaces_3.t
 t/39load_namespaces_4.t
-t/39load_namespaces_rt41083.t
 t/40resultsetmanager.t
 t/41orrible.t
 t/42toplimit.t
@@ -203,7 +202,6 @@ t/75limit.t
 t/76joins.t
 t/76select.t
 t/77join_count.t
-t/77prefetch.t
 t/78self_referencial.t
 t/79aliasing.t
 t/80unique.t
@@ -239,7 +237,6 @@ t/96multi_create/multilev_might_have_PKeqFK.t
 t/96multi_create_new.t
 t/96multi_create_torture.t
 t/97result_class.t
-t/98rows_prefetch.t
 t/98savepoints.t
 t/99dbic_sqlt_parser.t
 t/99rh_perl_perf_bug.t
@@ -310,13 +307,6 @@ t/deleting_many_to_many.t
 t/discard_changes_in_DESTROY.t
 t/lib/DBIC/DebugObj.pm
 t/lib/DBIC/SqlMakerTest.pm
-t/lib/DBICNGTest/Schema.pm
-t/lib/DBICNGTest/Schema/Result.pm
-t/lib/DBICNGTest/Schema/Result/FriendList.pm
-t/lib/DBICNGTest/Schema/Result/Gender.pm
-t/lib/DBICNGTest/Schema/Result/Person.pm
-t/lib/DBICNGTest/Schema/ResultSet.pm
-t/lib/DBICNGTest/Schema/ResultSet/Person.pm
 t/lib/DBICNSTest/OtherRslt/D.pm
 t/lib/DBICNSTest/Result/A.pm
 t/lib/DBICNSTest/Result/B.pm
@@ -363,6 +353,7 @@ t/lib/DBICTest/Schema/Employee.pm
 t/lib/DBICTest/Schema/Encoded.pm
 t/lib/DBICTest/Schema/Event.pm
 t/lib/DBICTest/Schema/EventTZ.pm
+t/lib/DBICTest/Schema/EventTZDeprecated.pm
 t/lib/DBICTest/Schema/FileColumn.pm
 t/lib/DBICTest/Schema/ForceForeign.pm
 t/lib/DBICTest/Schema/FourKeys.pm
@@ -394,10 +385,18 @@ t/lib/DBICTest/Stats.pm
 t/lib/DBICTest/SyntaxErrorComponent1.pm
 t/lib/DBICTest/SyntaxErrorComponent2.pm
 t/lib/DBICTest/SyntaxErrorComponent3.pm
+t/lib/DBICTest/Taint/Classes/Auto.pm
+t/lib/DBICTest/Taint/Classes/Manual.pm
+t/lib/DBICTest/Taint/Namespaces/Result/Test.pm
 t/lib/DBICVersionNew.pm
 t/lib/DBICVersionOrig.pm
 t/lib/sqlite.sql
 t/ordered/cascade_delete.t
+t/prefetch/attrs_untouched.t
+t/prefetch/multiple_hasmany.t
+t/prefetch/pollute_already_joined.t
+t/prefetch/rows_bug.t
+t/prefetch/standard.t
 t/relationship_after_update.t
 t/relationship_doesnt_exist.t
 t/resultset/as_query.t

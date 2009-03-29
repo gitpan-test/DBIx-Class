@@ -157,6 +157,21 @@ sub _expand_relative_name {
   return $name;
 }
 
+# Finds all modules in the supplied namespace, or if omitted in the
+# namespace of $class. Untaints all findings as they can be assumed
+# to be safe
+sub _findallmod {
+  my $proto = shift;
+  my $ns = shift || ref $proto || $proto;
+
+  my @mods = Module::Find::findallmod($ns);
+
+  # try to untaint module names. mods where this fails
+  # are left alone so we don't have to change the old behavior
+  no locale; # localized \w doesn't untaint expression
+  return map { $_ =~ m/^( (?:\w+::)* \w+ )$/x ? $1 : $_ } @mods;
+}
+
 # returns a hash of $shortname => $fullname for every package
 #  found in the given namespaces ($shortname is with the $fullname's
 #  namespace stripped off)
@@ -168,7 +183,7 @@ sub _map_namespaces {
     push(
       @results_hash,
       map { (substr($_, length "${namespace}::"), $_) }
-      Module::Find::findallmod($namespace)
+      $class->_findallmod($namespace)
     );
   }
 
@@ -314,7 +329,7 @@ sub load_classes {
     }
   } else {
     my @comp = map { substr $_, length "${class}::"  }
-                 Module::Find::findallmod($class);
+                 $class->_findallmod;
     $comps_for{$class} = \@comp;
   }
 
@@ -325,13 +340,6 @@ sub load_classes {
     foreach my $prefix (keys %comps_for) {
       foreach my $comp (@{$comps_for{$prefix}||[]}) {
         my $comp_class = "${prefix}::${comp}";
-        { # try to untaint module name. mods where this fails
-          # are left alone so we don't have to change the old behavior
-          no locale; # localized \w doesn't untaint expression
-          if ( $comp_class =~ m/^( (?:\w+::)* \w+ )$/x ) {
-            $comp_class = $1;
-          }
-        }
         $class->ensure_class_loaded($comp_class);
 
         my $snsub = $comp_class->can('source_name');
@@ -475,6 +483,12 @@ Note that C<connect_info> expects an arrayref of arguments, but
 C<connect> does not. C<connect> wraps it's arguments in an arrayref
 before passing them to C<connect_info>.
 
+=head3 Overloading
+
+C<connect> is a convenience method. It is equivalent to calling
+$schema->clone->connection(@connectinfo). To write your own overloaded
+version, overload L</connection> instead.
+
 =cut
 
 sub connect { shift->clone->connection(@_) }
@@ -603,7 +617,7 @@ sub txn_do {
   $self->storage->txn_do(@_);
 }
 
-=head2 txn_scope_guard (EXPERIMENTAL)
+=head2 txn_scope_guard
 
 Runs C<txn_scope_guard> on the schema's storage. See 
 L<DBIx::Class::Storage/txn_scope_guard>.
@@ -752,6 +766,9 @@ Similar to L</connect> except sets the storage object and connection
 data in-place on the Schema class. You should probably be calling
 L</connect> to get a proper Schema object instead.
 
+=head3 Overloading
+
+Overload C<connection> to change the behaviour of C<connect>.
 
 =cut
 
@@ -990,7 +1007,9 @@ Attempts to deploy the schema to the current storage using L<SQL::Translator>.
 
 See L<SQL::Translator/METHODS> for a list of values for C<$sqlt_args>. The most
 common value for this would be C<< { add_drop_table => 1, } >> to have the SQL
-produced include a DROP TABLE statement for each table created.
+produced include a DROP TABLE statement for each table created. For quoting
+purposes use C<producer_options> value with C<quote_table_names> and
+C<quote_field_names>.
 
 Additionally, the DBIx::Class parser accepts a C<sources> parameter as a hash 
 ref or an array ref, containing a list of source to deploy. If present, then 

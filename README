@@ -167,8 +167,6 @@ CONTRIBUTORS
 
     caelum: Rafael Kitover <rkitover@cpan.org>
 
-    captainL: Luke Saunders <luke.saunders@gmail.com>
-
     castaway: Jess Robinson
 
     claco: Christopher H. Laco
@@ -205,6 +203,8 @@ CONTRIBUTORS
 
     konobi: Scott McWhirter
 
+    lukes: Luke Saunders <luke.saunders@gmail.com>
+
     marcus: Marcus Ramberg <mramberg@cpan.org>
 
     mattlaw: Matt Lawrence
@@ -216,6 +216,8 @@ CONTRIBUTORS
     nigel: Nigel Metheringham <nigelm@cpan.org>
 
     ningu: David Kamholz <dkamholz@cpan.org>
+
+    norbi: Norbert Buchmuller <norbi@nix.hu>
 
     Numa: Dan Sully <daniel@cpan.org>
 
@@ -249,6 +251,8 @@ CONTRIBUTORS
 
     semifor: Marc Mims <marc@questright.com>
 
+    solomon: Jared Johnson <jaredj@nmgi.com>
+
     sszabo: Stephan Szabo <sszabo@bigpanda.com>
 
     teejay : Aaron Trevena <teejay@cpan.org>
@@ -265,9 +269,9 @@ CONTRIBUTORS
 
     willert: Sebastian Willert <willert@cpan.org>
 
-    zamolxes: Bogdan Lucaciu <bogdan@wiz.ro>
+    wreis: Wallace Reis <wreis@cpan.org>
 
-    norbi: Norbert Buchmuller <norbi@nix.hu>
+    zamolxes: Bogdan Lucaciu <bogdan@wiz.ro>
 
 LICENSE
     You may distribute this code under the same terms as Perl itself.

@@ -31,11 +31,12 @@ sub add_relationship_accessor {
           $rel_info->{cond}, $rel, $self
         );
         if ($rel_info->{attrs}->{undef_on_null_fk}){
-          return unless ref($cond) eq 'HASH';
-          return if grep { not defined } values %$cond;
+          return undef unless ref($cond) eq 'HASH';
+          return undef if grep { not defined $_ } values %$cond;
         }
         my $val = $self->find_related($rel, {}, {});
-        return unless $val;
+        return $val unless $val;  # $val instead of undef so that null-objects can go through
+
         return $self->{_relationship_data}{$rel} = $val;
       }
     };

@@ -7,7 +7,17 @@ use Test::More;
 use lib qw(t/lib);
 use DBICTest;
 
-plan tests => 6;
+# equivalent of $Module::Install::AUTHOR
+my $author = (
+  ( not  -d './inc' )
+    or
+  ( -e ($^O eq 'VMS' ? './inc/_author' : './inc/.author') )
+);
+
+plan $author
+  ? (tests => 6)
+  : (skip_all => 'Test temporarily disabled due to a widespread buggy SQLite version')
+;
 
 my $db_orig = "$FindBin::Bin/var/DBIxClass.db";
 my $db_tmp  = "$db_orig.tmp";

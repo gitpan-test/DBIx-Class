@@ -24,7 +24,7 @@ sub component_base_class { 'DBIx::Class' }
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
 
-$VERSION = '0.08099_07';
+$VERSION = '0.08099_08';
 
 $VERSION = eval $VERSION; # numify for warning-free dev releases
 
@@ -219,8 +219,6 @@ bricas: Brian Cassidy <bricas@cpan.org>
 
 caelum: Rafael Kitover <rkitover@cpan.org>
 
-captainL: Luke Saunders <luke.saunders@gmail.com>
-
 castaway: Jess Robinson
 
 claco: Christopher H. Laco
@@ -257,6 +255,8 @@ jshirley: J. Shirley <jshirley@gmail.com>
 
 konobi: Scott McWhirter
 
+lukes: Luke Saunders <luke.saunders@gmail.com>
+
 marcus: Marcus Ramberg <mramberg@cpan.org>
 
 mattlaw: Matt Lawrence
@@ -268,6 +268,8 @@ ned: Neil de Carteret
 nigel: Nigel Metheringham <nigelm@cpan.org>
 
 ningu: David Kamholz <dkamholz@cpan.org>
+
+norbi: Norbert Buchmuller <norbi@nix.hu>
 
 Numa: Dan Sully <daniel@cpan.org>
 
@@ -301,6 +303,8 @@ scotty: Scotty Allen <scotty@scottyallen.com>
 
 semifor: Marc Mims <marc@questright.com>
 
+solomon: Jared Johnson <jaredj@nmgi.com>
+
 sszabo: Stephan Szabo <sszabo@bigpanda.com>
 
 teejay : Aaron Trevena <teejay@cpan.org>
@@ -317,9 +321,9 @@ wdh: Will Hawes
 
 willert: Sebastian Willert <willert@cpan.org>
 
-zamolxes: Bogdan Lucaciu <bogdan@wiz.ro>
+wreis: Wallace Reis <wreis@cpan.org>
 
-norbi: Norbert Buchmuller <norbi@nix.hu>
+zamolxes: Bogdan Lucaciu <bogdan@wiz.ro>
 
 =head1 LICENSE
 

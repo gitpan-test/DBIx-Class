@@ -9,7 +9,7 @@ build_requires:
   Test::Warn: 0.11
 configure_requires:
   DBD::SQLite: 1.14
-  ExtUtils::MakeMaker: 6.42
+  ExtUtils::MakeMaker: 6.50
 distribution_type: module
 generated_by: 'Module::Install version 0.79'
 license: perl
@@ -25,7 +25,7 @@ no_index:
 provides:
   DBIx::Class:
     file: lib/DBIx/Class.pm
-    version: 0.08099_07
+    version: 0.08099_08
   DBIx::Class::AccessorGroup:
     file: lib/DBIx/Class/AccessorGroup.pm
   DBIx::Class::CDBICompat:
@@ -146,6 +146,8 @@ provides:
     file: lib/DBIx/Class/Storage/DBI/mysql.pm
   DBIx::Class::Storage::Statistics:
     file: lib/DBIx/Class/Storage/Statistics.pm
+  DBIx::Class::Storage::TxnScopeGuard:
+    file: lib/DBIx/Class/Storage/TxnScopeGuard.pm
   DBIx::Class::Test::SQLite:
     file: lib/DBIx/Class/Test/SQLite.pm
   DBIx::Class::UTF8Columns:
@@ -160,9 +162,9 @@ recommends:
   SQL::Translator: 0.09004
 requires:
   Carp::Clan: 0
-  Class::Accessor::Grouped: 0.08002
-  Class::C3: 0.2
-  Class::C3::Componentised: 0
+  Class::Accessor::Grouped: 0.08003
+  Class::C3::Componentised: 1.0004
+  Class::DBI::Plugin::DeepAbstractSearch: 0
   Class::Inspector: 0
   Class::Trigger: 0
   Clone: 0
@@ -173,11 +175,12 @@ requires:
   DateTime::Format::Strptime: 0
   JSON::Any: 1.17
   List::Util: 1.19
+  MRO::Compat: 0.09
   Module::Find: 0
   Moose: 0
   MooseX::AttributeHelpers: 0.12
   Path::Class: 0
-  SQL::Abstract: 1.49
+  SQL::Abstract: 1.51
   SQL::Abstract::Limit: 0.13
   SQL::Translator: 0.09004
   Scalar::Util: 0
@@ -193,4 +196,4 @@ resources:
   MailingList: http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class
   license: http://dev.perl.org/licenses/
   repository: http://dev.catalyst.perl.org/svnweb/bast/browse/DBIx-Class/
-version: 0.08099_07
+version: 0.08099_08
