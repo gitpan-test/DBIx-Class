@@ -29,10 +29,6 @@ DBIx::Class.
   my $schema = DBICTest->init_schema(
     no_deploy=>1,
     no_populate=>1,
-    storage_type=>'::DBI::Replicated',
-    storage_type_args=>{
-    	balancer_type=>'DBIx::Class::Storage::DBI::Replicated::Balancer::Random'
-    },
   );
 
 This method removes the test SQLite database in t/var/DBIxClass.db 
@@ -46,25 +42,9 @@ default, unless the no_deploy or no_populate flags are set.
 
 =cut
 
-sub has_custom_dsn {
-	return $ENV{"DBICTEST_DSN"} ? 1:0;
-}
-
-sub _sqlite_dbfilename {
-    return "t/var/DBIxClass.db";
-}
-
-sub _sqlite_dbname {
-    my $self = shift;
-    my %args = @_;
-    return $self->_sqlite_dbfilename if $args{sqlite_use_file} or $ENV{"DBICTEST_SQLITE_USE_FILE"};
-	return ":memory:";
-}
-
 sub _database {
     my $self = shift;
-    my %args = @_;
-    my $db_file = $self->_sqlite_dbname(%args);
+    my $db_file = "t/var/DBIxClass.db";
 
     unlink($db_file) if -e $db_file;
     unlink($db_file . "-journal") if -e $db_file . "-journal";
@@ -84,26 +64,21 @@ sub init_schema {
     my %args = @_;
 
     my $schema;
-    
+
     if ($args{compose_connection}) {
       $schema = DBICTest::Schema->compose_connection(
-                  'DBICTest', $self->_database(%args)
+                  'DBICTest', $self->_database
                 );
     } else {
       $schema = DBICTest::Schema->compose_namespace('DBICTest');
     }
-    if( $args{storage_type}) {
-    	$schema->storage_type($args{storage_type});
-    }    
     if ( !$args{no_connect} ) {
-      $schema = $schema->connect($self->_database(%args));
-      $schema->storage->on_connect_do(['PRAGMA synchronous = OFF'])
-       unless $self->has_custom_dsn;
+      $schema = $schema->connect($self->_database);
+      $schema->storage->on_connect_do(['PRAGMA synchronous = OFF']);
     }
     if ( !$args{no_deploy} ) {
-        __PACKAGE__->deploy_schema( $schema, $args{deploy_args} );
-        __PACKAGE__->populate_schema( $schema )
-         if( !$args{no_populate} );
+        __PACKAGE__->deploy_schema( $schema );
+        __PACKAGE__->populate_schema( $schema ) if( !$args{no_populate} );
     }
     return $schema;
 }
@@ -123,22 +98,16 @@ of tables for testing.
 sub deploy_schema {
     my $self = shift;
     my $schema = shift;
-    my $args = shift || {};
 
-    if ($ENV{"DBICTEST_SQLT_DEPLOY"}) { 
-        $schema->deploy($args);    
+    if ($ENV{"DBICTEST_SQLT_DEPLOY"}) {
+        return $schema->deploy();
     } else {
         open IN, "t/lib/sqlite.sql";
         my $sql;
         { local $/ = undef; $sql = <IN>; }
         close IN;
-        for my $chunk ( split (/;\s*\n+/, $sql) ) {
-          if ( $chunk =~ / ^ (?! --\s* ) \S /xm ) {  # there is some real sql in the chunk - a non-space at the start of the string which is not a comment
-            $schema->storage->dbh->do($chunk) or print "Error on SQL: $chunk\n";
-          }
-        }
+        ($schema->storage->dbh->do($_) || print "Error on SQL: $_\n") for split(/;\n/, $sql);
     }
-    return;
 }
 
 =head2 populate_schema
@@ -239,16 +208,15 @@ sub populate_schema {
         [ 1, 2 ],
         [ 1, 3 ],
     ]);
-    
+
     $schema->populate('TreeLike', [
         [ qw/id parent name/ ],
-        [ 1, undef, 'root' ],        
-        [ 2, 1, 'foo'  ],
-        [ 3, 2, 'bar'  ],
-        [ 6, 2, 'blop' ],
-        [ 4, 3, 'baz'  ],
-        [ 5, 4, 'quux' ],
-        [ 7, 3, 'fong'  ],
+        [ 1, 0, 'foo'  ],
+        [ 2, 1, 'bar'  ],
+        [ 5, 1, 'blop' ],
+        [ 3, 2, 'baz'  ],
+        [ 4, 3, 'quux' ],
+        [ 6, 2, 'fong'  ],
     ]);
 
     $schema->populate('Track', [
@@ -271,8 +239,8 @@ sub populate_schema {
     ]);
 
     $schema->populate('Event', [
-        [ qw/id starts_at created_on varchar_date varchar_datetime skip_inflation/ ],
-        [ 1, '2006-04-25 22:24:33', '2006-06-22 21:00:05', '2006-07-23', '2006-05-22 19:05:07', '2006-04-21 18:04:06'],
+        [ qw/id starts_at created_on/ ],
+        [ 1, '2006-04-25 22:24:33', '2006-06-22 21:00:05'],
     ]);
 
     $schema->populate('Link', [
@@ -290,15 +258,7 @@ sub populate_schema {
         [ 1, "Tools" ],
         [ 2, "Body Parts" ],
     ]);
-    
-    $schema->populate('TypedObject', [
-        [ qw/objectid type value/ ],
-        [ 1, "pointy", "Awl" ],
-        [ 2, "round", "Bearing" ],
-        [ 3, "pointy", "Knife" ],
-        [ 4, "pointy", "Tooth" ],
-        [ 5, "round", "Head" ],
-    ]);
+
     $schema->populate('CollectionObject', [
         [ qw/collection object/ ],
         [ 1, 1 ],
@@ -308,6 +268,15 @@ sub populate_schema {
         [ 2, 5 ],
     ]);
 
+    $schema->populate('TypedObject', [
+        [ qw/objectid type value/ ],
+        [ 1, "pointy", "Awl" ],
+        [ 2, "round", "Bearing" ],
+        [ 3, "pointy", "Knife" ],
+        [ 4, "pointy", "Tooth" ],
+        [ 5, "round", "Head" ],
+    ]);
+
     $schema->populate('Owners', [
         [ qw/ownerid name/ ],
         [ 1, "Newton" ],
@@ -315,10 +284,10 @@ sub populate_schema {
     ]);
 
     $schema->populate('BooksInLibrary', [
-        [ qw/id owner title source price/ ],
-        [ 1, 1, "Programming Perl", "Library", 23 ],
-        [ 2, 1, "Dynamical Systems", "Library",  37 ],
-        [ 3, 2, "Best Recipe Cookbook", "Library", 65 ],
+        [ qw/id owner title source/ ],
+        [ 1, 1, "Programming Perl", "Library" ],
+        [ 2, 1, "Dynamical Systems", "Library" ],
+        [ 3, 2, "Best Recipe Cookbook", "Library" ],
     ]);
 }
 

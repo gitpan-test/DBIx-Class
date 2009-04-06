@@ -14,14 +14,14 @@ sub _prep_for_execute {
     return ($sql, $bind);
 }
 
-sub _execute {
-    my $self = shift;
-    my ($op) = @_;
+sub insert {
+    my ($self, $source, $to_insert) = @_;
 
-    my ($rv, $sth, @bind) = $self->dbh_do($self->can('_dbh_execute'), @_);
-    $self->{_scope_identity} = $sth->fetchrow_array if $op eq 'insert';
+    my $bind_attributes = $self->source_bind_attributes($source);
+    my (undef, $sth) = $self->_execute( 'insert' => [], $source, $bind_attributes, $to_insert);
+    $self->{_scope_identity} = $sth->fetchrow_array;
 
-    return wantarray ? ($rv, $sth, @bind) : $rv;
+    return $to_insert;
 }
 
 sub last_insert_id { shift->{_scope_identity} }
@@ -52,8 +52,8 @@ __END__
 
 =head1 NAME
 
-DBIx::Class::Storage::DBI::ODBC::Microsoft_SQL_Server - Support specific
-to Microsoft SQL Server over ODBC
+DBIx::Class::Storage::DBI::ODBC::Microsoft_SQL_Server - Support specific to
+Microsoft SQL Server over ODBC
 
 =head1 DESCRIPTION
 
@@ -73,6 +73,8 @@ So, this implementation appends a SELECT SCOPE_IDENTITY() statement
 onto each INSERT to accommodate that requirement.
 
 =head1 METHODS
+
+=head2 insert
 
 =head2 last_insert_id
 

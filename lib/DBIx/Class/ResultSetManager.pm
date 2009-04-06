@@ -2,28 +2,40 @@ package DBIx::Class::ResultSetManager;
 use strict;
 use warnings;
 use base 'DBIx::Class';
-use Sub::Name ();
 use Class::Inspector;
-
-warn "DBIx::Class::ResultSetManager never left experimental status and
-has now been DEPRECATED. This module will be deleted in 09000 so please
-migrate any and all code using it to explicit resultset classes using either
-__PACKAGE__->resultset_class(...) calls or by switching from using
-DBIx::Class::Schema->load_classes() to load_namespaces() and creating
-appropriate My::Schema::ResultSet::* classes for it to pick up.";
 
 =head1 NAME
 
-DBIx::Class::ResultSetManager - scheduled for deletion in 09000
+DBIx::Class::ResultSetManager - helpful methods for managing resultset
+classes (EXPERIMENTAL)
+
+=head1 SYNOPSIS
+
+  # in a table class
+  __PACKAGE__->load_components(qw/ResultSetManager Core/); # note order!
+
+  # will be removed from the table class and inserted into a
+  # table-specific resultset class
+  sub search_by_year_desc : ResultSet {
+    my $self = shift;
+    my $cond = shift;
+    my $attrs = shift || {};
+    $attrs->{order_by} = 'year DESC';
+    $self->search($cond, $attrs);
+  }
+
+  $rs = $schema->resultset('CD')->search_by_year_desc({ artist => 'Tool' });
 
 =head1 DESCRIPTION
 
-DBIx::Class::ResultSetManager never left experimental status and
-has now been DEPRECATED. This module will be deleted in 09000 so please
-migrate any and all code using it to explicit resultset classes using either
-__PACKAGE__->resultset_class(...) calls or by switching from using
-DBIx::Class::Schema->load_classes() to load_namespaces() and creating
-appropriate My::Schema::ResultSet::* classes for it to pick up.";
+This package implements two useful features for customizing resultset
+classes.  C<load_resultset_components> loads components in addition to
+C<DBIx::Class::ResultSet> (or whatever you set as
+C<base_resultset_class>). Any methods tagged with the C<ResultSet>
+attribute will be moved into a table-specific resultset class (by
+default called C<Class::_resultset>, but configurable via
+C<table_resultset_class_suffix>).  Most of the magic is done when you
+call C<< __PACKAGE__->table >>.
 
 =cut
 
@@ -31,6 +43,17 @@ __PACKAGE__->mk_classdata($_)
   for qw/ base_resultset_class table_resultset_class_suffix /;
 __PACKAGE__->base_resultset_class('DBIx::Class::ResultSet');
 __PACKAGE__->table_resultset_class_suffix('::_resultset');
+
+=head2 table
+
+Stacks on top of the normal L<DBIx::Class> C<table> method.  Any
+methods tagged with the C<ResultSet> attribute will be moved into a
+table-specific resultset class (by default called
+C<Class::_resultset>, but configurable via
+C<table_resultset_class_suffix>).  The magic for this is done within
+this C<< __PACKAGE__->table >> call.
+
+=cut
 
 sub table {
     my ($self,@rest) = @_;
@@ -41,6 +64,14 @@ sub table {
     }
     return $ret;
 }
+
+=head2 load_resultset_components
+
+C<load_resultset_components> loads components in addition to
+C<DBIx::Class::ResultSet> (or whatever you set as
+C<base_resultset_class>).
+
+=cut
 
 sub load_resultset_components {
     my ($self,@comp) = @_;
@@ -59,8 +90,7 @@ sub _register_attributes {
         if ($attrs->[0] eq 'ResultSet') {
             no strict 'refs';
             my $resultset_class = $self->_setup_resultset_class;
-            my $name = join '::',$resultset_class, $meth;
-            *$name = Sub::Name::subname $name, $self->can($meth);
+            *{"$resultset_class\::$meth"} = $self->can($meth);
             delete ${"${self}::"}{$meth};
         }
     }
@@ -89,3 +119,13 @@ sub _register_resultset_class {
 }
 
 1;
+
+=head1 AUTHORS
+
+David Kamholz <dkamholz@cpan.org>
+
+=head1 LICENSE
+
+You may distribute this code under the same terms as Perl itself.
+
+=cut

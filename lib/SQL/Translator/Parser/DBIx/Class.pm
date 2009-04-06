@@ -9,8 +9,8 @@ package SQL::Translator::Parser::DBIx::Class;
 use strict;
 use warnings;
 use vars qw($DEBUG $VERSION @EXPORT_OK);
-$VERSION = '1.10';
 $DEBUG = 0 unless defined $DEBUG;
+$VERSION = '1.10';
 
 use Exporter;
 use Data::Dumper;
@@ -23,34 +23,32 @@ use base qw(Exporter);
 # -------------------------------------------------------------------
 # parse($tr, $data)
 #
-# setting parser_args => { add_fk_index => 0 } will prevent
-# the auto-generation of an index for each FK.
-#
 # Note that $data, in the case of this parser, is not useful.
 # We're working with DBIx::Class Schemas, not data streams.
 # -------------------------------------------------------------------
 sub parse {
     my ($tr, $data)   = @_;
     my $args          = $tr->parser_args;
-    my $dbicschema    = $args->{'DBIx::Class::Schema'} ||  $args->{"DBIx::Schema"} ||$data;
-    $dbicschema     ||= $args->{'package'};
+    my $dbixschema    = $args->{'DBIx::Schema'} || $data;
+    $dbixschema     ||= $args->{'package'};
     my $limit_sources = $args->{'sources'};
     
-    die 'No DBIx::Class::Schema' unless ($dbicschema);
-    if (!ref $dbicschema) {
-      eval "use $dbicschema;";
-      die "Can't load $dbicschema ($@)" if($@);
+    die 'No DBIx::Schema' unless ($dbixschema);
+    if (!ref $dbixschema) {
+      eval "use $dbixschema;";
+      die "Can't load $dbixschema ($@)" if($@);
     }
 
     my $schema      = $tr->schema;
     my $table_no    = 0;
 
-    $schema->name( ref($dbicschema) . " v" . ($dbicschema->schema_version || '1.x'))
-      unless ($schema->name);
+#    print Dumper($dbixschema->registered_classes);
+
+    #foreach my $tableclass ($dbixschema->registered_classes)
 
     my %seen_tables;
 
-    my @monikers = sort $dbicschema->sources;
+    my @monikers = $dbixschema->sources;
     if ($limit_sources) {
         my $ref = ref $limit_sources || '';
         die "'sources' parameter must be an array or hash ref" unless $ref eq 'ARRAY' || ref eq 'HASH';
@@ -66,25 +64,10 @@ sub parse {
     }
 
 
-    my(@table_monikers, @view_monikers);
-    for my $moniker (@monikers){
-      my $source = $dbicschema->source($moniker);
-       if ( $source->isa('DBIx::Class::ResultSource::Table') ) {
-         push(@table_monikers, $moniker);
-      } elsif( $source->isa('DBIx::Class::ResultSource::View') ){
-          next if $source->is_virtual;
-         push(@view_monikers, $moniker);
-      }
-    }
-
-    foreach my $moniker (sort @table_monikers)
+    foreach my $moniker (sort @monikers)
     {
-        my $source = $dbicschema->source($moniker);
-        
-        # Skip custom query sources
-        next if ref($source->name);
+        my $source = $dbixschema->source($moniker);
 
-        # Its possible to have multiple DBIC source using same table
         next if $seen_tables{$source->name}++;
 
         my $table = $schema->add_table(
@@ -113,11 +96,11 @@ sub parse {
 
         my @primary = $source->primary_columns;
         my %unique_constraints = $source->unique_constraints;
-        foreach my $uniq (sort keys %unique_constraints) {
+        foreach my $uniq (keys %unique_constraints) {
             if (!$source->compare_relationship_keys($unique_constraints{$uniq}, \@primary)) {
                 $table->add_constraint(
                             type             => 'unique',
-                            name             => $uniq,
+                            name             => "$uniq",
                             fields           => $unique_constraints{$uniq}
                 );
             }
@@ -126,9 +109,6 @@ sub parse {
         my @rels = $source->relationships();
 
         my %created_FK_rels;
-        
-        # global add_fk_index set in parser_args
-        my $add_fk_index = (exists $args->{add_fk_index} && ($args->{add_fk_index} == 0)) ? 0 : 1;
 
         foreach my $rel (sort @rels)
         {
@@ -140,118 +120,61 @@ sub parse {
             my $othertable = $source->related_source($rel);
             my $rel_table = $othertable->name;
 
-            my $reverse_rels = $source->reverse_relationship_info($rel);
-            my ($otherrelname, $otherrelationship) = each %{$reverse_rels};
-
-            # Force the order of @cond to match the order of ->add_columns
-            my $idx;
-            my %other_columns_idx = map {'foreign.'.$_ => ++$idx } $othertable->columns;            
-            my @cond = sort { $other_columns_idx{$a} cmp $other_columns_idx{$b} } keys(%{$rel_info->{cond}}); 
-      
             # Get the key information, mapping off the foreign/self markers
+            my @cond = keys(%{$rel_info->{cond}});
             my @refkeys = map {/^\w+\.(\w+)$/} @cond;
             my @keys = map {$rel_info->{cond}->{$_} =~ /^\w+\.(\w+)$/} @cond;
 
-            # determine if this relationship is a self.fk => foreign.pk (i.e. belongs_to)
-            my $fk_constraint;
-
-            #first it can be specified explicitly
-            if ( exists $rel_info->{attrs}{is_foreign_key_constraint} ) {
-                $fk_constraint = $rel_info->{attrs}{is_foreign_key_constraint};
-            }
-            # it can not be multi
-            elsif ( $rel_info->{attrs}{accessor}
-                    && $rel_info->{attrs}{accessor} eq 'multi' ) {
-                $fk_constraint = 0;
-            }
-            # if indeed single, check if all self.columns are our primary keys.
-            # this is supposed to indicate a has_one/might_have...
-            # where's the introspection!!?? :)
-            else {
-                $fk_constraint = not $source->compare_relationship_keys(\@keys, \@primary);
-            }
-
-            my $cascade;
-            for my $c (qw/delete update/) {
-                if (exists $rel_info->{attrs}{"on_$c"}) {
-                    if ($fk_constraint) {
-                        $cascade->{$c} = $rel_info->{attrs}{"on_$c"};
-                    }
-                    else {
-                        warn "SQLT attribute 'on_$c' was supplied for relationship '$moniker/$rel', which does not appear to be a foreign constraint. "
-                            . "If you are sure that SQLT must generate a constraint for this relationship, add 'is_foreign_key_constraint => 1' to the attributes.\n";
-                    }
-                }
-                elsif (defined $otherrelationship and $otherrelationship->{attrs}{$c eq 'update' ? 'cascade_copy' : 'cascade_delete'}) {
-                    $cascade->{$c} = 'CASCADE';
-                }
-            }
-
             if($rel_table)
             {
-                # Constraints are added only if applicable
-                next unless $fk_constraint;
+                my $reverse_rels = $source->reverse_relationship_info($rel);
+                my ($otherrelname, $otherrelationship) = each %{$reverse_rels};
+
+                my $on_delete = '';
+                my $on_update = '';
+
+                if (defined $otherrelationship) {
+                    $on_delete = $otherrelationship->{'attrs'}->{cascade_delete} ? 'CASCADE' : '';
+                    $on_update = $otherrelationship->{'attrs'}->{cascade_copy} ? 'CASCADE' : '';
+                }
 
                 # Make sure we dont create the same foreign key constraint twice
                 my $key_test = join("\x00", @keys);
-                next if $created_FK_rels{$rel_table}->{$key_test};
 
-                my $is_deferrable = $rel_info->{attrs}{is_deferrable};
-                
-                # global parser_args add_fk_index param can be overridden on the rel def
-                my $add_fk_index_rel = (exists $rel_info->{attrs}{add_fk_index}) ? $rel_info->{attrs}{add_fk_index} : $add_fk_index;
+                #Decide if this is a foreign key based on whether the self
+                #items are our primary columns.
 
-
-                $created_FK_rels{$rel_table}->{$key_test} = 1;
-                if (scalar(@keys)) {
-                  $table->add_constraint(
-                                    type             => 'foreign_key',
-                                    name             => join('_', $table->name, 'fk', @keys),
-                                    fields           => \@keys,
-                                    reference_fields => \@refkeys,
-                                    reference_table  => $rel_table,
-                                    on_delete        => uc ($cascade->{delete} || ''),
-                                    on_update        => uc ($cascade->{update} || ''),
-                                    (defined $is_deferrable ? ( deferrable => $is_deferrable ) : ()),
-                  );
-                    
-                  if ($add_fk_index_rel) {
-                      my $index = $table->add_index(
-                                                    name   => join('_', $table->name, 'idx', @keys),
-                                                    fields => \@keys,
-                                                    type   => 'NORMAL',
-                                                    );
-                  }
-              }
+                # If the sets are different, then we assume it's a foreign key from
+                # us to another table.
+                # OR: If is_foreign_key_constraint attr is explicity set (or set to false) on the relation
+                if ( ! exists $created_FK_rels{$rel_table}->{$key_test} &&
+                     ( exists $rel_info->{attrs}{is_foreign_key_constraint} ?
+                       $rel_info->{attrs}{is_foreign_key_constraint} :
+                       !$source->compare_relationship_keys(\@keys, \@primary)
+		     )
+                   )
+                {
+                    $created_FK_rels{$rel_table}->{$key_test} = 1;
+                    $table->add_constraint(
+                                type             => 'foreign_key',
+                                name             => "fk_$keys[0]",
+                                fields           => \@keys,
+                                reference_fields => \@refkeys,
+                                reference_table  => $rel_table,
+                                on_delete        => $on_delete,
+                                on_update        => $on_update
+                    );
+                }
             }
         }
-		
-        $source->_invoke_sqlt_deploy_hook($table);
-    }
 
-    foreach my $moniker (sort @view_monikers)
-    {
-        my $source = $dbicschema->source($moniker);
-        # Skip custom query sources
-        next if ref($source->name);
-
-        # Its possible to have multiple DBIC source using same table
-        next if $seen_tables{$source->name}++;
-
-        my $view = $schema->add_view(
-          name => $source->name,
-          fields => [ $source->columns ],
-          $source->view_definition ? ( 'sql' => $source->view_definition ) : ()
-        );
         if ($source->result_class->can('sqlt_deploy_hook')) {
-          $source->result_class->sqlt_deploy_hook($view);
+          $source->result_class->sqlt_deploy_hook($table);
         }
-
-        $source->_invoke_sqlt_deploy_hook($view);
     }
 
-    if ($dbicschema->can('sqlt_deploy_hook')) {
-      $dbicschema->sqlt_deploy_hook($schema);
+    if ($dbixschema->can('sqlt_deploy_hook')) {
+      $dbixschema->sqlt_deploy_hook($schema);
     }
 
     return 1;
@@ -266,17 +189,9 @@ from a DBIx::Class::Schema instance
 
 =head1 SYNOPSIS
 
- ## Via DBIx::Class
- use MyApp::Schema;
- my $schema = MyApp::Schema->connect("dbi:SQLite:something.db");
- $schema->create_ddl_dir();
- ## or
- $schema->deploy();
-
- ## Standalone
  use MyApp::Schema;
  use SQL::Translator;
- 
+
  my $schema = MyApp::Schema->connect;
  my $trans  = SQL::Translator->new (
       parser      => 'SQL::Translator::Parser::DBIx::Class',
@@ -287,24 +202,12 @@ from a DBIx::Class::Schema instance
 
 =head1 DESCRIPTION
 
-This class requires L<SQL::Translator> installed to work.
-
 C<SQL::Translator::Parser::DBIx::Class> reads a DBIx::Class schema,
 interrogates the columns, and stuffs it all in an $sqlt_schema object.
 
-It's primary use is in deploying database layouts described as a set
-of L<DBIx::Class> classes, to a database. To do this, see the
-L<DBIx::Class::Schema/deploy> method.
-
-This can also be achieved by having DBIx::Class export the schema as a
-set of SQL files ready for import into your database, or passed to
-other machines that need to have your application installed but don't
-have SQL::Translator installed. To do this see the
-L<DBIx::Class::Schema/create_ddl_dir> method.
-
 =head1 SEE ALSO
 
-L<SQL::Translator>, L<DBIx::Class::Schema>
+SQL::Translator.
 
 =head1 AUTHORS
 

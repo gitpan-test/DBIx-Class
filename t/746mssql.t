@@ -24,9 +24,8 @@ $schema->storage->dbh_do (sub {
 
 CREATE TABLE artist (
    artistid INT IDENTITY NOT NULL,
-   name VARCHAR(100),
-   rank INT NOT NULL DEFAULT '13',
-   charfield CHAR(10) NULL,
+   name VARCHAR(255),
+   charfield CHAR(10),
    primary key(artistid)
 )
 
@@ -35,9 +34,6 @@ SQL
 });
 
 my %seen_id;
-
-# fresh $schema so we start unconnected
-$schema = DBICTest::Schema->connect($dsn, $user, $pass, {AutoCommit => 1});
 
 # test primary key handling
 my $new = $schema->resultset('Artist')->create({ name => 'foo' });

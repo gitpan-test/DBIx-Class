@@ -5,8 +5,8 @@ use base 'DBIx::Class::Storage';
 
 use strict;    
 use warnings;
-use Carp::Clan qw/^DBIx::Class/;
 use DBI;
+use Carp;
 use SQL::Abstract::Limit;
 use DBIx::Class::Storage::DBI::Cursor;
 use DBIx::Class::Storage::Statistics;
@@ -14,18 +14,10 @@ use Scalar::Util qw/blessed weaken/;
 
 __PACKAGE__->mk_group_accessors('simple' =>
     qw/_connect_info _dbi_connect_info _dbh _sql_maker _sql_maker_opts
-       _conn_pid _conn_tid transaction_depth _dbh_autocommit savepoints/
+       _conn_pid _conn_tid disable_sth_caching on_connect_do
+       on_disconnect_do transaction_depth unsafe _dbh_autocommit/
 );
 
-# the values for these accessors are picked out (and deleted) from
-# the attribute hashref passed to connect_info
-my @storage_options = qw/
-  on_connect_do on_disconnect_do disable_sth_caching unsafe auto_savepoint
-/;
-__PACKAGE__->mk_group_accessors('simple' => @storage_options);
-
-
-# default cursor class, overridable in connect_info attributes
 __PACKAGE__->cursor_class('DBIx::Class::Storage::DBI::Cursor');
 
 __PACKAGE__->mk_group_accessors('inherited' => qw/sql_maker_class/);
@@ -33,8 +25,7 @@ __PACKAGE__->sql_maker_class('DBIC::SQL::Abstract');
 
 BEGIN {
 
-package # Hide from PAUSE
-  DBIC::SQL::Abstract; # Would merge upstream, but nate doesn't reply :(
+package DBIC::SQL::Abstract; # Would merge upstream, but nate doesn't reply :(
 
 use base qw/SQL::Abstract::Limit/;
 
@@ -50,9 +41,6 @@ sub new {
   $self;
 }
 
-# DB2 is the only remaining DB using this. Even though we are not sure if
-# RowNumberOver is still needed here (should be part of SQLA) leave the 
-# code in place
 sub _RowNumberOver {
   my ($self, $sql, $order, $rows, $offset ) = @_;
 
@@ -60,7 +48,7 @@ sub _RowNumberOver {
   my $last = $rows + $offset;
   my ( $order_by ) = $self->_order_by( $order );
 
-  $sql = <<"SQL";
+  $sql = <<"";
 SELECT * FROM
 (
    SELECT Q1.*, ROW_NUMBER() OVER( ) AS ROW_NUM FROM (
@@ -69,8 +57,6 @@ SELECT * FROM
    ) Q1
 ) Q2
 WHERE ROW_NUM BETWEEN $offset AND $last
-
-SQL
 
   return $sql;
 }
@@ -81,26 +67,17 @@ SQL
 use Scalar::Util 'blessed';
 sub _find_syntax {
   my ($self, $syntax) = @_;
-  
-  # DB2 is the only remaining DB using this. Even though we are not sure if
-  # RowNumberOver is still needed here (should be part of SQLA) leave the 
-  # code in place
-  my $dbhname = blessed($syntax) ? $syntax->{Driver}{Name} : $syntax;
+  my $dbhname = blessed($syntax) ?  $syntax->{Driver}{Name} : $syntax;
   if(ref($self) && $dbhname && $dbhname eq 'DB2') {
     return 'RowNumberOver';
   }
-  
+
   $self->{_cached_syntax} ||= $self->SUPER::_find_syntax($syntax);
 }
 
 sub select {
   my ($self, $table, $fields, $where, $order, @rest) = @_;
-  if (ref $table eq 'SCALAR') {
-    $table = $$table;
-  }
-  elsif (not ref $table) {
-    $table = $self->_quote($table);
-  }
+  $table = $self->_quote($table) unless ref($table);
   local $self->{rownum_hack_count} = 1
     if (defined $rest[0] && $self->{limit_dialect} eq 'RowNum');
   @rest = (-1) unless defined $rest[0];
@@ -171,13 +148,6 @@ sub _recurse_fields {
         .'( '.$self->_recurse_fields($fields->{$func}).' )';
     }
   }
-  # Is the second check absolutely necessary?
-  elsif ( $ref eq 'REF' and ref($$fields) eq 'ARRAY' ) {
-    return $self->_bind_to_sql( $fields );
-  }
-  else {
-    Carp::croak($ref . qq{ unexpected in _recurse_fields()})
-  }
 }
 
 sub _order_by {
@@ -197,9 +167,6 @@ sub _order_by {
     }
     if (defined $_[0]->{order_by}) {
       $ret .= $self->_order_by($_[0]->{order_by});
-    }
-    if (grep { $_ =~ /^-(desc|asc)/i } keys %{$_[0]}) {
-      return $self->SUPER::_order_by($_[0]);
     }
   } elsif (ref $_[0] eq 'SCALAR') {
     $ret = $self->_sqlcase(' order by ').${ $_[0] };
@@ -266,20 +233,10 @@ sub _recurse_from {
   return join('', @sqlf);
 }
 
-sub _bind_to_sql {
-  my $self = shift;
-  my $arr  = shift;
-  my $sql = shift @$$arr;
-  $sql =~ s/\?/$self->_quote((shift @$$arr)->[1])/eg;
-  return $sql
-}
-
 sub _make_as {
   my ($self, $from) = @_;
-  return join(' ', map { (ref $_ eq 'SCALAR' ? $$_ 
-                        : ref $_ eq 'REF'    ? $self->_bind_to_sql($_) 
-                        : $self->_quote($_)) 
-                       } reverse each %{$self->_skip_options($from)});
+  return join(' ', map { (ref $_ eq 'SCALAR' ? $$_ : $self->_quote($_)) }
+                     reverse each %{$self->_skip_options($from)});
 }
 
 sub _skip_options {
@@ -356,15 +313,6 @@ DBIx::Class::Storage::DBI - DBI storage handler
 
 =head1 SYNOPSIS
 
-  my $schema = MySchema->connect('dbi:SQLite:my.db');
-
-  $schema->storage->debug(1);
-  $schema->dbh_do("DROP TABLE authors");
-
-  $schema->resultset('Book')->search({
-     written_on => $schema->storage->datetime_parser(DateTime->now)
-  });
-
 =head1 DESCRIPTION
 
 This class represents the connection to an RDBMS via L<DBI>.  See
@@ -380,7 +328,6 @@ sub new {
 
   $new->transaction_depth(0);
   $new->_sql_maker_opts({});
-  $new->{savepoints} = [];
   $new->{_in_dbh_do} = 0;
   $new->{_dbh_gen} = 0;
 
@@ -389,80 +336,27 @@ sub new {
 
 =head2 connect_info
 
-This method is normally called by L<DBIx::Class::Schema/connection>, which
-encapsulates its argument list in an arrayref before passing them here.
+The arguments of C<connect_info> are always a single array reference.
 
-The argument list may contain:
+This is normally accessed via L<DBIx::Class::Schema/connection>, which
+encapsulates its argument list in an arrayref before calling
+C<connect_info> here.
 
-=over
+The arrayref can either contain the same set of arguments one would
+normally pass to L<DBI/connect>, or a lone code reference which returns
+a connected database handle.  Please note that the L<DBI> docs
+recommend that you always explicitly set C<AutoCommit> to either
+C<0> or C<1>.   L<DBIx::Class> further recommends that it be set
+to C<1>, and that you perform transactions via our L</txn_do>
+method.  L<DBIx::Class> will set it to C<1> if you do not do explicitly
+set it to zero.  This is the default for most DBDs.  See below for more
+details.
 
-=item *
+In either case, if the final argument in your connect_info happens
+to be a hashref, C<connect_info> will look there for several
+connection-specific options:
 
-The same 4-element argument set one would normally pass to
-L<DBI/connect>, optionally followed by
-L<extra attributes|/DBIx::Class specific connection attributes>
-recognized by DBIx::Class:
-
-  $connect_info_args = [ $dsn, $user, $password, \%dbi_attributes?, \%extra_attributes? ];
-
-=item *
-
-A single code reference which returns a connected 
-L<DBI database handle|DBI/connect> optionally followed by 
-L<extra attributes|/DBIx::Class specific connection attributes> recognized
-by DBIx::Class:
-
-  $connect_info_args = [ sub { DBI->connect (...) }, \%extra_attributes? ];
-
-=item *
-
-A single hashref with all the attributes and the dsn/user/password
-mixed together:
-
-  $connect_info_args = [{
-    dsn => $dsn,
-    user => $user,
-    password => $pass,
-    %dbi_attributes,
-    %extra_attributes,
-  }];
-
-This is particularly useful for L<Catalyst> based applications, allowing the 
-following config (L<Config::General> style):
-
-  <Model::DB>
-    schema_class   App::DB
-    <connect_info>
-      dsn          dbi:mysql:database=test
-      user         testuser
-      password     TestPass
-      AutoCommit   1
-    </connect_info>
-  </Model::DB>
-
-=back
-
-Please note that the L<DBI> docs recommend that you always explicitly
-set C<AutoCommit> to either I<0> or I<1>.  L<DBIx::Class> further
-recommends that it be set to I<1>, and that you perform transactions
-via our L<DBIx::Class::Schema/txn_do> method.  L<DBIx::Class> will set it
-to I<1> if you do not do explicitly set it to zero.  This is the default 
-for most DBDs. See L</DBIx::Class and AutoCommit> for details.
-
-=head3 DBIx::Class specific connection attributes
-
-In addition to the standard L<DBI|DBI/ATTRIBUTES_COMMON_TO_ALL_HANDLES>
-L<connection|DBI/Database_Handle_Attributes> attributes, DBIx::Class recognizes
-the following connection options. These options can be mixed in with your other
-L<DBI> connection attributes, or placed in a seperate hashref
-(C<\%extra_attributes>) as shown above.
-
-Every time C<connect_info> is invoked, any previous settings for
-these options will be cleared before setting the new ones, regardless of
-whether any options are specified in the new C<connect_info>.
-
-
-=over
+=over 4
 
 =item on_connect_do
 
@@ -485,10 +379,10 @@ array reference, its return value is ignored.
 
 =item on_disconnect_do
 
-Takes arguments in the same form as L</on_connect_do> and executes them
+Takes arguments in the same form as L<on_connect_do> and executes them
 immediately before disconnecting from the database.
 
-Note, this only runs if you explicitly call L</disconnect> on the
+Note, this only runs if you explicitly call L<disconnect> on the
 storage object.
 
 =item disable_sth_caching
@@ -500,30 +394,25 @@ statement handles via L<DBI/prepare_cached>.
 
 Sets the limit dialect. This is useful for JDBC-bridge among others
 where the remote SQL-dialect cannot be determined by the name of the
-driver alone. See also L<SQL::Abstract::Limit>.
+driver alone.
 
 =item quote_char
 
 Specifies what characters to use to quote table and column names. If 
-you use this you will want to specify L</name_sep> as well.
+you use this you will want to specify L<name_sep> as well.
 
-C<quote_char> expects either a single character, in which case is it
-is placed on either side of the table/column name, or an arrayref of length
-2 in which case the table/column name is placed between the elements.
+quote_char expects either a single character, in which case is it is placed
+on either side of the table/column, or an arrayref of length 2 in which case the
+table/column name is placed between the elements.
 
-For example under MySQL you should use C<< quote_char => '`' >>, and for
-SQL Server you should use C<< quote_char => [qw/[ ]/] >>.
+For example under MySQL you'd use C<quote_char =E<gt> '`'>, and user SQL Server you'd 
+use C<quote_char =E<gt> [qw/[ ]/]>.
 
 =item name_sep
 
-This only needs to be used in conjunction with C<quote_char>, and is used to 
+This only needs to be used in conjunction with L<quote_char>, and is used to 
 specify the charecter that seperates elements (schemas, tables, columns) from 
 each other. In most cases this is simply a C<.>.
-
-The consequences of not supplying this value is that L<SQL::Abstract>
-will assume DBIx::Class' uses of aliases to be complete column
-names. The output will look like I<"me.name"> when it should actually
-be I<"me"."name">.
 
 =item unsafe
 
@@ -541,21 +430,32 @@ Note that your custom settings can cause Storage to malfunction,
 especially if you set a C<HandleError> handler that suppresses exceptions
 and/or disable C<RaiseError>.
 
-=item auto_savepoint
-
-If this option is true, L<DBIx::Class> will use savepoints when nesting
-transactions, making it possible to recover from failure in the inner
-transaction without having to abort all outer transactions.
-
-=item cursor_class
-
-Use this argument to supply a cursor class other than the default
-L<DBIx::Class::Storage::DBI::Cursor>.
-
 =back
 
-Some real-life examples of arguments to L</connect_info> and
-L<DBIx::Class::Schema/connect>
+These options can be mixed in with your other L<DBI> connection attributes,
+or placed in a seperate hashref after all other normal L<DBI> connection
+arguments.
+
+Every time C<connect_info> is invoked, any previous settings for
+these options will be cleared before setting the new ones, regardless of
+whether any options are specified in the new C<connect_info>.
+
+Another Important Note:
+
+DBIC can do some wonderful magic with handling exceptions,
+disconnections, and transactions when you use C<AutoCommit =&gt; 1>
+combined with C<txn_do> for transaction support.
+
+If you set C<AutoCommit =&gt; 0> in your connect info, then you are always
+in an assumed transaction between commits, and you're telling us you'd
+like to manage that manually.  A lot of DBIC's magic protections
+go away.  We can't protect you from exceptions due to database
+disconnects because we don't know anything about how to restart your
+transactions.  You're on your own for handling all sorts of exceptional
+cases if you choose the C<AutoCommit =&gt 0> path, just as you would
+be with raw DBI.
+
+Examples:
 
   # Simple SQLite connection
   ->connect_info([ 'dbi:SQLite:./foo.db' ]);
@@ -584,20 +484,7 @@ L<DBIx::Class::Schema/connect>
     ]
   );
 
-  # Same, but with hashref as argument
-  # See parse_connect_info for explanation
-  ->connect_info(
-    [{
-      dsn         => 'dbi:Pg:dbname=foo',
-      user        => 'postgres',
-      password    => 'my_pg_password',
-      AutoCommit  => 1,
-      quote_char  => q{"},
-      name_sep    => q{.},
-    }]
-  );
-
-  # Subref + DBIx::Class-specific connection options
+  # Subref + DBIC-specific connection options
   ->connect_info(
     [
       sub { DBI->connect(...) },
@@ -610,8 +497,6 @@ L<DBIx::Class::Schema/connect>
     ]
   );
 
-
-
 =cut
 
 sub connect_info {
@@ -619,67 +504,50 @@ sub connect_info {
 
   return $self->_connect_info if !$info_arg;
 
-  my @args = @$info_arg;  # take a shallow copy for further mutilation
-  $self->_connect_info([@args]); # copy for _connect_info
-
-
-  # combine/pre-parse arguments depending on invocation style
-
-  my %attrs;
-  if (ref $args[0] eq 'CODE') {     # coderef with optional \%extra_attributes
-    %attrs = %{ $args[1] || {} };
-    @args = $args[0];
-  }
-  elsif (ref $args[0] eq 'HASH') { # single hashref (i.e. Catalyst config)
-    %attrs = %{$args[0]};
-    @args = ();
-    for (qw/password user dsn/) {
-      unshift @args, delete $attrs{$_};
-    }
-  }
-  else {                # otherwise assume dsn/user/password + \%attrs + \%extra_attrs
-    %attrs = (
-      % { $args[3] || {} },
-      % { $args[4] || {} },
-    );
-    @args = @args[0,1,2];
-  }
-
   # Kill sql_maker/_sql_maker_opts, so we get a fresh one with only
   #  the new set of options
   $self->_sql_maker(undef);
   $self->_sql_maker_opts({});
+  $self->_connect_info([@$info_arg]); # copy for _connect_info
 
-  if(keys %attrs) {
-    for my $storage_opt (@storage_options, 'cursor_class') {    # @storage_options is declared at the top of the module
-      if(my $value = delete $attrs{$storage_opt}) {
+  my $dbi_info = [@$info_arg]; # copy for _dbi_connect_info
+
+  my $last_info = $dbi_info->[-1];
+  if(ref $last_info eq 'HASH') {
+    $last_info = { %$last_info }; # so delete is non-destructive
+    my @storage_option = qw(
+      on_connect_do on_disconnect_do disable_sth_caching unsafe cursor_class
+    );
+    for my $storage_opt (@storage_option) {
+      if(my $value = delete $last_info->{$storage_opt}) {
         $self->$storage_opt($value);
       }
     }
     for my $sql_maker_opt (qw/limit_dialect quote_char name_sep/) {
-      if(my $opt_val = delete $attrs{$sql_maker_opt}) {
+      if(my $opt_val = delete $last_info->{$sql_maker_opt}) {
         $self->_sql_maker_opts->{$sql_maker_opt} = $opt_val;
       }
     }
+    # re-insert modified hashref
+    $dbi_info->[-1] = $last_info;
+
+    # Get rid of any trailing empty hashref
+    pop(@$dbi_info) if !keys %$last_info;
   }
+  $self->_dbi_connect_info($dbi_info);
 
-  %attrs = () if (ref $args[0] eq 'CODE');  # _connect() never looks past $args[0] in this case
-
-  $self->_dbi_connect_info([@args, keys %attrs ? \%attrs : ()]);
   $self->_connect_info;
 }
 
 =head2 on_connect_do
 
-This method is deprecated in favour of setting via L</connect_info>.
-
+This method is deprecated in favor of setting via L</connect_info>.
 
 =head2 dbh_do
 
-Arguments: ($subref | $method_name), @extra_coderef_args?
+Arguments: $subref, @extra_coderef_args?
 
-Execute the given $subref or $method_name using the new exception-based
-connection management.
+Execute the given subref using the new exception-based connection management.
 
 The first two arguments will be the storage object that C<dbh_do> was called
 on and a database handle to use.  Any additional arguments will be passed
@@ -707,11 +575,12 @@ Example:
 
 sub dbh_do {
   my $self = shift;
-  my $code = shift;
+  my $coderef = shift;
 
-  my $dbh = $self->_dbh;
+  ref $coderef eq 'CODE' or $self->throw_exception
+    ('$coderef must be a CODE reference');
 
-  return $self->$code($dbh, @_) if $self->{_in_dbh_do}
+  return $coderef->($self, $self->_dbh, @_) if $self->{_in_dbh_do}
       || $self->{transaction_depth};
 
   local $self->{_in_dbh_do} = 1;
@@ -720,20 +589,16 @@ sub dbh_do {
   my $want_array = wantarray;
 
   eval {
-    $self->_verify_pid if $dbh;
-    if(!$self->_dbh) {
-        $self->_populate_dbh;
-        $dbh = $self->_dbh;
-    }
-
+    $self->_verify_pid if $self->_dbh;
+    $self->_populate_dbh if !$self->_dbh;
     if($want_array) {
-        @result = $self->$code($dbh, @_);
+        @result = $coderef->($self, $self->_dbh, @_);
     }
     elsif(defined $want_array) {
-        $result[0] = $self->$code($dbh, @_);
+        $result[0] = $coderef->($self, $self->_dbh, @_);
     }
     else {
-        $self->$code($dbh, @_);
+        $coderef->($self, $self->_dbh, @_);
     }
   };
 
@@ -745,7 +610,7 @@ sub dbh_do {
   # We were not connected - reconnect and retry, but let any
   #  exception fall right through this time
   $self->_populate_dbh;
-  $self->$code($self->_dbh, @_);
+  $coderef->($self, $self->_dbh, @_);
 }
 
 # This is basically a blend of dbh_do above and DBIx::Class::Storage::txn_do.
@@ -758,7 +623,7 @@ sub txn_do {
   ref $coderef eq 'CODE' or $self->throw_exception
     ('$coderef must be a CODE reference');
 
-  return $coderef->(@_) if $self->{transaction_depth} && ! $self->auto_savepoint;
+  return $coderef->(@_) if $self->{transaction_depth};
 
   local $self->{_in_dbh_do} = 1;
 
@@ -830,28 +695,6 @@ sub disconnect {
   }
 }
 
-=head2 with_deferred_fk_checks
-
-=over 4
-
-=item Arguments: C<$coderef>
-
-=item Return Value: The return value of $coderef
-
-=back
-
-Storage specific method to run the code ref with FK checks deferred or
-in MySQL's case disabled entirely.
-
-=cut
-
-# Storage subclasses should override this
-sub with_deferred_fk_checks {
-  my ($self, $sub) = @_;
-
-  $sub->();
-}
-
 sub connected {
   my ($self) = @_;
 
@@ -909,7 +752,7 @@ sub dbh {
 sub _sql_maker_args {
     my ($self) = @_;
     
-    return ( bindtype=>'columns', array_datatypes => 1, limit_dialect => $self->dbh, %{$self->_sql_maker_opts} );
+    return ( bindtype=>'columns', limit_dialect => $self->dbh, %{$self->_sql_maker_opts} );
 }
 
 sub sql_maker {
@@ -920,8 +763,6 @@ sub sql_maker {
   }
   return $self->_sql_maker;
 }
-
-sub _rebless {}
 
 sub _populate_dbh {
   my ($self) = @_;
@@ -936,15 +777,15 @@ sub _populate_dbh {
     my $driver = $self->_dbh->{Driver}->{Name};
     if ($self->load_optional_class("DBIx::Class::Storage::DBI::${driver}")) {
       bless $self, "DBIx::Class::Storage::DBI::${driver}";
-      $self->_rebless();
+      $self->_rebless() if $self->can('_rebless');
     }
   }
 
-  $self->_conn_pid($$);
-  $self->_conn_tid(threads->tid) if $INC{'threads.pm'};
-
   my $connection_do = $self->on_connect_do;
   $self->_do_connection_actions($connection_do) if ref($connection_do);
+
+  $self->_conn_pid($$);
+  $self->_conn_tid(threads->tid) if $INC{'threads.pm'};
 }
 
 sub _do_connection_actions {
@@ -955,7 +796,7 @@ sub _do_connection_actions {
     $self->_do_query($_) foreach @$connection_do;
   }
   elsif (ref $connection_do eq 'CODE') {
-    $connection_do->($self);
+    $connection_do->();
   }
 
   return $self;
@@ -969,18 +810,10 @@ sub _do_query {
     $self->_do_query($_) foreach @$action;
   }
   else {
-    # Most debuggers expect ($sql, @bind), so we need to exclude
-    # the attribute hash which is the second argument to $dbh->do
-    # furthermore the bind values are usually to be presented
-    # as named arrayref pairs, so wrap those here too
-    my @do_args = (ref $action eq 'ARRAY') ? (@$action) : ($action);
-    my $sql = shift @do_args;
-    my $attrs = shift @do_args;
-    my @bind = map { [ undef, $_ ] } @do_args;
-
-    $self->_query_start($sql, @bind);
-    $self->_dbh->do($sql, $attrs, @do_args);
-    $self->_query_end($sql, @bind);
+    my @to_run = (ref $action eq 'ARRAY') ? (@$action) : ($action);
+    $self->_query_start(@to_run);
+    $self->_dbh->do(@to_run);
+    $self->_query_end(@to_run);
   }
 
   return $self;
@@ -1034,90 +867,6 @@ sub _connect {
   $dbh;
 }
 
-sub svp_begin {
-  my ($self, $name) = @_;
-
-  $name = $self->_svp_generate_name
-    unless defined $name;
-
-  $self->throw_exception ("You can't use savepoints outside a transaction")
-    if $self->{transaction_depth} == 0;
-
-  $self->throw_exception ("Your Storage implementation doesn't support savepoints")
-    unless $self->can('_svp_begin');
-  
-  push @{ $self->{savepoints} }, $name;
-
-  $self->debugobj->svp_begin($name) if $self->debug;
-  
-  return $self->_svp_begin($name);
-}
-
-sub svp_release {
-  my ($self, $name) = @_;
-
-  $self->throw_exception ("You can't use savepoints outside a transaction")
-    if $self->{transaction_depth} == 0;
-
-  $self->throw_exception ("Your Storage implementation doesn't support savepoints")
-    unless $self->can('_svp_release');
-
-  if (defined $name) {
-    $self->throw_exception ("Savepoint '$name' does not exist")
-      unless grep { $_ eq $name } @{ $self->{savepoints} };
-
-    # Dig through the stack until we find the one we are releasing.  This keeps
-    # the stack up to date.
-    my $svp;
-
-    do { $svp = pop @{ $self->{savepoints} } } while $svp ne $name;
-  } else {
-    $name = pop @{ $self->{savepoints} };
-  }
-
-  $self->debugobj->svp_release($name) if $self->debug;
-
-  return $self->_svp_release($name);
-}
-
-sub svp_rollback {
-  my ($self, $name) = @_;
-
-  $self->throw_exception ("You can't use savepoints outside a transaction")
-    if $self->{transaction_depth} == 0;
-
-  $self->throw_exception ("Your Storage implementation doesn't support savepoints")
-    unless $self->can('_svp_rollback');
-
-  if (defined $name) {
-      # If they passed us a name, verify that it exists in the stack
-      unless(grep({ $_ eq $name } @{ $self->{savepoints} })) {
-          $self->throw_exception("Savepoint '$name' does not exist!");
-      }
-
-      # Dig through the stack until we find the one we are releasing.  This keeps
-      # the stack up to date.
-      while(my $s = pop(@{ $self->{savepoints} })) {
-          last if($s eq $name);
-      }
-      # Add the savepoint back to the stack, as a rollback doesn't remove the
-      # named savepoint, only everything after it.
-      push(@{ $self->{savepoints} }, $name);
-  } else {
-      # We'll assume they want to rollback to the last savepoint
-      $name = $self->{savepoints}->[-1];
-  }
-
-  $self->debugobj->svp_rollback($name) if $self->debug;
-  
-  return $self->_svp_rollback($name);
-}
-
-sub _svp_generate_name {
-    my ($self) = @_;
-
-    return 'savepoint_'.scalar(@{ $self->{'savepoints'} });
-}
 
 sub txn_begin {
   my $self = shift;
@@ -1129,8 +878,6 @@ sub txn_begin {
     #  we should reconnect on begin_work
     #  for AutoCommit users
     $self->dbh->begin_work;
-  } elsif ($self->auto_savepoint) {
-    $self->svp_begin;
   }
   $self->{transaction_depth}++;
 }
@@ -1146,9 +893,7 @@ sub txn_commit {
       if $self->_dbh_autocommit;
   }
   elsif($self->{transaction_depth} > 1) {
-    $self->{transaction_depth}--;
-    $self->svp_release
-      if $self->auto_savepoint;
+    $self->{transaction_depth}--
   }
 }
 
@@ -1165,10 +910,6 @@ sub txn_rollback {
     }
     elsif($self->{transaction_depth} > 1) {
       $self->{transaction_depth}--;
-      if ($self->auto_savepoint) {
-        $self->svp_rollback;
-        $self->svp_release;
-      }
     }
     else {
       die DBIx::Class::Storage::NESTED_ROLLBACK_EXCEPTION->new;
@@ -1190,15 +931,11 @@ sub txn_rollback {
 sub _prep_for_execute {
   my ($self, $op, $extra_bind, $ident, $args) = @_;
 
-  if( blessed($ident) && $ident->isa("DBIx::Class::ResultSource") ) {
-    $ident = $ident->from();
-  }
-
   my ($sql, @bind) = $self->sql_maker->$op($ident, @$args);
-
   unshift(@bind,
     map { ref $_ eq 'ARRAY' ? $_ : [ '!!dummy', $_ ] } @$extra_bind)
       if $extra_bind;
+
   return ($sql, \@bind);
 }
 
@@ -1223,7 +960,6 @@ sub _query_start {
 
     if ( $self->debug ) {
         @bind = $self->_fix_bind_params(@bind);
-        
         $self->debugobj->query_start( $sql, @bind );
     }
 }
@@ -1239,6 +975,10 @@ sub _query_end {
 
 sub _dbh_execute {
   my ($self, $dbh, $op, $extra_bind, $ident, $bind_attributes, @args) = @_;
+  
+  if( blessed($ident) && $ident->isa("DBIx::Class::ResultSource") ) {
+    $ident = $ident->from();
+  }
 
   my ($sql, $bind) = $self->_prep_for_execute($op, $extra_bind, $ident, \@args);
 
@@ -1258,8 +998,7 @@ sub _dbh_execute {
     }
 
     foreach my $data (@data) {
-      my $ref = ref $data;
-      $data = $ref && $ref ne 'ARRAY' ? ''.$data : $data; # stringify args (except arrayrefs)
+      $data = ref $data ? ''.$data : $data; # stringify args
 
       $sth->bind_param($placeholder_index, $data, $attributes);
       $placeholder_index++;
@@ -1277,7 +1016,7 @@ sub _dbh_execute {
 
 sub _execute {
     my $self = shift;
-    $self->dbh_do('_dbh_execute', @_)
+    $self->dbh_do($self->can('_dbh_execute'), @_)
 }
 
 sub insert {
@@ -1285,17 +1024,6 @@ sub insert {
   
   my $ident = $source->from; 
   my $bind_attributes = $self->source_bind_attributes($source);
-
-  $self->ensure_connected;
-  foreach my $col ( $source->columns ) {
-    if ( !defined $to_insert->{$col} ) {
-      my $col_info = $source->column_info($col);
-
-      if ( $col_info->{auto_nextval} ) {
-        $to_insert->{$col} = $self->_sequence_fetch( 'nextval', $col_info->{sequence} || $self->_dbh_get_autoinc_seq($self->dbh, $source) );
-      }
-    }
-  }
 
   $self->_execute('insert' => [], $source, $bind_attributes, $to_insert);
 
@@ -1374,19 +1102,16 @@ sub delete {
 }
 
 sub _select {
-  my $self = shift;
-  my $sql_maker = $self->sql_maker;
-  local $sql_maker->{for};
-  return $self->_execute($self->_select_args(@_));
-}
-
-sub _select_args {
   my ($self, $ident, $select, $condition, $attrs) = @_;
   my $order = $attrs->{order_by};
 
+  if (ref $condition eq 'SCALAR') {
+    $order = $1 if $$condition =~ s/ORDER BY (.*)$//i;
+  }
+
   my $for = delete $attrs->{for};
   my $sql_maker = $self->sql_maker;
-  $sql_maker->{for} = $for;
+  local $sql_maker->{for} = $for;
 
   if (exists $attrs->{group_by} || $attrs->{having}) {
     $order = {
@@ -1403,12 +1128,10 @@ sub _select_args {
   } else {
     $self->throw_exception("rows attribute must be positive if present")
       if (defined($attrs->{rows}) && !($attrs->{rows} > 0));
-
-    # MySQL actually recommends this approach.  I cringe.
-    $attrs->{rows} = 2**48 if not defined $attrs->{rows} and defined $attrs->{offset};
     push @args, $attrs->{rows}, $attrs->{offset};
   }
-  return @args;
+
+  return $self->_execute(@args);
 }
 
 sub source_bind_attributes {
@@ -1447,10 +1170,6 @@ sub select_single {
   my $self = shift;
   my ($rv, $sth, @bind) = $self->_select(@_);
   my @row = $sth->fetchrow_array;
-  my @nextrow = $sth->fetchrow_array if @row;
-  if(@row && @nextrow) {
-    carp "Query returned more than one row.  SQL that returns multiple rows is DEPRECATED for ->find and ->single";
-  }
   # Need to call finish() to work round broken DBDs
   $sth->finish();
   return @row;
@@ -1485,7 +1204,7 @@ sub _dbh_sth {
 
 sub sth {
   my ($self, $sql) = @_;
-  $self->dbh_do('_dbh_sth', $sql);
+  $self->dbh_do($self->can('_dbh_sth'), $sql);
 }
 
 sub _dbh_columns_info_for {
@@ -1547,7 +1266,7 @@ sub _dbh_columns_info_for {
 
 sub columns_info_for {
   my ($self, $table) = @_;
-  $self->dbh_do('_dbh_columns_info_for', $table);
+  $self->dbh_do($self->can('_dbh_columns_info_for'), $table);
 }
 
 =head2 last_insert_id
@@ -1557,23 +1276,14 @@ Return the row id of the last insert.
 =cut
 
 sub _dbh_last_insert_id {
-    # All Storage's need to register their own _dbh_last_insert_id
-    # the old SQLite-based method was highly inappropriate
-
-    my $self = shift;
-    my $class = ref $self;
-    $self->throw_exception (<<EOE);
-
-No _dbh_last_insert_id() method found in $class.
-Since the method of obtaining the autoincrement id of the last insert
-operation varies greatly between different databases, this method must be
-individually implemented for every storage class.
-EOE
+    my ($self, $dbh, $source, $col) = @_;
+    # XXX This is a SQLite-ism as a default... is there a DBI-generic way?
+    $dbh->func('last_insert_rowid');
 }
 
 sub last_insert_id {
   my $self = shift;
-  $self->dbh_do('_dbh_last_insert_id', @_);
+  $self->dbh_do($self->can('_dbh_last_insert_id'), @_);
 }
 
 =head2 sqlt_type
@@ -1586,9 +1296,9 @@ sub sqlt_type { shift->dbh->{Driver}->{Name} }
 
 =head2 bind_attribute_by_data_type
 
-Given a datatype from column info, returns a database specific bind
-attribute for C<< $dbh->bind_param($val,$attribute) >> or nothing if we will
-let the database planner just handle it.
+Given a datatype from column info, returns a database specific bind attribute for
+$dbh->bind_param($val,$attribute) or nothing if we will let the database planner
+just handle it.
 
 Generally only needed for special case column types, like bytea in postgres.
 
@@ -1602,134 +1312,136 @@ sub bind_attribute_by_data_type {
 
 =over 4
 
-=item Arguments: $schema \@databases, $version, $directory, $preversion, \%sqlt_args
+=item Arguments: $schema \@databases, $version, $directory, $preversion, $sqlt_args
 
 =back
 
 Creates a SQL file based on the Schema, for each of the specified
 database types, in the given directory.
 
-By default, C<\%sqlt_args> will have
-
- { add_drop_table => 1, ignore_constraint_names => 1, ignore_index_names => 1 }
-
-merged with the hash passed in. To disable any of those features, pass in a 
-hashref like the following
-
- { ignore_constraint_names => 0, # ... other options }
-
 =cut
 
-sub create_ddl_dir {
+sub create_ddl_dir
+{
   my ($self, $schema, $databases, $version, $dir, $preversion, $sqltargs) = @_;
 
-  if(!$dir || !-d $dir) {
+  if(!$dir || !-d $dir)
+  {
     warn "No directory given, using ./\n";
     $dir = "./";
   }
   $databases ||= ['MySQL', 'SQLite', 'PostgreSQL'];
   $databases = [ $databases ] if(ref($databases) ne 'ARRAY');
+  $version ||= $schema->VERSION || '1.x';
+  $sqltargs = { ( add_drop_table => 1 ), %{$sqltargs || {}} };
 
-  my $schema_version = $schema->schema_version || '1.x';
-  $version ||= $schema_version;
-
-  $sqltargs = {
-    add_drop_table => 1, 
-    ignore_constraint_names => 1,
-    ignore_index_names => 1,
-    %{$sqltargs || {}}
-  };
-
-  $self->throw_exception(q{Can't create a ddl file without SQL::Translator 0.09003: '}
+  $self->throw_exception(q{Can't create a ddl file without SQL::Translator 0.08: '}
       . $self->_check_sqlt_message . q{'})
           if !$self->_check_sqlt_version;
 
-  my $sqlt = SQL::Translator->new( $sqltargs );
-
-  $sqlt->parser('SQL::Translator::Parser::DBIx::Class');
-  my $sqlt_schema = $sqlt->translate({ data => $schema }) or die $sqlt->error;
-
-  foreach my $db (@$databases) {
+  my $sqlt = SQL::Translator->new({
+#      debug => 1,
+      add_drop_table => 1,
+  });
+  foreach my $db (@$databases)
+  {
     $sqlt->reset();
-    $sqlt->{schema} = $sqlt_schema;
+    $sqlt->parser('SQL::Translator::Parser::DBIx::Class');
+#    $sqlt->parser_args({'DBIx::Class' => $schema);
+    $sqlt = $self->configure_sqlt($sqlt, $db);
+    $sqlt->data($schema);
     $sqlt->producer($db);
 
     my $file;
-    my $filename = $schema->ddl_filename($db, $version, $dir);
-    if (-e $filename && ($version eq $schema_version )) {
-      # if we are dumping the current version, overwrite the DDL
-      warn "Overwriting existing DDL file - $filename";
-      unlink($filename);
+    my $filename = $schema->ddl_filename($db, $dir, $version);
+    if(-e $filename)
+    {
+      warn("$filename already exists, skipping $db");
+      next;
     }
 
     my $output = $sqlt->translate;
-    if(!$output) {
+    if(!$output)
+    {
       warn("Failed to translate to $db, skipping. (" . $sqlt->error . ")");
       next;
     }
-    if(!open($file, ">$filename")) {
-      $self->throw_exception("Can't open $filename for writing ($!)");
-      next;
+    if(!open($file, ">$filename"))
+    {
+        $self->throw_exception("Can't open $filename for writing ($!)");
+        next;
     }
     print $file $output;
     close($file);
-  
-    next unless ($preversion);
 
-    require SQL::Translator::Diff;
-
-    my $prefilename = $schema->ddl_filename($db, $preversion, $dir);
-    if(!-e $prefilename) {
-      warn("No previous schema file found ($prefilename)");
-      next;
-    }
-
-    my $difffile = $schema->ddl_filename($db, $version, $dir, $preversion);
-    if(-e $difffile) {
-      warn("Overwriting existing diff file - $difffile");
-      unlink($difffile);
-    }
-    
-    my $source_schema;
+    if($preversion)
     {
-      my $t = SQL::Translator->new($sqltargs);
-      $t->debug( 0 );
-      $t->trace( 0 );
-      $t->parser( $db )                       or die $t->error;
-      my $out = $t->translate( $prefilename ) or die $t->error;
-      $source_schema = $t->schema;
-      unless ( $source_schema->name ) {
-        $source_schema->name( $prefilename );
-      }
-    }
+      require SQL::Translator::Diff;
 
-    # The "new" style of producers have sane normalization and can support 
-    # diffing a SQL file against a DBIC->SQLT schema. Old style ones don't
-    # And we have to diff parsed SQL against parsed SQL.
-    my $dest_schema = $sqlt_schema;
-    
-    unless ( "SQL::Translator::Producer::$db"->can('preprocess_schema') ) {
-      my $t = SQL::Translator->new($sqltargs);
-      $t->debug( 0 );
-      $t->trace( 0 );
-      $t->parser( $db )                    or die $t->error;
-      my $out = $t->translate( $filename ) or die $t->error;
-      $dest_schema = $t->schema;
-      $dest_schema->name( $filename )
-        unless $dest_schema->name;
+      my $prefilename = $schema->ddl_filename($db, $dir, $preversion);
+#      print "Previous version $prefilename\n";
+      if(!-e $prefilename)
+      {
+        warn("No previous schema file found ($prefilename)");
+        next;
+      }
+      #### We need to reparse the SQLite file we just wrote, so that 
+      ##   Diff doesnt get all confoosed, and Diff is *very* confused.
+      ##   FIXME: rip Diff to pieces!
+#      my $target_schema = $sqlt->schema;
+#      unless ( $target_schema->name ) {
+#        $target_schema->name( $filename );
+#      }
+      my @input;
+      push @input, {file => $prefilename, parser => $db};
+      push @input, {file => $filename, parser => $db};
+      my ( $source_schema, $source_db, $target_schema, $target_db ) = map {
+        my $file   = $_->{'file'};
+        my $parser = $_->{'parser'};
+
+        my $t = SQL::Translator->new;
+        $t->debug( 0 );
+        $t->trace( 0 );
+        $t->parser( $parser )            or die $t->error;
+        my $out = $t->translate( $file ) or die $t->error;
+        my $schema = $t->schema;
+        unless ( $schema->name ) {
+          $schema->name( $file );
+        }
+        ($schema, $parser);
+      } @input;
+
+      my $diff = SQL::Translator::Diff::schema_diff($source_schema, $db,
+                                                    $target_schema, $db,
+                                                    {}
+                                                   );
+      my $difffile = $schema->ddl_filename($db, $dir, $version, $preversion);
+      print STDERR "Diff: $difffile: $db, $dir, $version, $preversion \n";
+      if(-e $difffile)
+      {
+        warn("$difffile already exists, skipping");
+        next;
+      }
+      if(!open $file, ">$difffile")
+      { 
+        $self->throw_exception("Can't write to $difffile ($!)");
+        next;
+      }
+      print $file $diff;
+      close($file);
     }
-    
-    my $diff = SQL::Translator::Diff::schema_diff($source_schema, $db,
-                                                  $dest_schema,   $db,
-                                                  $sqltargs
-                                                 );
-    if(!open $file, ">$difffile") { 
-      $self->throw_exception("Can't write to $difffile ($!)");
-      next;
-    }
-    print $file $diff;
-    close($file);
   }
+}
+
+sub configure_sqlt() {
+  my $self = shift;
+  my $tr = shift;
+  my $db = shift || $self->sqlt_type;
+  if ($db eq 'PostgreSQL') {
+    $tr->quote_table_names(0);
+    $tr->quote_field_names(0);
+  }
+  return $tr;
 }
 
 =head2 deployment_statements
@@ -1760,9 +1472,9 @@ sub deployment_statements {
   # Need to be connected to get the correct sqlt_type
   $self->ensure_connected() unless $type;
   $type ||= $self->sqlt_type;
-  $version ||= $schema->schema_version || '1.x';
+  $version ||= $schema->VERSION || '1.x';
   $dir ||= './';
-  my $filename = $schema->ddl_filename($type, $version, $dir);
+  my $filename = $schema->ddl_filename($type, $dir, $version);
   if(-f $filename)
   {
       my $file;
@@ -1773,7 +1485,7 @@ sub deployment_statements {
       return join('', @rows);
   }
 
-  $self->throw_exception(q{Can't deploy without SQL::Translator 0.09003: '}
+  $self->throw_exception(q{Can't deploy without SQL::Translator 0.08: '}
       . $self->_check_sqlt_message . q{'})
           if !$self->_check_sqlt_version;
 
@@ -1789,36 +1501,29 @@ sub deployment_statements {
   my $tr = SQL::Translator->new(%$sqltargs);
   SQL::Translator::Parser::DBIx::Class::parse( $tr, $schema );
   return "SQL::Translator::Producer::${type}"->can('produce')->($tr);
+
+  return;
+
 }
 
 sub deploy {
   my ($self, $schema, $type, $sqltargs, $dir) = @_;
-  my $deploy = sub {
-    my $line = shift;
-    return if($line =~ /^--/);
-    return if(!$line);
-    # next if($line =~ /^DROP/m);
-    return if($line =~ /^BEGIN TRANSACTION/m);
-    return if($line =~ /^COMMIT/m);
-    return if $line =~ /^\s+$/; # skip whitespace only
-    $self->_query_start($line);
-    eval {
-      $self->dbh->do($line); # shouldn't be using ->dbh ?
-    };
-    if ($@) {
-      warn qq{$@ (running "${line}")};
-    }
-    $self->_query_end($line);
-  };
-  my @statements = $self->deployment_statements($schema, $type, undef, $dir, { no_comments => 1, %{ $sqltargs || {} } } );
-  if (@statements > 1) {
-    foreach my $statement (@statements) {
-      $deploy->( $statement );
-    }
-  }
-  elsif (@statements == 1) {
-    foreach my $line ( split(";\n", $statements[0])) {
-      $deploy->( $line );
+  foreach my $statement ( $self->deployment_statements($schema, $type, undef, $dir, { no_comments => 1, %{ $sqltargs || {} } } ) ) {
+    foreach my $line ( split(";\n", $statement)) {
+      next if($line =~ /^--/);
+      next if(!$line);
+#      next if($line =~ /^DROP/m);
+      next if($line =~ /^BEGIN(?: TRANSACTION)?/im);
+      next if($line =~ /^COMMIT/mi);
+      next if $line =~ /^\s+$/; # skip whitespace only
+      $self->_query_start($line);
+      eval {
+        $self->dbh->do($line); # shouldn't be using ->dbh ?
+      };
+      if ($@) {
+        warn qq{$@ (running "${line}")};
+      }
+      $self->_query_end($line);
     }
   }
 }
@@ -1865,40 +1570,15 @@ sub build_datetime_parser {
     my $_check_sqlt_message; # private
     sub _check_sqlt_version {
         return $_check_sqlt_version if defined $_check_sqlt_version;
-        eval 'use SQL::Translator "0.09003"';
-        $_check_sqlt_message = $@ || '';
-        $_check_sqlt_version = !$@;
+        eval 'use SQL::Translator 0.08';
+        $_check_sqlt_message = $@ ? $@ : '';
+        $_check_sqlt_version = $@ ? 0 : 1;
     }
 
     sub _check_sqlt_message {
         _check_sqlt_version if !defined $_check_sqlt_message;
         $_check_sqlt_message;
     }
-}
-
-=head2 is_replicating
-
-A boolean that reports if a particular L<DBIx::Class::Storage::DBI> is set to
-replicate from a master database.  Default is undef, which is the result
-returned by databases that don't support replication.
-
-=cut
-
-sub is_replicating {
-    return;
-    
-}
-
-=head2 lag_behind_master
-
-Returns a number that represents a certain amount of lag behind a master db
-when a given storage is replicating.  The number is database dependent, but
-starts at zero and increases with the amount of lag. Default in undef
-
-=cut
-
-sub lag_behind_master {
-    return;
 }
 
 sub DESTROY {
@@ -1909,24 +1589,6 @@ sub DESTROY {
 }
 
 1;
-
-=head1 USAGE NOTES
-
-=head2 DBIx::Class and AutoCommit
-
-DBIx::Class can do some wonderful magic with handling exceptions,
-disconnections, and transactions when you use C<< AutoCommit => 1 >>
-combined with C<txn_do> for transaction support.
-
-If you set C<< AutoCommit => 0 >> in your connect info, then you are always
-in an assumed transaction between commits, and you're telling us you'd
-like to manage that manually.  A lot of the magic protections offered by
-this module will go away.  We can't protect you from exceptions due to database
-disconnects because we don't know anything about how to restart your
-transactions.  You're on your own for handling all sorts of exceptional
-cases if you choose the C<< AutoCommit => 0 >> path, just as you would
-be with raw DBI.
-
 
 =head1 SQL METHODS
 
@@ -1949,14 +1611,17 @@ The following methods are extended:-
 =item limit_dialect
 
 See L</connect_info> for details.
+For setting, this method is deprecated in favor of L</connect_info>.
 
 =item quote_char
 
 See L</connect_info> for details.
+For setting, this method is deprecated in favor of L</connect_info>.
 
 =item name_sep
 
 See L</connect_info> for details.
+For setting, this method is deprecated in favor of L</connect_info>.
 
 =back
 

@@ -5,25 +5,17 @@ use warnings;
 use base qw/DBIx::Class::Core DBIx::Class::DB/;
 use Carp::Clan qw/^DBIx::Class/;
 
-# Modules CDBICompat needs that DBIx::Class does not.
-my @Extra_Modules = qw(
-    Class::Trigger
-    DBIx::ContextualFetch
-    Clone
-);
-                
-my @didnt_load;
-for my $module (@Extra_Modules) {
-    push @didnt_load, $module unless eval qq{require $module};
-}
-croak("@{[ join ', ', @didnt_load ]} are missing and are required for CDBICompat")
-    if @didnt_load;
-
+eval {
+  require Class::Trigger;
+  require DBIx::ContextualFetch;
+};
+croak "Class::Trigger and DBIx::ContextualFetch is required for CDBICompat" if $@;
 
 __PACKAGE__->load_own_components(qw/
   Constraints
   Triggers
   ReadOnly
+  GetSet
   LiveObjectIndex
   AttributeAPI
   Stringify
@@ -31,20 +23,16 @@ __PACKAGE__->load_own_components(qw/
   Constructor
   AccessorMapping
   ColumnCase
-  Relationships
-  Copy
+  HasA
+  HasMany
+  MightHave
   LazyLoading
   AutoUpdate
   TempColumns
-  GetSet
   Retrieve
   Pager
   ColumnGroups
-  ColumnsAsHash
-  AbstractSearch
-  ImaDBI
-  Iterator
-/);
+  ImaDBI/);
 
             #DBIx::Class::ObjIndexStubs
 1;
@@ -55,47 +43,17 @@ DBIx::Class::CDBICompat - Class::DBI Compatibility layer.
 
 =head1 SYNOPSIS
 
-  package My::CDBI;
-  use base qw/DBIx::Class::CDBICompat/;
-
-  ...continue as Class::DBI...
+  use base qw/DBIx::Class/;
+  __PACKAGE__->load_components(qw/CDBICompat Core DB/);
 
 =head1 DESCRIPTION
 
 DBIx::Class features a fully featured compatibility layer with L<Class::DBI>
-and some common plugins to ease transition for existing CDBI users. 
+to ease transition for existing CDBI users. In fact, this class is just a
+receipe containing all the features emulated. If you like, you can choose
+which features to emulate by building your own class and loading it like
+this:
 
-This is not a wrapper or subclass of DBIx::Class but rather a series of plugins.  The result being that even though you're using the Class::DBI emulation layer you are still getting DBIx::Class objects.  You can use all DBIx::Class features and methods via CDBICompat.  This allows you to take advantage of DBIx::Class features without having to rewrite your CDBI code.
-
-
-=head2 Plugins
-
-CDBICompat is good enough that many CDBI plugins will work with CDBICompat, but many of the plugin features are better done with DBIx::Class methods.
-
-=head3 Class::DBI::AbstractSearch
-
-C<search_where()> is fully emulated using DBIC's search.  Aside from emulation there's no reason to use C<search_where()>.
-
-=head3 Class::DBI::Plugin::NoCache
-
-C<nocache> is fully emulated.
-
-=head3 Class::DBI::Sweet
-
-The features of CDBI::Sweet are better done using DBIC methods which are almost exactly the same.  It even uses L<Data::Page>.
-
-=head3 Class::DBI::Plugin::DeepAbstractSearch
-
-This plugin will work, but it is more efficiently done using DBIC's native search facilities.  The major difference is that DBIC will not infer the join for you, you have to tell it the join tables.
-
-
-=head2 Choosing Features
-
-In fact, this class is just a receipe containing all the features emulated.
-If you like, you can choose which features to emulate by building your 
-own class and loading it like this:
-
-  package My::DB;
   __PACKAGE__->load_own_components(qw/CDBICompat/);
 
 this will automatically load the features included in My::DB::CDBICompat,
@@ -110,59 +68,58 @@ provided it looks something like this:
     CDBICompat::MightHave
   /);
 
-
-=head1 LIMITATIONS
-
-=head2 Unimplemented
-
-The following methods and classes are not emulated, maybe in the future.
+=head1 COMPONENTS
 
 =over 4
 
-=item Class::DBI::Query
+=item AccessorMapping
 
-Deprecated in Class::DBI.
+=item AttributeAPI
 
-=item Class::DBI::Column
+=item AutoUpdate
 
-Not documented in Class::DBI.  CDBICompat's columns() returns a plain string, not an object.
+Allows you to turn on automatic updates for column values.
 
-=item data_type()
+=item ColumnCase
 
-Undocumented CDBI method.
+=item ColumnGroups
 
-=back
+=item Constraints
 
-=head2 Limited Support
+=item Constructor
 
-The following elements of Class::DBI have limited support.
+=item DestroyWarning
 
-=over 4
+=item GetSet
 
-=item Class::DBI::Relationship
+=item HasA
 
-The semi-documented Class::DBI::Relationship objects returned by C<meta_info($type, $col)> are mostly emulated except for their C<args> method.
+=item HasMany
 
-=item Relationships
+=item ImaDBI
 
-Relationships between tables (has_a, has_many...) must be delcared after all tables in the relationship have been declared.  Thus the usual CDBI idiom of declaring columns and relationships for each class together will not work.  They must instead be done like so:
+=item LazyLoading
 
-    package Foo;
-    use base qw(Class::DBI);
-    
-    Foo->table("foo");
-    Foo->columns( All => qw(this that bar) );
+=item LiveObjectIndex
 
-    package Bar;
-    use base qw(Class::DBI);
-    
-    Bar->table("bar");
-    Bar->columns( All => qw(up down) );
+The live object index tries to ensure there is only one version of a object
+in the perl interpreter.
 
-    # Now that Foo and Bar are declared it is safe to declare a
-    # relationship between them
-    Foo->has_a( bar => "Bar" );
+=item MightHave
 
+=item ObjIndexStubs
+
+=item ReadOnly
+
+=item Retrieve
+
+=item Stringify
+
+=item TempColumns
+
+=item Triggers
+
+=item PassThrough
 
 =back
 

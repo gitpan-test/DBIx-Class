@@ -8,6 +8,7 @@ use strict;
 use warnings;
 
 __PACKAGE__->table('bookmark');
+__PACKAGE__->add_columns(qw/id link/);
 __PACKAGE__->add_columns(
     'id' => {
         data_type => 'integer',

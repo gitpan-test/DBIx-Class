@@ -4,7 +4,6 @@
 
 use strict;
 use Test::More tests => 2;
-use MRO::Compat;
 
 {
 package AAA;
@@ -27,8 +26,8 @@ use base 'AAA';
 __PACKAGE__->inject_base( __PACKAGE__, 'DBIx::Class::Core' );
 }
 
-eval { mro::get_linear_isa('BBB'); };
+eval { Class::C3::calculateMRO('BBB'); };
 ok (! $@, "Correctly skipped injecting a direct parent of class BBB");
 
-eval { mro::get_linear_isa('CCC'); };
+eval { Class::C3::calculateMRO('CCC'); };
 ok (! $@, "Correctly skipped injecting an indirect parent of class BBB");

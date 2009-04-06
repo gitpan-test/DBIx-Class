@@ -8,7 +8,7 @@ use DBICTest;
 
 my $schema = DBICTest->init_schema();
 
-plan tests => 64;
+plan tests => 63;
 
 my $code = sub {
   my ($artist, @cd_titles) = @_;
@@ -226,6 +226,7 @@ my $fail_code = sub {
   })->first;
   ok(!defined($cd), q{failed txn_do didn't add failed txn's cd});
 }
+undef $schema;
 
 # Grab a new schema to test txn before connect
 {
@@ -235,18 +236,14 @@ my $fail_code = sub {
         $schema2->txn_begin();
     };
     my $err = $@;
-    ok(! $err, 'Pre-connection nested transactions.');
-
-    # although not connected DBI would still warn about rolling back at disconnect
-    $schema2->txn_rollback;
-    $schema2->txn_rollback;
-    $schema2->storage->disconnect;
+    ok(($err eq ''), 'Pre-connection nested transactions.');
 }
-$schema->storage->disconnect;
 
 # Test txn_scope_guard
 {
-  my $schema = DBICTest->init_schema();
+
+  # reset schema
+  $schema = DBICTest->init_schema();
 
   is($schema->storage->transaction_depth, 0, "Correct transaction depth");
   my $artist_rs = $schema->resultset('Artist');
@@ -260,7 +257,7 @@ $schema->storage->disconnect;
     });
     
    $guard->commit;
-  } qr/No such column made_up_column .*? at .*?81transactions.t line \d+/s, "Error propogated okay";
+  } qr/No such column made_up_column .*? at .*?81transactions.t line \d+/, "Error propogated okay";
 
   ok(!$artist_rs->find({name => 'Death Cab for Cutie'}), "Artist not created");
 
@@ -272,17 +269,12 @@ $schema->storage->disconnect;
 
   ok(!$artist_rs->find({name => 'Death Cab for Cutie'}), "Artist not created");
 
-  eval {
-    my $w;
-    local $SIG{__WARN__} = sub { $w = shift };
 
-    # The 0 arg says don't die, just let the scope guard go out of scope 
+  eval {
+    # The 0 arg says done die, just let the scope guard go out of scope 
     # forcing a txn_rollback to happen
     outer($schema, 0);
-
-    like ($w, qr/A DBIx::Class::Storage::TxnScopeGuard went out of scope without explicit commit or an error/, 'Out of scope warning detected');
   };
-
   local $TODO = "Work out how this should work";
   is($@, "Not sure what we want here, but something", "Rollback okay");
 

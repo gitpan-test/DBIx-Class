@@ -7,37 +7,20 @@ use Test::More;
 use lib qw(t/lib);
 use DBICTest;
 
-# equivalent of $Module::Install::AUTHOR
-my $author = (
-  ( not  -d './inc' )
-    or
-  ( -e ($^O eq 'VMS' ? './inc/_author' : './inc/.author') )
-);
-
-plan $author
-  ? (tests => 6)
-  : (skip_all => 'Test temporarily disabled due to a widespread buggy SQLite version')
-;
+plan tests => 5;
 
 my $db_orig = "$FindBin::Bin/var/DBIxClass.db";
 my $db_tmp  = "$db_orig.tmp";
 
 # Set up the "usual" sqlite for DBICTest
-my $schema = DBICTest->init_schema( sqlite_use_file => 1 );
+my $schema = DBICTest->init_schema;
 
 # Make sure we're connected by doing something
 my @art = $schema->resultset("Artist")->search({ }, { order_by => 'name DESC'});
 cmp_ok(@art, '==', 3, "Three artists returned");
 
 # Disconnect the dbh, and be sneaky about it
-# Also test if DBD::SQLite finaly knows how to ->disconnect properly
-TODO: {
-    local $TODO = 'SQLite is evil/braindead. Once this test starts passing, remove the related atrocity from DBIx::Class::Storage::DBI::SQLite';
-    my $w;
-    local $SIG{__WARN__} = sub { $w = shift };
-    $schema->storage->_dbh->disconnect;
-    ok ($w !~ /active statement handles/, 'SQLite can disconnect properly \o/');
-}
+$schema->storage->_dbh->disconnect;
 
 # Try the operation again - What should happen here is:
 #   1. S::DBI blindly attempts the SELECT, which throws an exception
@@ -57,14 +40,10 @@ close DBFILE;
 chmod 0000, $db_orig;
 
 ### Try the operation again... it should fail, since there's no db
-{
-    # Catch the DBI connection error
-    local $SIG{__WARN__} = sub {};
-    eval {
-        my @art_three = $schema->resultset("Artist")->search( {}, { order_by => 'name DESC' } );
-    };
-    ok( $@, 'The operation failed' );
-}
+eval {
+    my @art_three = $schema->resultset("Artist")->search( {}, { order_by => 'name DESC' } );
+};
+ok( $@, 'The operation failed' );
 
 ### Now, move the db file back to the correct name
 unlink($db_orig);

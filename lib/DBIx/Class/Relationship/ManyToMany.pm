@@ -3,8 +3,6 @@ package # hide from PAUSE
 
 use strict;
 use warnings;
-use warnings::register;
-use Sub::Name ();
 
 sub many_to_many {
   my ($class, $meth, $rel, $f_rel, $rel_attrs) = @_;
@@ -27,27 +25,15 @@ sub many_to_many {
     my $rs_meth = "${meth}_rs";
 
     for ($add_meth, $remove_meth, $set_meth, $rs_meth) {
-      if ( $class->can ($_) ) {
-        warnings::warnif(<<"EOW")
-***************************************************************************
-The many-to-many relationship $meth is trying to create a utility method called
-$_. This will overwrite the existing method on $class. You almost certainly
-want to rename your method or the many-to-many relationship, as your method
-will not be callable (it will use the one from the relationship instead.)
-
-To disable this warning add the following to $class
-
-  no warnings 'DBIx::Class::Relationship::ManyToMany';
-
-***************************************************************************
-EOW
-      }
+      warn "***************************************************************************\n".
+           "The many-to-many relationship $meth is trying to create a utility method called $_. This will overwrite the existing method on $class. You almost certainly want to rename your method or the many-to-many relationship, as your method will not be callable (it will use the one from the relationship instead.) YOU HAVE BEEN WARNED\n".
+           "***************************************************************************\n"
+        if $class->can($_);
     }
 
     $rel_attrs->{alias} ||= $f_rel;
 
-    my $rs_meth_name = join '::', $class, $rs_meth;
-    *$rs_meth_name = Sub::Name::subname $rs_meth_name, sub {
+    *{"${class}::${meth}_rs"} = sub {
       my $self = shift;
       my $attrs = @_ > 1 && ref $_[$#_] eq 'HASH' ? pop(@_) : {};
       my @args = ($f_rel, @_ > 0 ? @_ : undef, { %{$rel_attrs||{}}, %$attrs });
@@ -57,15 +43,13 @@ EOW
 	  return $rs;
     };
 
-    my $meth_name = join '::', $class, $meth;
-    *$meth_name = Sub::Name::subname $meth_name, sub {
+	*{"${class}::${meth}"} = sub {
 		my $self = shift;
 		my $rs = $self->$rs_meth( @_ );
   		return (wantarray ? $rs->all : $rs);
 	};
 
-    my $add_meth_name = join '::', $class, $add_meth;
-    *$add_meth_name = Sub::Name::subname $add_meth_name, sub {
+    *{"${class}::${add_meth}"} = sub {
       my $self = shift;
       @_ > 0 or $self->throw_exception(
         "${add_meth} needs an object or hashref"
@@ -95,8 +79,7 @@ EOW
 	  return $obj;
     };
 
-    my $set_meth_name = join '::', $class, $set_meth;
-    *$set_meth_name = Sub::Name::subname $set_meth_name, sub {
+    *{"${class}::${set_meth}"} = sub {
       my $self = shift;
       @_ > 0 or $self->throw_exception(
         "{$set_meth} needs a list of objects or hashrefs"
@@ -106,8 +89,7 @@ EOW
       $self->$add_meth($_) for (@to_set);
     };
 
-    my $remove_meth_name = join '::', $class, $remove_meth;
-    *$remove_meth_name = Sub::Name::subname $remove_meth_name, sub {
+    *{"${class}::${remove_meth}"} = sub {
       my $self = shift;
       @_ > 0 && ref $_[0] ne 'HASH'
         or $self->throw_exception("${remove_meth} needs an object");
