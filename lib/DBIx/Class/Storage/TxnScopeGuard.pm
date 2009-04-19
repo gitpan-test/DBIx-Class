@@ -1,5 +1,4 @@
-package # Hide from pause for now - till we get it working
-  DBIx::Class::Storage::TxnScopeGuard;
+package DBIx::Class::Storage::TxnScopeGuard;
 
 use strict;
 use warnings;
@@ -24,19 +23,20 @@ sub DESTROY {
   return if $dismiss;
 
   my $exception = $@;
+  Carp::cluck("A DBIx::Class::Storage::TxnScopeGuard went out of scope without explicit commit or an error - bad")
+    unless $exception; 
+  {
+    local $@;
+    eval { $storage->txn_rollback };
+    my $rollback_exception = $@;
+    if($rollback_exception) {
+      my $exception_class = "DBIx::Class::Storage::NESTED_ROLLBACK_EXCEPTION";
 
-  $DB::single = 1;
-
-  local $@;
-  eval { $storage->txn_rollback };
-  my $rollback_exception = $@;
-  if($rollback_exception) {
-    my $exception_class = "DBIx::Class::Storage::NESTED_ROLLBACK_EXCEPTION";
-
-    $storage->throw_exception(
-      "Transaction aborted: ${exception}. "
-      . "Rollback failed: ${rollback_exception}"
-    ) unless $rollback_exception =~ /$exception_class/;
+      $storage->throw_exception(
+        "Transaction aborted: ${exception}. "
+        . "Rollback failed: ${rollback_exception}"
+      ) unless $rollback_exception =~ /$exception_class/;
+    }
   }
 }
 
@@ -46,7 +46,7 @@ __END__
 
 =head1 NAME
 
-DBIx::Class::Storage::TxnScopeGuard
+DBIx::Class::Storage::TxnScopeGuard - Scope-based transaction handling
 
 =head1 SYNOPSIS
 
@@ -69,14 +69,15 @@ right thing with transactions in DBIx::Class.
 
 =head2 new
 
-Creating an instance of this class will start a new transaction. Expects a
+Creating an instance of this class will start a new transaction (by
+implicitly calling L<DBIx::Class::Storage/txn_begin>. Expects a
 L<DBIx::Class::Storage> object as its only argument.
 
 =head2 commit
 
 Commit the transaction, and stop guarding the scope. If this method is not
-called (i.e. an exception is thrown) and this object goes out of scope then
-the transaction is rolled back.
+called and this object goes out of scope (i.e. an exception is thrown) then
+the transaction is rolled back, via L<DBIx::Class::Storage/txn_rollback>
 
 =cut
 
