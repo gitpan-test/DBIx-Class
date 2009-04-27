@@ -130,7 +130,6 @@ lib/DBIx/Class/Storage/DBI/Sybase.pm
 lib/DBIx/Class/Storage/DBI/Sybase/MSSQL.pm
 lib/DBIx/Class/Storage/Statistics.pm
 lib/DBIx/Class/Storage/TxnScopeGuard.pm
-lib/DBIx/Class/Test/SQLite.pm
 lib/DBIx/Class/UTF8Columns.pm
 lib/SQL/Translator/Parser/DBIx/Class.pm
 lib/SQL/Translator/Producer/DBIx/Class/File.pm
@@ -393,6 +392,7 @@ t/lib/DBICTest/Taint/Namespaces/Result/Test.pm
 t/lib/DBICVersionNew.pm
 t/lib/DBICVersionOrig.pm
 t/lib/sqlite.sql
+t/lib/Test/SQLite.pm
 t/ordered/cascade_delete.t
 t/prefetch/attrs_untouched.t
 t/prefetch/multiple_hasmany.t

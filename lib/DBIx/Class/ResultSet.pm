@@ -873,7 +873,11 @@ instead. An example conversion is:
 
 sub search_like {
   my $class = shift;
-  carp "search_like() is deprecated and will be removed in 0.09. Use search() instead.";
+  carp join ("\n",
+    'search_like() is deprecated and will be removed in 0.09.',
+    'Instead use ->search({ x => { -like => "y%" } })',
+    '(note the outer pair of {}s - they are important!)'
+  );
   my $attrs = (@_ > 1 && ref $_[$#_] eq 'HASH' ? pop(@_) : {});
   my $query = ref $_[0] eq 'HASH' ? { %{shift()} }: {@_};
   $query->{$_} = { 'like' => $query->{$_} } for keys %$query;
@@ -1116,6 +1120,11 @@ is derived.
 An accessor for the class to use when creating row objects. Defaults to 
 C<< result_source->result_class >> - which in most cases is the name of the 
 L<"table"|DBIx::Class::Manual::Glossary/"ResultSource"> class.
+
+Note that changing the result_class will also remove any components
+that were originally loaded in the source class via
+L<DBIx::Class::ResultSource/load_components>. Any overloaded methods
+in the original source class will not run.
 
 =cut
 

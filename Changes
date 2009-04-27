@@ -1,6 +1,16 @@
 Revision history for DBIx::Class
 
-0.081000 2009-04-19 11:39:35 (UTC)
+0.08101 2009-04-27 09:45:00 (UTC)
+        - Fix +select, +as, +columns and include_columns being stripped
+          by $rs->get_column
+        - move load_optional_class from DBIx::Class::Componentised to
+          Class::C3::Componentised, bump dependency
+        - register_extra_source() now *really* fixed wrt subclassing
+        - Added missing POD descriptions (RT#45195)
+        - Fix insert() to not store_column() every present object column
+        - Multiple Makefile.PL fixes
+
+0.08100 2009-04-19 11:39:35 (UTC)
         - Todo out the register_extra_source test until after shipping
 
 0.08099_08 2009-03-30 00:00:00 (UTC)
@@ -10,7 +20,7 @@ Revision history for DBIx::Class
           directly into the columns definition
         - Switched MI code to MRO::Compat
         - Document db-side default_value caveats
-        - Search_like() now warns to indicate deprecation in 0.09. (robkinyon)
+        - Search_like() now warns to indicate deprecation in 0.09.
         - TxnScopeGuard left experimental state
 
 0.08099_07 2009-02-27 02:00:00 (UTC)
@@ -54,11 +64,11 @@ Revision history for DBIx::Class
         - regression test for source_name 
 
 0.08099_05 2008-10-30 21:30:00 (UTC)
-        - Rewritte of Storage::DBI::connect_info(), extended with an
+        - Rewrite of Storage::DBI::connect_info(), extended with an
           additional argument format type
         - InflateColumn::DateTime: add warning about floating timezone
         - InflateColumn::DateTime: possible to enforce/skip inflation
-        - delete throws exception if passed arguments to prevent drunken mishaps. (purge)
+        - delete throws exception if passed arguments to prevent drunken mishaps.
         - Fix storage to copy scalar conds before regexping to avoid
           trying to modify a constant in odd edge cases
         - Related resultsets on uninserted objects are now empty
