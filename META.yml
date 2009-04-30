@@ -49,4 +49,4 @@ resources:
   MailingList: http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class
   license: http://dev.perl.org/licenses/
   repository: http://dev.catalyst.perl.org/svnweb/bast/browse/DBIx-Class/
-version: 0.08101
+version: 0.08102

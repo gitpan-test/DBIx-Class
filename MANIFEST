@@ -181,6 +181,7 @@ t/55storage_stress.t
 t/60core.t
 t/61findnot.t
 t/63register_class.t
+t/63register_source.t
 t/64db.t
 t/65multipk.t
 t/66relationship.t
@@ -287,6 +288,7 @@ t/cdbi/testlib/ActorAlias.pm
 t/cdbi/testlib/Binary.pm
 t/cdbi/testlib/Blurb.pm
 t/cdbi/testlib/CDBase.pm
+t/cdbi/testlib/DBIC/Test/SQLite.pm
 t/cdbi/testlib/Director.pm
 t/cdbi/testlib/Film.pm
 t/cdbi/testlib/Lazy.pm
@@ -348,7 +350,6 @@ t/lib/DBICTest/Schema/CD.pm
 t/lib/DBICTest/Schema/CD_to_Producer.pm
 t/lib/DBICTest/Schema/Collection.pm
 t/lib/DBICTest/Schema/CollectionObject.pm
-t/lib/DBICTest/Schema/Demographic.pm
 t/lib/DBICTest/Schema/Dummy.pm
 t/lib/DBICTest/Schema/Employee.pm
 t/lib/DBICTest/Schema/Encoded.pm
@@ -392,7 +393,6 @@ t/lib/DBICTest/Taint/Namespaces/Result/Test.pm
 t/lib/DBICVersionNew.pm
 t/lib/DBICVersionOrig.pm
 t/lib/sqlite.sql
-t/lib/Test/SQLite.pm
 t/ordered/cascade_delete.t
 t/prefetch/attrs_untouched.t
 t/prefetch/multiple_hasmany.t
