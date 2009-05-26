@@ -8,13 +8,13 @@ use base qw/DBIx::Class::Componentised Class::Accessor::Grouped/;
 use DBIx::Class::StartupCheck;
 
 
-sub mk_classdata { 
+sub mk_classdata {
   shift->mk_classaccessor(@_);
 }
 
 sub mk_classaccessor {
   my $self = shift;
-  $self->mk_group_accessors('inherited', $_[0]); 
+  $self->mk_group_accessors('inherited', $_[0]);
   $self->set_inherited(@_) if @_ > 1;
 }
 
@@ -24,7 +24,7 @@ sub component_base_class { 'DBIx::Class' }
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
 
-$VERSION = '0.08102';
+$VERSION = '0.08103';
 
 $VERSION = eval $VERSION; # numify for warning-free dev releases
 
@@ -239,6 +239,8 @@ dwc: Daniel Westermann-Clark <danieltwc@cpan.org>
 
 dyfrgi: Michael Leuchtenburg <michael@slashhome.org>
 
+frew: Arthur Axel "fREW" Schmidt <frioux@gmail.com>
+
 gphat: Cory G Watson <gphat@cpan.org>
 
 groditi: Guillermo Roditi <groditi@cpan.org>
@@ -274,6 +276,8 @@ ned: Neil de Carteret
 nigel: Nigel Metheringham <nigelm@cpan.org>
 
 ningu: David Kamholz <dkamholz@cpan.org>
+
+Nniuq: Ron "Quinn" Straight" <quinnfazigu@gmail.org>
 
 norbi: Norbert Buchmuller <norbi@nix.hu>
 

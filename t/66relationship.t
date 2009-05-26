@@ -8,7 +8,7 @@ use DBICTest;
 
 my $schema = DBICTest->init_schema();
 
-plan tests => 74;
+plan tests => 78;
 
 # has_a test
 my $cd = $schema->resultset("CD")->find(4);
@@ -62,10 +62,10 @@ is( $big_flop_cd->title, 'Big Flop', 'create_related ok' );
 }
 
 my( $rs_from_list ) = $artist->search_related_rs('cds');
-is( ref($rs_from_list), 'DBIx::Class::ResultSet', 'search_related_rs in list context returns rs' );
+isa_ok( $rs_from_list, 'DBIx::Class::ResultSet', 'search_related_rs in list context returns rs' );
 
 ( $rs_from_list ) = $artist->cds_rs();
-is( ref($rs_from_list), 'DBIx::Class::ResultSet', 'relation_rs in list context returns rs' );
+isa_ok( $rs_from_list, 'DBIx::Class::ResultSet', 'relation_rs in list context returns rs' );
 
 # count_related
 is( $artist->count_related('cds'), 4, 'count_related ok' );
@@ -189,6 +189,14 @@ is( $prod_rs->count(), 1, 'many_to_many add_to_$rel($obj) count ok' );
 is( $prod_rs->first->name, 'Matt S Trout',
     'many_to_many add_to_$rel($obj) ok' );
 $cd->remove_from_producers($prod);
+$cd->add_to_producers($prod, {attribute => 1});
+is( $prod_rs->count(), 1, 'many_to_many add_to_$rel($obj, $link_vals) count ok' );
+is( $cd->cd_to_producer->first->attribute, 1, 'many_to_many $link_vals ok');
+$cd->remove_from_producers($prod);
+$cd->set_producers([$prod], {attribute => 2});
+is( $prod_rs->count(), 1, 'many_to_many set_$rel($obj, $link_vals) count ok' );
+is( $cd->cd_to_producer->first->attribute, 2, 'many_to_many $link_vals ok');
+$cd->remove_from_producers($prod);
 is( $schema->resultset('Producer')->find(1)->name, 'Matt S Trout',
     "producer object exists after remove of link" );
 is( $prod_rs->count, 0, 'many_to_many remove_from_$rel($obj) ok' );
@@ -233,6 +241,7 @@ $twokey->remove_from_fourkeys($fourkey);
 is( $twokey->fourkeys->count, 0, 'twokey has no fourkeys' );
 is( $twokey->fourkeys_to_twokeys->count, 0,
     'twokey has no links to fourkey' );
+
 
 my $undef_artist_cd = $schema->resultset("CD")->new_result({ 'title' => 'badgers', 'year' => 2007 });
 is($undef_artist_cd->has_column_loaded('artist'), '', 'FK not loaded');

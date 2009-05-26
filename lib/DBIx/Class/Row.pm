@@ -112,7 +112,7 @@ sub __new_related_find_or_new_helper {
                 ->resultset
                 ->new_result($data);
   }
-  if ($self->result_source->pk_depends_on($relname, $data)) {
+  if ($self->result_source->_pk_depends_on($relname, $data)) {
     MULTICREATE_DEBUG and warn "MC $self constructing $relname via find_or_new";
     return $self->result_source
                 ->related_source($relname)
@@ -132,7 +132,7 @@ sub __their_pk_needs_us { # this should maybe be in resultsource.
   foreach my $key (keys %$reverse) {
     # if their primary key depends on us, then we have to
     # just create a result and we'll fill it out afterwards
-    return 1 if $rel_source->pk_depends_on($key, $us);
+    return 1 if $rel_source->_pk_depends_on($key, $us);
   }
   return 0;
 }
@@ -304,7 +304,7 @@ sub insert {
       next REL unless (Scalar::Util::blessed($rel_obj)
                        && $rel_obj->isa('DBIx::Class::Row'));
 
-      next REL unless $source->pk_depends_on(
+      next REL unless $source->_pk_depends_on(
                         $relname, { $rel_obj->get_columns }
                       );
 
@@ -347,7 +347,6 @@ sub insert {
     $self->throw_exception( "Can't get last insert id" )
       unless (@ids == @auto_pri);
     $self->store_column($auto_pri[$_] => $ids[$_]) for 0 .. $#ids;
-#use Data::Dumper; warn Dumper($self);
   }
 
 
@@ -881,10 +880,10 @@ Inserts a new row into the database, as a copy of the original
 object. If a hashref of replacement data is supplied, these will take
 precedence over data in the original.
 
-If the row has related objects in a
-L<DBIx::Class::Relationship/has_many> then those objects may be copied
-too depending on the L<cascade_copy|DBIx::Class::Relationship>
-relationship attribute.
+Relationships will be followed by the copy procedure B<only> if the
+relationship specifes a true value for its
+L<cascade_copy|DBIx::Class::Relationship::Base> attribute. C<cascade_copy>
+is set by default on C<has_many> relationships and unset on all others.
 
 =cut
 
@@ -914,7 +913,7 @@ sub copy {
 
     next unless $rel_info->{attrs}{cascade_copy};
   
-    my $resolved = $self->result_source->resolve_condition(
+    my $resolved = $self->result_source->_resolve_condition(
       $rel_info->{cond}, $rel, $new
     );
 
