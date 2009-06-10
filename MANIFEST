@@ -102,6 +102,7 @@ lib/DBIx/Class/Schema.pm
 lib/DBIx/Class/Schema/Versioned.pm
 lib/DBIx/Class/Serialize/Storable.pm
 lib/DBIx/Class/SQLAHacks.pm
+lib/DBIx/Class/SQLAHacks/MySQL.pm
 lib/DBIx/Class/SQLAHacks/OracleJoins.pm
 lib/DBIx/Class/StartupCheck.pm
 lib/DBIx/Class/Storage.pm
@@ -153,6 +154,7 @@ t/101populate_rs.t
 t/102load_classes.t
 t/103many_to_many_warning.t
 t/104view.t
+t/18insert_default.t
 t/18inserterror.t
 t/19quotes.t
 t/19quotes_newstyle.t
@@ -169,6 +171,7 @@ t/39load_namespaces_1.t
 t/39load_namespaces_2.t
 t/39load_namespaces_3.t
 t/39load_namespaces_4.t
+t/39load_namespaces_exception.t
 t/39load_namespaces_rt41083.t
 t/40resultsetmanager.t
 t/41orrible.t
@@ -244,6 +247,9 @@ t/96multi_create_torture.t
 t/97result_class.t
 t/98savepoints.t
 t/99dbic_sqlt_parser.t
+t/bind/attribute.t
+t/bind/bindtype_columns.t
+t/bind/order_by.t
 t/bindtype_columns.t
 t/cdbi/01-columns.t
 t/cdbi/02-Film.t
@@ -319,6 +325,8 @@ t/discard_changes_in_DESTROY.t
 t/from_subquery.t
 t/lib/DBIC/DebugObj.pm
 t/lib/DBIC/SqlMakerTest.pm
+t/lib/DBICNSTest/Bogus/A.pm
+t/lib/DBICNSTest/Bogus/Bigos.pm
 t/lib/DBICNSTest/OtherRslt/D.pm
 t/lib/DBICNSTest/Result/A.pm
 t/lib/DBICNSTest/Result/B.pm
@@ -407,6 +415,11 @@ t/lib/DBICTest/Taint/Namespaces/Result/Test.pm
 t/lib/DBICVersionNew.pm
 t/lib/DBICVersionOrig.pm
 t/lib/sqlite.sql
+t/multi_create/cd_single.t
+t/multi_create/insert_defaults.t
+t/multi_create/m2m.t
+t/multi_create/multilev_might_have_PKeqFK.t
+t/multi_create/reentrance_count.t
 t/ordered/cascade_delete.t
 t/prefetch/attrs_untouched.t
 t/prefetch/diamond.t
@@ -414,11 +427,15 @@ t/prefetch/multiple_hasmany.t
 t/prefetch/pollute_already_joined.t
 t/prefetch/rows_bug.t
 t/prefetch/standard.t
+t/relationship/after_update.t
+t/relationship/core.t
+t/relationship/doesnt_exist.t
 t/relationship_after_update.t
 t/relationship_doesnt_exist.t
 t/resultset/as_query.t
 t/resultset/update_delete.t
 t/resultset_class.t
 t/resultset_overload.t
+t/search/preserve_original_rs.t
 t/search/subquery.t
 t/zzzzzzz_perl_perf_bug.t
