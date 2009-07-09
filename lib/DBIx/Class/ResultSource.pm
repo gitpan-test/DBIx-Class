@@ -893,7 +893,7 @@ sub add_relationship {
   }
   return unless $f_source; # Can't test rel without f_source
 
-  eval { $self->_resolve_join($rel, 'me') };
+  eval { $self->_resolve_join($rel, 'me', {}, []) };
 
   if ($@) { # If the resolve failed, back out and re-throw the error
     delete $rels{$rel}; #
@@ -1083,26 +1083,21 @@ sub resolve_join {
 
 # Returns the {from} structure used to express JOIN conditions
 sub _resolve_join {
-  my ($self, $join, $alias, $seen, $force_left, $jpath) = @_;
+  my ($self, $join, $alias, $seen, $jpath, $force_left) = @_;
 
   # we need a supplied one, because we do in-place modifications, no returns
   $self->throw_exception ('You must supply a seen hashref as the 3rd argument to _resolve_join')
-    unless $seen;
+    unless ref $seen eq 'HASH';
 
-  $force_left ||= { force => 0 };
+  $self->throw_exception ('You must supply a joinpath arrayref as the 4th argument to _resolve_join')
+    unless ref $jpath eq 'ARRAY';
 
-  # This isn't quite right, we should actually dive into $seen and reconstruct
-  # the entire path (the reference entry point would be the join conditional
-  # with depth == current_depth - 1. At this point however nothing depends on
-  # having the entire path, transcending related_resultset, so just leave it
-  # as is, hairy enough already.
-  $jpath ||= [];  
+  $jpath = [@$jpath];
 
   if (ref $join eq 'ARRAY') {
     return
       map {
-        local $force_left->{force} = $force_left->{force};
-        $self->_resolve_join($_, $alias, $seen, $force_left, [@$jpath]);
+        $self->_resolve_join($_, $alias, $seen, $jpath, $force_left);
       } @$join;
   } elsif (ref $join eq 'HASH') {
     return
@@ -1110,9 +1105,9 @@ sub _resolve_join {
         my $as = ($seen->{$_} ? join ('_', $_, $seen->{$_} + 1) : $_);  # the actual seen value will be incremented below
         local $force_left->{force} = $force_left->{force};
         (
-          $self->_resolve_join($_, $alias, $seen, $force_left, [@$jpath]),
+          $self->_resolve_join($_, $alias, $seen, [@$jpath], $force_left),
           $self->related_source($_)->_resolve_join(
-            $join->{$_}, $as, $seen, $force_left, [@$jpath, $_]
+            $join->{$_}, $as, $seen, [@$jpath, $_], $force_left
           )
         );
       } keys %$join;
@@ -1120,17 +1115,19 @@ sub _resolve_join {
     $self->throw_exception("No idea how to resolve join reftype ".ref $join);
   } else {
 
+    return() unless defined $join;
+
     my $count = ++$seen->{$join};
     my $as = ($count > 1 ? "${join}_${count}" : $join);
 
     my $rel_info = $self->relationship_info($join);
     $self->throw_exception("No such relationship ${join}") unless $rel_info;
     my $type;
-    if ($force_left->{force}) {
+    if ($force_left) {
       $type = 'left';
     } else {
       $type = $rel_info->{attrs}{join_type} || '';
-      $force_left->{force} = 1 if lc($type) eq 'left';
+      $force_left = 1 if lc($type) eq 'left';
     }
 
     my $rel_src = $self->related_source($join);
@@ -1196,7 +1193,6 @@ our $UNRESOLVABLE_CONDITION = \'1 = 0';
 
 sub _resolve_condition {
   my ($self, $cond, $as, $for) = @_;
-  #warn %$cond;
   if (ref $cond eq 'HASH') {
     my %ret;
     foreach my $k (keys %{$cond}) {
@@ -1237,7 +1233,7 @@ sub _resolve_condition {
   } elsif (ref $cond eq 'ARRAY') {
     return [ map { $self->_resolve_condition($_, $as, $for) } @$cond ];
   } else {
-   die("Can't handle this yet :(");
+   die("Can't handle condition $cond yet :(");
   }
 }
 
@@ -1342,15 +1338,14 @@ sub _resolve_prefetch {
       "don't know how to resolve prefetch reftype ".ref($pre));
   }
   else {
-
     my $p = $alias_map;
     $p = $p->{$_} for (@$pref_path, $pre);
 
     $self->throw_exception (
-      "Unable to resolve prefetch $pre - join alias map does not contain an entry for path "
+      "Unable to resolve prefetch $pre - join alias map does not contain an entry for path: "
       . join (' -> ', @$pref_path, $pre)
     ) if (ref $p->{-join_aliases} ne 'ARRAY' or not @{$p->{-join_aliases}} );
-    
+
     my $as = shift @{$p->{-join_aliases}};
 
     my $rel_info = $self->relationship_info( $pre );
