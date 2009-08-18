@@ -127,6 +127,7 @@ lib/DBIx/Class/Storage/DBI/Replicated.pm
 lib/DBIx/Class/Storage/DBI/Replicated/Balancer.pm
 lib/DBIx/Class/Storage/DBI/Replicated/Balancer/First.pm
 lib/DBIx/Class/Storage/DBI/Replicated/Balancer/Random.pm
+lib/DBIx/Class/Storage/DBI/Replicated/Introduction.pod
 lib/DBIx/Class/Storage/DBI/Replicated/Pool.pm
 lib/DBIx/Class/Storage/DBI/Replicated/Replicant.pm
 lib/DBIx/Class/Storage/DBI/Replicated/Types.pm
@@ -136,6 +137,7 @@ lib/DBIx/Class/Storage/DBI/SQLite.pm
 lib/DBIx/Class/Storage/DBI/Sybase.pm
 lib/DBIx/Class/Storage/DBI/Sybase/Base.pm
 lib/DBIx/Class/Storage/DBI/Sybase/Microsoft_SQL_Server.pm
+lib/DBIx/Class/Storage/DBI/Sybase/Microsoft_SQL_Server/NoBindVars.pm
 lib/DBIx/Class/Storage/DBI/Sybase/MSSQL.pm
 lib/DBIx/Class/Storage/Statistics.pm
 lib/DBIx/Class/Storage/TxnScopeGuard.pm
@@ -227,6 +229,7 @@ t/91merge_attr.t
 t/92storage.t
 t/92storage_on_connect_call.t
 t/92storage_on_connect_do.t
+t/92storage_ping_count.t
 t/93nobindvars.t
 t/93single_accessor_object.t
 t/93storage_replication.t
@@ -316,6 +319,7 @@ t/discard_changes_in_DESTROY.t
 t/from_subquery.t
 t/inflate/core.t
 t/inflate/datetime.t
+t/inflate/datetime_mssql.t
 t/inflate/datetime_mysql.t
 t/inflate/datetime_oracle.t
 t/inflate/datetime_pg.t
@@ -359,6 +363,7 @@ t/lib/DBICTest/ResultSetManager.pm
 t/lib/DBICTest/ResultSetManager/Foo.pm
 t/lib/DBICTest/Schema.pm
 t/lib/DBICTest/Schema/Artist.pm
+t/lib/DBICTest/Schema/ArtistGUID.pm
 t/lib/DBICTest/Schema/ArtistSourceName.pm
 t/lib/DBICTest/Schema/ArtistSubclass.pm
 t/lib/DBICTest/Schema/ArtistUndirectedMap.pm
@@ -371,6 +376,7 @@ t/lib/DBICTest/Schema/CD.pm
 t/lib/DBICTest/Schema/CD_to_Producer.pm
 t/lib/DBICTest/Schema/Collection.pm
 t/lib/DBICTest/Schema/CollectionObject.pm
+t/lib/DBICTest/Schema/CustomSql.pm
 t/lib/DBICTest/Schema/Dummy.pm
 t/lib/DBICTest/Schema/Employee.pm
 t/lib/DBICTest/Schema/Encoded.pm
@@ -388,6 +394,7 @@ t/lib/DBICTest/Schema/LinerNotes.pm
 t/lib/DBICTest/Schema/Link.pm
 t/lib/DBICTest/Schema/Lyrics.pm
 t/lib/DBICTest/Schema/LyricVersion.pm
+t/lib/DBICTest/Schema/Money.pm
 t/lib/DBICTest/Schema/NoPrimaryKey.pm
 t/lib/DBICTest/Schema/NoSuchClass.pm
 t/lib/DBICTest/Schema/OneKey.pm
@@ -416,6 +423,9 @@ t/lib/DBICVersionNew.pm
 t/lib/DBICVersionOrig.pm
 t/lib/sqlite.sql
 t/multi_create/cd_single.t
+t/multi_create/diamond.t
+t/multi_create/existing_in_chain.t
+t/multi_create/has_many.t
 t/multi_create/in_memory.t
 t/multi_create/insert_defaults.t
 t/multi_create/m2m.t
@@ -432,6 +442,7 @@ t/prefetch/grouped.t
 t/prefetch/incomplete.t
 t/prefetch/multiple_hasmany.t
 t/prefetch/standard.t
+t/prefetch/via_search_related.t
 t/prefetch/with_limit.t
 t/relationship/after_update.t
 t/relationship/core.t

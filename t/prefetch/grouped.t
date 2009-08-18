@@ -1,13 +1,12 @@
 use strict;
 use warnings;
+
 use Test::More;
+use Test::Exception;
 
 use lib qw(t/lib);
 use DBICTest;
 use DBIC::SqlMakerTest;
-
-#plan tests => 6;
-plan 'no_plan';
 
 my $schema = DBICTest->init_schema();
 my $sdebug = $schema->storage->debug;
@@ -28,7 +27,6 @@ for ($cd_rs->all) {
   my $track_rs = $schema->resultset ('Track')->search (
     { 'me.cd' => { -in => [ $cd_rs->get_column ('cdid')->all ] } },
     {
-      # the select/as is deliberately silly to test both funcs and refs below
       select => [
         'me.cd',
         { count => 'me.trackid' },
@@ -66,8 +64,6 @@ for ($cd_rs->all) {
 
   # Test sql by hand, as the sqlite db will simply paper over
   # improper group/select combinations
-  #
-  # the exploded IN needs fixing below, coming in another branch
   #
   is_same_sql_bind (
     $track_rs->count_rs->as_query,
@@ -131,14 +127,19 @@ for ($cd_rs->all) {
 # test a has_many/might_have prefetch at the same level
 # Note that one of the CDs now has 4 tracks instead of 3
 {
-  my $most_tracks_rs = $cd_rs->search ({}, {
-    prefetch => 'liner_notes',  # tracks are alredy prefetched
-    select => ['me.cdid', { count => 'tracks.trackid' } ],
-    as => [qw/cdid track_count/],
-    group_by => 'me.cdid',
-    order_by => { -desc => 'track_count' },
-    rows => 2,
-  });
+  my $most_tracks_rs = $schema->resultset ('CD')->search (
+    {
+      'me.cdid' => { '!=' => undef },  # duh - this is just to test WHERE
+    },
+    {
+      prefetch => [qw/tracks liner_notes/],
+      select => ['me.cdid', { count => 'tracks.trackid' }, { max => 'tracks.trackid', -as => 'maxtr'} ],
+      as => [qw/cdid track_count max_track_id/],
+      group_by => 'me.cdid',
+      order_by => [ { -desc => 'track_count' }, { -asc => 'maxtr' } ],
+      rows => 2,
+    }
+  );
 
   is_same_sql_bind (
     $most_tracks_rs->count_rs->as_query,
@@ -149,7 +150,7 @@ for ($cd_rs->all) {
             FROM cd me
             LEFT JOIN track tracks ON tracks.cd = me.cdid
             LEFT JOIN liner_notes liner_notes ON liner_notes.liner_id = me.cdid
-          WHERE ( tracks.cd IS NOT NULL )
+          WHERE ( me.cdid IS NOT NULL )
           GROUP BY me.cdid
           LIMIT 2
         ) count_subq
@@ -161,20 +162,22 @@ for ($cd_rs->all) {
   is_same_sql_bind (
     $most_tracks_rs->as_query,
     '(
-      SELECT me.cdid, me.track_count, tracks.trackid, tracks.cd, tracks.position, tracks.title, tracks.last_updated_on, tracks.last_updated_at, liner_notes.liner_id, liner_notes.notes
+      SELECT  me.cdid, me.track_count, me.maxtr,
+              tracks.trackid, tracks.cd, tracks.position, tracks.title, tracks.last_updated_on, tracks.last_updated_at, tracks.small_dt,
+              liner_notes.liner_id, liner_notes.notes
         FROM (
-          SELECT me.cdid, COUNT( tracks.trackid ) AS track_count
+          SELECT me.cdid, COUNT( tracks.trackid ) AS track_count, MAX( tracks.trackid ) AS maxtr,
             FROM cd me
             LEFT JOIN track tracks ON tracks.cd = me.cdid
-          WHERE ( tracks.cd IS NOT NULL )
+          WHERE ( me.cdid IS NOT NULL )
           GROUP BY me.cdid
-          ORDER BY track_count DESC
+          ORDER BY track_count DESC, maxtr ASC
           LIMIT 2
         ) me
         LEFT JOIN track tracks ON tracks.cd = me.cdid
         LEFT JOIN liner_notes liner_notes ON liner_notes.liner_id = me.cdid
-      WHERE ( tracks.cd IS NOT NULL )
-      ORDER BY track_count DESC, tracks.cd
+      WHERE ( me.cdid IS NOT NULL )
+      ORDER BY track_count DESC, maxtr ASC, tracks.cd
     )',
     [],
     'next() query generated expected SQL',
@@ -201,3 +204,71 @@ for ($cd_rs->all) {
   $schema->storage->debugcb (undef);
   $schema->storage->debug ($sdebug);
 }
+
+# make sure that distinct still works
+{
+  my $rs = $schema->resultset("CD")->search({}, {
+    prefetch => 'tags',
+    order_by => 'cdid',
+    distinct => 1,
+  });
+
+  is_same_sql_bind (
+    $rs->as_query,
+    '(
+      SELECT me.cdid, me.artist, me.title, me.year, me.genreid, me.single_track,
+             tags.tagid, tags.cd, tags.tag 
+        FROM (
+          SELECT me.cdid, me.artist, me.title, me.year, me.genreid, me.single_track
+            FROM cd me
+          GROUP BY me.cdid, me.artist, me.title, me.year, me.genreid, me.single_track
+          ORDER BY cdid
+        ) me
+        LEFT JOIN tags tags ON tags.cd = me.cdid
+      ORDER BY cdid, tags.cd, tags.tag
+    )',
+    [],
+    'Prefetch + distinct resulted in correct group_by',
+  );
+
+  is ($rs->all, 5, 'Correct number of CD objects');
+  is ($rs->count, 5, 'Correct count of CDs');
+}
+
+# RT 47779, test group_by as a scalar ref
+{
+  my $track_rs = $schema->resultset ('Track')->search (
+    { 'me.cd' => { -in => [ $cd_rs->get_column ('cdid')->all ] } },
+    {
+      select => [
+        'me.cd',
+        { count => 'me.trackid' },
+      ],
+      as => [qw/
+        cd
+        track_count
+      /],
+      group_by => \'SUBSTR(me.cd, 1, 1)',
+      prefetch => 'cd',
+    },
+  );
+
+  is_same_sql_bind (
+    $track_rs->count_rs->as_query,
+    '(
+      SELECT COUNT( * )
+        FROM (
+          SELECT SUBSTR(me.cd, 1, 1)
+            FROM track me
+            JOIN cd cd ON cd.cdid = me.cd
+          WHERE ( me.cd IN ( ?, ?, ?, ?, ? ) )
+          GROUP BY SUBSTR(me.cd, 1, 1)
+        )
+      count_subq
+    )',
+    [ map { [ 'me.cd' => $_] } ($cd_rs->get_column ('cdid')->all) ],
+    'count() query generated expected SQL',
+  );
+}
+
+done_testing;

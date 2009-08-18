@@ -4,10 +4,11 @@ author:
   - 'mst: Matt S. Trout <mst@shadowcatsystems.co.uk>'
 build_requires:
   ExtUtils::MakeMaker: 6.42
+  File::Temp: 0.22
   Test::Builder: 0.33
   Test::Deep: 0
   Test::Exception: 0
-  Test::More: 0.82
+  Test::More: 0.92
   Test::Warn: 0.11
 configure_requires:
   ExtUtils::MakeMaker: 6.42
@@ -19,6 +20,12 @@ meta-spec:
   version: 1.4
 name: DBIx-Class
 no_index:
+  DBIx::Class::SQLAHacks: []
+  DBIx::Class::SQLAHacks::MSSQL: []
+  DBIx::Class::Storage::DBI::AmbiguousGlob: []
+  DBIx::Class::Storage::DBI::Sybase::Base: []
+  DBIx::Class::Storage::DBI::Sybase::Microsoft_SQL_Server: []
+  DBIx::Class::Storage::DBI::Sybase::Microsoft_SQL_Server::NoBindVars: []
   directory:
     - examples
     - inc
@@ -50,4 +57,4 @@ resources:
   MailingList: http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class
   license: http://dev.perl.org/licenses/
   repository: http://dev.catalyst.perl.org/svnweb/bast/browse/DBIx-Class/
-version: 0.08108
+version: 0.08109
