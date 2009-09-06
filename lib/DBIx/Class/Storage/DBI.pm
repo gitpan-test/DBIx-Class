@@ -1359,6 +1359,7 @@ sub insert_bulk {
     local $Data::Dumper::Indent = 1;
     local $Data::Dumper::Useqq = 1;
     local $Data::Dumper::Quotekeys = 0;
+    local $Data::Dumper::Sortkeys = 1;
 
     $self->throw_exception(sprintf "%s for populate slice:\n%s",
       $tuple_status->[$i][1],
@@ -2546,10 +2547,12 @@ sub lag_behind_master {
 
 sub DESTROY {
   my $self = shift;
+
   $self->_verify_pid if $self->_dbh;
 
   # some databases need this to stop spewing warnings
   if (my $dbh = $self->_dbh) {
+    local $@;
     eval { $dbh->disconnect };
   }
 
