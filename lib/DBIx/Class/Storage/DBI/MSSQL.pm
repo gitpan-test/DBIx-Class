@@ -55,10 +55,14 @@ sub insert {
   @pk_cols{@pk_cols} = ();
 
   my @pk_guids = grep {
+    $source->column_info($_)->{data_type}
+    &&
     $source->column_info($_)->{data_type} =~ /^uniqueidentifier/i
   } @pk_cols;
 
   my @auto_guids = grep {
+    $source->column_info($_)->{data_type}
+    &&
     $source->column_info($_)->{data_type} =~ /^uniqueidentifier/i
     &&
     $source->column_info($_)->{auto_nextval}
@@ -87,7 +91,9 @@ sub _prep_for_execute {
 
     for my $col (keys %$fields) {
       # $ident is a result source object with INSERT/UPDATE ops
-      if ($ident->column_info ($col)->{data_type} =~ /^money\z/i) {
+      if ($ident->column_info ($col)->{data_type}
+         &&
+         $ident->column_info ($col)->{data_type} =~ /^money\z/i) {
         my $val = $fields->{$col};
         $fields->{$col} = \['CAST(? AS MONEY)', [ $col => $val ]];
       }
@@ -192,6 +198,8 @@ L<DBIx::Class::Storage::DBI::Sybase::Microsoft_SQL_Server>.
 
 =head1 IMPLEMENTATION NOTES
 
+=head2 IDENTITY information
+
 Microsoft SQL Server supports three methods of retrieving the IDENTITY
 value for inserted row: IDENT_CURRENT, @@IDENTITY, and SCOPE_IDENTITY().
 SCOPE_IDENTITY is used here because it is the safest.  However, it must
@@ -209,6 +217,14 @@ it will only be used if SCOPE_IDENTITY() fails.
 This is more dangerous, as inserting into a table with an on insert trigger that
 inserts into another table with an identity will give erroneous results on
 recent versions of SQL Server.
+
+=head2 bulk_insert
+
+Be aware that we have tried to make things as simple as possible for our users.
+For MSSQL that means that when a user tries to do a populate/bulk_insert which
+includes an autoincrementing column, we will try to tell the database to allow
+the insertion of the autoinc column.  But the user must have the db_ddladmin
+role membership, otherwise you will get a fairly opaque error message.
 
 =head1 AUTHOR
 

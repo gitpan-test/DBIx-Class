@@ -2278,6 +2278,19 @@ C<belongs_to>resultset. Note Hashref.
     }
   });
 
+=over
+
+=item WARNING
+
+When subclassing ResultSet never attempt to override this method. Since
+it is a simple shortcut for C<< $self->new_result($attrs)->insert >>, a
+lot of the internals simply never call it, so your override will be
+bypassed more often than not. Override either L<new|DBIx::Class::Row/new>
+or L<insert|DBIx::Class::Row/insert> depending on how early in the
+L</create> process you need to intervene.
+
+=back
+
 =cut
 
 sub create {
@@ -2840,7 +2853,7 @@ sub _resolved_attrs {
 
   if ( $attrs->{join} || $attrs->{prefetch} ) {
 
-    $self->throw_exception ('join/prefetch can not be used with a literal scalarref {from}')
+    $self->throw_exception ('join/prefetch can not be used with a custom {from}')
       if ref $attrs->{from} ne 'ARRAY';
 
     my $join = delete $attrs->{join} || {};
@@ -2985,6 +2998,13 @@ sub _rollout_hash {
 
 sub _calculate_score {
   my ($self, $a, $b) = @_;
+
+  if (defined $a xor defined $b) {
+    return 0;
+  }
+  elsif (not defined $a) {
+    return 1;
+  }
 
   if (ref $b eq 'HASH') {
     my ($b_key) = keys %{$b};
