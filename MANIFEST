@@ -428,6 +428,7 @@ t/prefetch/diamond.t
 t/prefetch/double_prefetch.t
 t/prefetch/grouped.t
 t/prefetch/incomplete.t
+t/prefetch/join_type.t
 t/prefetch/multiple_hasmany.t
 t/prefetch/standard.t
 t/prefetch/via_search_related.t

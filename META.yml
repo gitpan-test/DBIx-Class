@@ -30,8 +30,6 @@ no_index:
     - examples
     - inc
     - t
-recommends:
-  SQL::Translator: 0.11002
 requires:
   Carp::Clan: 6.0
   Class::Accessor::Grouped: 0.09000
@@ -57,4 +55,4 @@ resources:
   MailingList: http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class
   license: http://dev.perl.org/licenses/
   repository: http://dev.catalyst.perl.org/svnweb/bast/browse/DBIx-Class/
-version: 0.08111
+version: 0.08112
