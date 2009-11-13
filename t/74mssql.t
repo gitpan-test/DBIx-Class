@@ -18,7 +18,7 @@ my ($dsn, $user, $pass) = @ENV{map { "DBICTEST_MSSQL_${_}" } qw/DSN USER PASS/};
 plan skip_all => 'Set $ENV{DBICTEST_MSSQL_DSN}, _USER and _PASS to run this test'
   unless ($dsn);
 
-my $TESTS = 13;
+my $TESTS = 18;
 
 plan tests => $TESTS * 2;
 
@@ -133,6 +133,42 @@ SQL
 
   is $rs->find($row->id)->amount,
     undef, 'updated money value to NULL round-trip';
+
+  $rs->create({ amount => 300 }) for (1..3);
+
+  # test multiple active statements
+  lives_ok {
+    my $artist_rs = $schema->resultset('Artist');
+    while (my $row = $rs->next) {
+      my $artist = $artist_rs->next;
+    }
+    $rs->reset;
+  } 'multiple active statements';
+
+  $rs->delete;
+
+  # test simple transaction with commit
+  lives_ok {
+    $schema->txn_do(sub {
+      $rs->create({ amount => 400 });
+    });
+  } 'simple transaction';
+
+  cmp_ok $rs->first->amount, '==', 400, 'committed';
+  $rs->reset;
+
+  $rs->delete;
+
+  # test rollback
+  throws_ok {
+    $schema->txn_do(sub {
+      $rs->create({ amount => 400 });
+      die 'mtfnpy';
+    });
+  } qr/mtfnpy/, 'simple failed txn';
+
+  is $rs->first, undef, 'rolled back';
+  $rs->reset;
 }
 
 # clean up our mess
