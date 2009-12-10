@@ -20,12 +20,18 @@ meta-spec:
   version: 1.4
 name: DBIx-Class
 no_index:
+  DBIx::Class::PK::Auto::DB2: []
+  DBIx::Class::PK::Auto::MSSQL: []
+  DBIx::Class::PK::Auto::MySQL: []
+  DBIx::Class::PK::Auto::Oracle: []
+  DBIx::Class::PK::Auto::Pg: []
+  DBIx::Class::PK::Auto::SQLite: []
   DBIx::Class::SQLAHacks: []
   DBIx::Class::SQLAHacks::MSSQL: []
+  DBIx::Class::SQLAHacks::MySQL: []
+  DBIx::Class::SQLAHacks::OracleJoins: []
   DBIx::Class::Storage::DBI::AmbiguousGlob: []
-  DBIx::Class::Storage::DBI::Sybase::Common: []
-  DBIx::Class::Storage::DBI::Sybase::Microsoft_SQL_Server: []
-  DBIx::Class::Storage::DBI::Sybase::Microsoft_SQL_Server::NoBindVars: []
+  DBIx::Class::Storage::DBIHacks: []
   directory:
     - examples
     - inc
@@ -56,4 +62,4 @@ resources:
   MailingList: http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class
   license: http://dev.perl.org/licenses/
   repository: http://dev.catalyst.perl.org/repos/bast/DBIx-Class/
-version: 0.08114
+version: 0.08115

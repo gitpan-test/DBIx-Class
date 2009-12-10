@@ -1,10 +1,9 @@
 package # Hide from PAUSE
   DBIx::Class::Version::Table;
-use base 'DBIx::Class';
+use base 'DBIx::Class::Core';
 use strict;
 use warnings;
 
-__PACKAGE__->load_components(qw/ Core/);
 __PACKAGE__->table('dbix_class_schema_versions');
 
 __PACKAGE__->add_columns
@@ -31,8 +30,7 @@ __PACKAGE__->set_primary_key('version');
 
 package # Hide from PAUSE
   DBIx::Class::Version::TableCompat;
-use base 'DBIx::Class';
-__PACKAGE__->load_components(qw/ Core/);
+use base 'DBIx::Class::Core';
 __PACKAGE__->table('SchemaVersions');
 
 __PACKAGE__->add_columns
@@ -180,7 +178,7 @@ package DBIx::Class::Schema::Versioned;
 
 use strict;
 use warnings;
-use base 'DBIx::Class';
+use base 'DBIx::Class::Schema';
 
 use Carp::Clan qw/^DBIx::Class/;
 use POSIX 'strftime';
@@ -472,8 +470,12 @@ sub _on_connect
   my ($self, $args) = @_;
 
   $args = {} unless $args;
+
   $self->{vschema} = DBIx::Class::Version->connect(@{$self->storage->connect_info()});
   my $vtable = $self->{vschema}->resultset('Table');
+
+  # useful when connecting from scripts etc
+  return if ($args->{ignore_version} || ($ENV{DBIC_NO_VERSION_CHECK} && !exists $args->{ignore_version}));
 
   # check for legacy versions table and move to new if exists
   my $vschema_compat = DBIx::Class::VersionCompat->connect(@{$self->storage->connect_info()});
@@ -486,8 +488,6 @@ sub _on_connect
     }
   }
 
-  # useful when connecting from scripts etc
-  return if ($args->{ignore_version} || ($ENV{DBIC_NO_VERSION_CHECK} && !exists $args->{ignore_version}));
   my $pversion = $self->get_db_version();
 
   if($pversion eq $self->schema_version)

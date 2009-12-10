@@ -14,11 +14,19 @@ sub _rebless {
   $self->_identity_method('@@identity');
 }
 
+sub _sth_bind_param {
+  my ($self, $sth, $placeholder_index, $data, $attributes, @extra) = @_;
+
+  $attributes->{ado_size} = 8000; # max VARCHAR on MSSQL
+
+  $self->next::method($sth, $placeholder_index, $data, $attributes, @extra);
+}
+
 1;
 
 =head1 NAME
 
-DBIx::Class::Storage::DBI::Sybase::Microsoft_SQL_Server - Support for Microsoft
+DBIx::Class::Storage::DBI::ADO::Microsoft_SQL_Server - Support for Microsoft
 SQL Server via DBD::ADO
 
 =head1 SYNOPSIS

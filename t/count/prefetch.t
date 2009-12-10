@@ -39,16 +39,9 @@ my $schema = DBICTest->init_schema();
 
 # collapsing prefetch with distinct
 {
-  my $first_cd = $schema->resultset('Artist')->first->cds->first;
-  $first_cd->update ({
-    genreid => $first_cd->create_related (
-      genre => ({ name => 'vague genre' })
-    )->id
-  });
-
   my $rs = $schema->resultset("Artist")->search(undef, {distinct => 1})
             ->search_related('cds')->search_related('genre',
-                { 'genre.name' => { '!=', 'foo' } },
+                { 'genre.name' => 'emo' },
                 { prefetch => q(cds) },
             );
   is ($rs->all, 1, 'Correct number of objects');
@@ -60,15 +53,18 @@ my $schema = DBICTest->init_schema();
       SELECT COUNT( * )
         FROM (
           SELECT genre.genreid
-            FROM artist me
+            FROM (
+              SELECT me.artistid, me.name, me.rank, me.charfield
+                FROM artist me GROUP BY me.artistid, me.name, me.rank, me.charfield
+            ) me
             JOIN cd cds ON cds.artist = me.artistid
             JOIN genre genre ON genre.genreid = cds.genreid
             LEFT JOIN cd cds_2 ON cds_2.genreid = genre.genreid
-          WHERE ( genre.name != ? )
-          GROUP BY genre.genreid
-        ) count_subq
+          WHERE ( genre.name = ? ) GROUP BY genre.genreid
+        )
+      count_subq
     )',
-    [ [ 'genre.name' => 'foo' ] ],
+    [ [ 'genre.name' => 'emo' ] ],
   );
 }
 

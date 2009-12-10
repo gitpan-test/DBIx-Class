@@ -9,6 +9,7 @@ use base qw/SQL::Abstract::Limit/;
 use strict;
 use warnings;
 use Carp::Clan qw/^DBIx::Class|^SQL::Abstract/;
+use Sub::Name();
 
 BEGIN {
   # reinstall the carp()/croak() functions imported into SQL::Abstract
@@ -18,17 +19,15 @@ BEGIN {
   for my $f (qw/carp croak/) {
 
     my $orig = \&{"SQL::Abstract::$f"};
-    *{"SQL::Abstract::$f"} = sub {
-
-      local $Carp::CarpLevel = 1;   # even though Carp::Clan ignores this, $orig will not
-
-      if (Carp::longmess() =~ /DBIx::Class::SQLAHacks::[\w]+ .+? called \s at/x) {
-        __PACKAGE__->can($f)->(@_);
-      }
-      else {
-        $orig->(@_);
-      }
-    }
+    *{"SQL::Abstract::$f"} = Sub::Name::subname "SQL::Abstract::$f" =>
+      sub {
+        if (Carp::longmess() =~ /DBIx::Class::SQLAHacks::[\w]+ .+? called \s at/x) {
+          __PACKAGE__->can($f)->(@_);
+        }
+        else {
+          goto $orig;
+        }
+      };
   }
 }
 
@@ -48,31 +47,36 @@ sub new {
 }
 
 
-# Slow but ANSI standard Limit/Offset support. DB2 uses this
+# ANSI standard Limit/Offset implementation. DB2 and MSSQL use this
 sub _RowNumberOver {
   my ($self, $sql, $order, $rows, $offset ) = @_;
 
-  $offset += 1;
-  my $last = $rows + $offset - 1;
-  my ( $order_by ) = $self->_order_by( $order );
+  # get the order_by only (or make up an order if none exists)
+  my $order_by = $self->_order_by(
+    (delete $order->{order_by}) || $self->_rno_default_order
+  );
 
-  $sql = <<"SQL";
-SELECT * FROM
-(
-   SELECT Q1.*, ROW_NUMBER() OVER( ) AS ROW_NUM FROM (
-      $sql
-      $order_by
-   ) Q1
-) Q2
-WHERE ROW_NUM BETWEEN $offset AND $last
+  # whatever is left
+  my $group_having = $self->_order_by($order);
 
-SQL
+  $sql = sprintf (<<'EOS', $order_by, $sql, $group_having, $offset + 1, $offset + $rows, );
 
+SELECT * FROM (
+  SELECT orig_query.*, ROW_NUMBER() OVER(%s ) AS rno__row__index FROM (%s%s) orig_query
+) rno_subq WHERE rno__row__index BETWEEN %d AND %d
+
+EOS
+
+  $sql =~ s/\s*\n\s*/ /g;   # easier to read in the debugger
   return $sql;
 }
 
-# Crappy Top based Limit/Offset support. MSSQL uses this currently,
-# but may have to switch to RowNumberOver one day
+# some databases are happy with OVER (), some need OVER (ORDER BY (SELECT (1)) )
+sub _rno_default_order {
+  return undef;
+}
+
+# Crappy Top based Limit/Offset support. Legacy from MSSQL.
 sub _Top {
   my ( $self, $sql, $order, $rows, $offset ) = @_;
 
