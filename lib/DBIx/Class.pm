@@ -4,9 +4,10 @@ use strict;
 use warnings;
 
 use MRO::Compat;
+use mro 'c3';
 
 use vars qw($VERSION);
-use base qw/Class::C3::Componentised Class::Accessor::Grouped/;
+use base qw/DBIx::Class::Componentised Class::Accessor::Grouped/;
 use DBIx::Class::StartupCheck;
 
 sub mk_classdata {
@@ -24,7 +25,7 @@ sub component_base_class { 'DBIx::Class' }
 # Always remember to do all digits for the version even if they're 0
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
-$VERSION = '0.08115';
+$VERSION = '0.08116';
 
 $VERSION = eval $VERSION; # numify for warning-free dev releases
 
@@ -116,7 +117,7 @@ Then you can use these classes in your application's code:
   # Output all artists names
   # $artist here is a DBIx::Class::Row, which has accessors
   # for all its columns. Rows are also subclasses of your Result class.
-  foreach $artist (@artists) {
+  foreach $artist (@all_artists) {
     print $artist->name, "\n";
   }
 
@@ -226,6 +227,8 @@ blblack: Brandon L. Black <blblack@gmail.com>
 
 bluefeet: Aran Deltac <bluefeet@cpan.org>
 
+boghead: Bryan Beeley <cpan@beeley.org>
+
 bricas: Brian Cassidy <bricas@cpan.org>
 
 brunov: Bruno Vecchi <vecchi.b@gmail.com>
@@ -266,6 +269,8 @@ jgoulah: John Goulah <jgoulah@cpan.org>
 
 jguenther: Justin Guenther <jguenther@cpan.org>
 
+jhannah: Jay Hannah <jay@jays.net>
+
 jnapiorkowski: John Napiorkowski <jjn1056@yahoo.com>
 
 jon: Jon Schutz <jjschutz@cpan.org>
@@ -294,6 +299,8 @@ norbi: Norbert Buchmuller <norbi@nix.hu>
 
 Numa: Dan Sully <daniel@cpan.org>
 
+ovid: Curtis "Ovid" Poe <ovid@cpan.org>
+
 oyse: Øystein Torget <oystein.torget@dnv.com>
 
 paulm: Paul Makepeace
@@ -316,11 +323,13 @@ rbuels: Robert Buels <rmb32@cornell.edu>
 
 rdj: Ryan D Johnson <ryan@innerfence.com>
 
-ribasushi: Peter Rabbitson <rabbit+dbic@rabbit.us>
+ribasushi: Peter Rabbitson <ribasushi@cpan.org>
 
 rjbs: Ricardo Signes <rjbs@cpan.org>
 
 robkinyon: Rob Kinyon <rkinyon@cpan.org>
+
+Roman: Roman Filippov <romanf@cpan.org>
 
 sc_: Just Another Perl Hacker
 

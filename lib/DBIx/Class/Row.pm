@@ -527,7 +527,9 @@ attempt is made to delete all the related objects as well. To turn
 this behaviour off, pass C<< cascade_delete => 0 >> in the C<$attr>
 hashref of the relationship, see L<DBIx::Class::Relationship>. Any
 database-level cascade or restrict will take precedence over a
-DBIx-Class-based cascading delete.
+DBIx-Class-based cascading delete, since DBIx-Class B<deletes the
+main row first> and only then attempts to delete any remaining related
+rows.
 
 If you delete an object within a txn_do() (see L<DBIx::Class::Storage/txn_do>)
 and the transaction subsequently fails, the row object will remain marked as
@@ -774,6 +776,22 @@ sub get_inflated_columns {
   return ($self->get_columns, %inflated);
 }
 
+sub _is_column_numeric {
+   my ($self, $column) = @_;
+    my $colinfo = $self->column_info ($column);
+
+    # cache for speed (the object may *not* have a resultsource instance)
+    if (not defined $colinfo->{is_numeric} && $self->_source_handle) {
+      $colinfo->{is_numeric} =
+        $self->result_source->schema->storage->is_datatype_numeric ($colinfo->{data_type})
+          ? 1
+          : 0
+        ;
+    }
+
+    return $colinfo->{is_numeric};
+}
+
 =head2 set_column
 
   $row->set_column($col => $val);
@@ -802,7 +820,7 @@ sub set_column {
   $self->{_orig_ident} ||= $self->ident_condition;
   my $old_value = $self->get_column($column);
 
-  $self->store_column($column, $new_value);
+  $new_value = $self->store_column($column, $new_value);
 
   my $dirty;
   if (!$self->in_storage) { # no point tracking dirtyness on uninserted data
@@ -818,18 +836,7 @@ sub set_column {
     $dirty = 0;
   }
   else {  # do a numeric comparison if datatype allows it
-    my $colinfo = $self->column_info ($column);
-
-    # cache for speed (the object may *not* have a resultsource instance)
-    if (not defined $colinfo->{is_numeric} && $self->_source_handle) {
-      $colinfo->{is_numeric} =
-        $self->result_source->schema->storage->is_datatype_numeric ($colinfo->{data_type})
-          ? 1
-          : 0
-        ;
-    }
-
-    if ($colinfo->{is_numeric}) {
+    if ($self->_is_column_numeric($column)) {
       $dirty = $old_value != $new_value;
     }
     else {

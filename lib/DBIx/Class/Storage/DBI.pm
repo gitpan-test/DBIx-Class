@@ -451,13 +451,50 @@ L<DBIx::Class::Schema/connect>
 =cut
 
 sub connect_info {
-  my ($self, $info_arg) = @_;
+  my ($self, $info) = @_;
 
-  return $self->_connect_info if !$info_arg;
+  return $self->_connect_info if !$info;
+
+  $self->_connect_info($info); # copy for _connect_info
+
+  $info = $self->_normalize_connect_info($info)
+    if ref $info eq 'ARRAY';
+
+  for my $storage_opt (keys %{ $info->{storage_options} }) {
+    my $value = $info->{storage_options}{$storage_opt};
+
+    $self->$storage_opt($value);
+  }
+
+  # Kill sql_maker/_sql_maker_opts, so we get a fresh one with only
+  #  the new set of options
+  $self->_sql_maker(undef);
+  $self->_sql_maker_opts({});
+
+  for my $sql_maker_opt (keys %{ $info->{sql_maker_options} }) {
+    my $value = $info->{sql_maker_options}{$sql_maker_opt};
+
+    $self->_sql_maker_opts->{$sql_maker_opt} = $value;
+  }
+
+  my %attrs = (
+    %{ $self->_default_dbi_connect_attributes || {} },
+    %{ $info->{attributes} || {} },
+  );
+
+  my @args = @{ $info->{arguments} };
+
+  $self->_dbi_connect_info([@args,
+    %attrs && !(ref $args[0] eq 'CODE') ? \%attrs : ()]);
+
+  return $self->_connect_info;
+}
+
+sub _normalize_connect_info {
+  my ($self, $info_arg) = @_;
+  my %info;
 
   my @args = @$info_arg;  # take a shallow copy for further mutilation
-  $self->_connect_info([@args]); # copy for _connect_info
-
 
   # combine/pre-parse arguments depending on invocation style
 
@@ -494,36 +531,23 @@ sub connect_info {
     @args = @args[0,1,2];
   }
 
-  # Kill sql_maker/_sql_maker_opts, so we get a fresh one with only
-  #  the new set of options
-  $self->_sql_maker(undef);
-  $self->_sql_maker_opts({});
+  $info{arguments} = \@args;
 
-  if(keys %attrs) {
-    for my $storage_opt (@storage_options, 'cursor_class') {    # @storage_options is declared at the top of the module
-      if(my $value = delete $attrs{$storage_opt}) {
-        $self->$storage_opt($value);
-      }
-    }
-    for my $sql_maker_opt (qw/limit_dialect quote_char name_sep/) {
-      if(my $opt_val = delete $attrs{$sql_maker_opt}) {
-        $self->_sql_maker_opts->{$sql_maker_opt} = $opt_val;
-      }
-    }
-  }
+  my @storage_opts = grep exists $attrs{$_},
+    @storage_options, 'cursor_class';
 
-  if (ref $args[0] eq 'CODE') {
-    # _connect() never looks past $args[0] in this case
-    %attrs = ()
-  } else {
-    %attrs = (
-      %{ $self->_default_dbi_connect_attributes || {} },
-      %attrs,
-    );
-  }
+  @{ $info{storage_options} }{@storage_opts} =
+    delete @attrs{@storage_opts} if @storage_opts;
 
-  $self->_dbi_connect_info([@args, keys %attrs ? \%attrs : ()]);
-  $self->_connect_info;
+  my @sql_maker_opts = grep exists $attrs{$_},
+    qw/limit_dialect quote_char name_sep/;
+
+  @{ $info{sql_maker_options} }{@sql_maker_opts} =
+    delete @attrs{@sql_maker_opts} if @sql_maker_opts;
+
+  $info{attributes} = \%attrs if %attrs;
+
+  return \%info;
 }
 
 sub _default_dbi_connect_attributes {
@@ -1026,7 +1050,7 @@ sub _connect {
 
   eval {
     if(ref $info[0] eq 'CODE') {
-       $dbh = &{$info[0]}
+       $dbh = $info[0]->();
     }
     else {
        $dbh = DBI->connect(@info);
@@ -1148,6 +1172,11 @@ sub _svp_generate_name {
 
 sub txn_begin {
   my $self = shift;
+
+  # this means we have not yet connected and do not know the AC status
+  # (e.g. coderef $dbh)
+  $self->ensure_connected if (! defined $self->_dbh_autocommit);
+
   if($self->{transaction_depth} == 0) {
     $self->debugobj->txn_begin()
       if $self->debug;
@@ -1290,12 +1319,6 @@ sub _query_end {
     }
 }
 
-sub _sth_bind_param {
-  my ($self, $sth, $placeholder_index, $data, $attributes) = @_;
-
-  $sth->bind_param($placeholder_index, $data, $attributes);
-}
-
 sub _dbh_execute {
   my ($self, $dbh, $op, $extra_bind, $ident, $bind_attributes, @args) = @_;
 
@@ -1320,7 +1343,7 @@ sub _dbh_execute {
       my $ref = ref $data;
       $data = $ref && $ref ne 'ARRAY' ? ''.$data : $data; # stringify args (except arrayrefs)
 
-      $self->_sth_bind_param($sth, $placeholder_index, $data, $attributes);
+      $sth->bind_param($placeholder_index, $data, $attributes);
       $placeholder_index++;
     }
   }
@@ -1366,7 +1389,6 @@ sub insert {
   return $updated_cols;
 }
 
-## Still not quite perfect, and EXPERIMENTAL
 ## Currently it is assumed that all values passed will be "normal", i.e. not
 ## scalar refs, or at least, all the same type as the first set, the statement is
 ## only prepped once.
@@ -1446,9 +1468,13 @@ sub insert_bulk {
     );
   }
 
+  # neither _execute_array, nor _execute_inserts_with_no_binds are
+  # atomic (even if _execute _array is a single call). Thus a safety
+  # scope guard
+  my $guard = $self->txn_scope_guard unless $self->{transaction_depth} != 0;
+
   $self->_query_start( $sql, ['__BULK__'] );
   my $sth = $self->sth($sql);
-
   my $rv = do {
     if ($empty_bind) {
       # bind_param_array doesn't work if there are no binds
@@ -1462,13 +1488,14 @@ sub insert_bulk {
 
   $self->_query_end( $sql, ['__BULK__'] );
 
+
+  $guard->commit if $guard;
+
   return (wantarray ? ($rv, $sth, @bind) : $rv);
 }
 
 sub _execute_array {
   my ($self, $source, $sth, $bind, $cols, $data, @extra) = @_;
-
-  my $guard = $self->txn_scope_guard unless $self->{transaction_depth} != 0;
 
   ## This must be an arrayref, else nothing works!
   my $tuple_status = [];
@@ -1518,9 +1545,6 @@ sub _execute_array {
       }),
     );
   }
-
-  $guard->commit if $guard;
-
   return $rv;
 }
 
@@ -1532,8 +1556,6 @@ sub _dbh_execute_array {
 
 sub _dbh_execute_inserts_with_no_binds {
   my ($self, $sth, $count) = @_;
-
-  my $guard = $self->txn_scope_guard unless $self->{transaction_depth} != 0;
 
   eval {
     my $dbh = $self->_get_dbh;
@@ -1550,13 +1572,11 @@ sub _dbh_execute_inserts_with_no_binds {
 
   $self->throw_exception($exception) if $exception;
 
-  $guard->commit if $guard;
-
   return $count;
 }
 
 sub update {
-  my ($self, $source, @args) = @_; 
+  my ($self, $source, @args) = @_;
 
   my $bind_attrs = $self->source_bind_attributes($source);
 
@@ -1655,11 +1675,12 @@ sub _per_row_update_delete {
   my $row_cnt = '0E0';
 
   my $subrs_cur = $rs->cursor;
-  while (my @pks = $subrs_cur->next) {
+  my @all_pk = $subrs_cur->all;
+  for my $pks ( @all_pk) {
 
     my $cond;
     for my $i (0.. $#pcols) {
-      $cond->{$pcols[$i]} = $pks[$i];
+      $cond->{$pcols[$i]} = $pks->[$i];
     }
 
     $self->$op (
@@ -1723,7 +1744,7 @@ sub _select_args {
     select => $select,
     from => $ident,
     where => $where,
-    $rs_alias
+    $rs_alias && $alias2source->{$rs_alias}
       ? ( _source_handle => $alias2source->{$rs_alias}->handle )
       : ()
     ,
@@ -1774,11 +1795,24 @@ sub _select_args {
 
   my @limit;
 
-  # see if we need to tear the prefetch apart (either limited has_many or grouped prefetch)
-  # otherwise delegate the limiting to the storage, unless software limit was requested
+  # see if we need to tear the prefetch apart otherwise delegate the limiting to the
+  # storage, unless software limit was requested
   if (
+    #limited has_many
     ( $attrs->{rows} && keys %{$attrs->{collapse}} )
        ||
+    # limited prefetch with RNO subqueries
+    (
+      $attrs->{rows}
+        &&
+      $sql_maker->limit_dialect eq 'RowNumberOver'
+        &&
+      $attrs->{_prefetch_select}
+        &&
+      @{$attrs->{_prefetch_select}}
+    )
+      ||
+    # grouped prefetch
     ( $attrs->{group_by}
         &&
       @{$attrs->{group_by}}
@@ -1788,7 +1822,6 @@ sub _select_args {
       @{$attrs->{_prefetch_select}}
     )
   ) {
-
     ($ident, $select, $where, $attrs)
       = $self->_adjust_select_args_for_complex_prefetch ($ident, $select, $where, $attrs);
   }
@@ -1800,7 +1833,7 @@ sub _select_args {
       &&
     (ref $ident eq 'ARRAY' && @$ident > 1)  # indicates a join
       &&
-    scalar $sql_maker->_order_by_chunks ($attrs->{order_by})
+    scalar $self->_parse_order_by ($attrs->{order_by})
   ) {
     # the RNO limit dialect above mangles the SQL such that the join gets lost
     # wrap a subquery here
@@ -1828,6 +1861,9 @@ sub _select_args {
   elsif (! $attrs->{software_limit} ) {
     push @limit, $attrs->{rows}, $attrs->{offset};
   }
+
+  # try to simplify the joinmap further (prune unreferenced type-single joins)
+  $ident = $self->_prune_unused_joins ($ident, $select, $where, $attrs);
 
 ###
   # This would be the point to deflate anything found in $where
@@ -2142,7 +2178,7 @@ sub is_datatype_numeric {
 }
 
 
-=head2 create_ddl_dir (EXPERIMENTAL)
+=head2 create_ddl_dir
 
 =over 4
 
@@ -2194,10 +2230,8 @@ hashref like the following
  { ignore_constraint_names => 0, # ... other options }
 
 
-Note that this feature is currently EXPERIMENTAL and may not work correctly
-across all databases, or fully handle complex relationships.
-
-WARNING: Please check all SQL files created, before applying them.
+WARNING: You are strongly advised to check all SQL files created, before applying
+them.
 
 =cut
 
@@ -2379,10 +2413,19 @@ sub deployment_statements {
     data => $schema,
   );
 
-  my $ret = $tr->translate
-    or $self->throw_exception( 'Unable to produce deployment statements: ' . $tr->error);
+  my @ret;
+  my $wa = wantarray;
+  if ($wa) {
+    @ret = $tr->translate;
+  }
+  else {
+    $ret[0] = $tr->translate;
+  }
 
-  return $ret;
+  $self->throw_exception( 'Unable to produce deployment statements: ' . $tr->error)
+    unless (@ret && defined $ret[0]);
+
+  return $wa ? @ret : $ret[0];
 }
 
 sub deploy {
@@ -2507,6 +2550,34 @@ sub lag_behind_master {
   sub _sqlt_minimum_version { $minimum_sqlt_version };
 }
 
+=head2 relname_to_table_alias
+
+=over 4
+
+=item Arguments: $relname, $join_count
+
+=back
+
+L<DBIx::Class> uses L<DBIx::Class::Relationship> names as table aliases in
+queries.
+
+This hook is to allow specific L<DBIx::Class::Storage> drivers to change the
+way these aliases are named.
+
+The default behavior is C<"$relname_$join_count" if $join_count > 1>, otherwise
+C<"$relname">.
+
+=cut
+
+sub relname_to_table_alias {
+  my ($self, $relname, $join_count) = @_;
+
+  my $alias = ($join_count && $join_count > 1 ?
+    join('_', $relname, $join_count) : $relname);
+
+  return $alias;
+}
+
 sub DESTROY {
   my $self = shift;
 
@@ -2515,7 +2586,10 @@ sub DESTROY {
   # some databases need this to stop spewing warnings
   if (my $dbh = $self->_dbh) {
     local $@;
-    eval { $dbh->disconnect };
+    eval {
+      %{ $dbh->{CachedKids} } = ();
+      $dbh->disconnect;
+    };
   }
 
   $self->_dbh(undef);

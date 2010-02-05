@@ -13,36 +13,30 @@ build_requires:
 configure_requires:
   ExtUtils::MakeMaker: 6.42
 distribution_type: module
-generated_by: 'Module::Install version 0.91'
+generated_by: 'Module::Install version 0.92'
 license: perl
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
   version: 1.4
 name: DBIx-Class
 no_index:
-  DBIx::Class::PK::Auto::DB2: []
-  DBIx::Class::PK::Auto::MSSQL: []
-  DBIx::Class::PK::Auto::MySQL: []
-  DBIx::Class::PK::Auto::Oracle: []
-  DBIx::Class::PK::Auto::Pg: []
-  DBIx::Class::PK::Auto::SQLite: []
-  DBIx::Class::SQLAHacks: []
-  DBIx::Class::SQLAHacks::MSSQL: []
-  DBIx::Class::SQLAHacks::MySQL: []
-  DBIx::Class::SQLAHacks::OracleJoins: []
-  DBIx::Class::Storage::DBI::AmbiguousGlob: []
-  DBIx::Class::Storage::DBIHacks: []
   directory:
     - examples
     - inc
+    - lib/DBIx/Class/PK/Auto
+    - lib/DBIx/Class/SQLAHacks
     - t
+  package:
+    - DBIx::Class::Storage::DBI::AmbiguousGlob
+    - DBIx::Class::SQLAHacks
+    - DBIx::Class::Storage::DBIHacks
 requires:
   Carp::Clan: 6.0
-  Class::Accessor::Grouped: 0.09000
+  Class::Accessor::Grouped: 0.09002
   Class::C3::Componentised: 1.0005
   Class::Inspector: 1.24
   DBD::SQLite: 1.25
-  DBI: 1.605
+  DBI: 1.609
   Data::Dumper::Concise: 1.000
   Data::Page: 2.00
   JSON::Any: 1.18
@@ -50,16 +44,16 @@ requires:
   MRO::Compat: 0.09
   Module::Find: 0.06
   Path::Class: 0.16
-  SQL::Abstract: 1.60
+  SQL::Abstract: 1.61
   SQL::Abstract::Limit: 0.13
   Scalar::Util: 0
   Scope::Guard: 0.03
   Storable: 0
   Sub::Name: 0.04
-  perl: 5.6.1
+  perl: 5.8.1
 resources:
   IRC: irc://irc.perl.org/#dbix-class
   MailingList: http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class
   license: http://dev.perl.org/licenses/
   repository: http://dev.catalyst.perl.org/repos/bast/DBIx-Class/
-version: 0.08115
+version: 0.08116

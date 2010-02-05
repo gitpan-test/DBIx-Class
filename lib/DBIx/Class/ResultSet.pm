@@ -974,19 +974,6 @@ sub _construct_object {
 sub _collapse_result {
   my ($self, $as_proto, $row) = @_;
 
-  # if the first row that ever came in is totally empty - this means we got
-  # hit by a smooth^Wempty left-joined resultset. Just noop in that case
-  # instead of producing a {}
-  #
-  my $has_def;
-  for (@$row) {
-    if (defined $_) {
-      $has_def++;
-      last;
-    }
-  }
-  return undef unless $has_def;
-
   my @copy = @$row;
 
   # 'foo'         => [ undef, 'foo' ]
@@ -1247,11 +1234,6 @@ sub _count_rs {
   $tmp_attrs->{select} = $rsrc->storage->_count_select ($rsrc, $tmp_attrs);
   $tmp_attrs->{as} = 'count';
 
-  # read the comment on top of the actual function to see what this does
-  $tmp_attrs->{from} = $self->result_source->schema->storage->_straight_join_to_node (
-    $tmp_attrs->{from}, $tmp_attrs->{alias}
-  );
-
   my $tmp_rs = $rsrc->resultset_class->new($rsrc, $tmp_attrs)->get_column ('count');
 
   return $tmp_rs;
@@ -1271,21 +1253,15 @@ sub _count_subq_rs {
   # extra selectors do not go in the subquery and there is no point of ordering it
   delete $sub_attrs->{$_} for qw/collapse select _prefetch_select as order_by/;
 
-  # if we prefetch, we group_by primary keys only as this is what we would get out
-  # of the rs via ->next/->all. We DO WANT to clobber old group_by regardless
-  if ( keys %{$attrs->{collapse}} ) {
+  # if we multi-prefetch we group_by primary keys only as this is what we would
+  # get out of the rs via ->next/->all. We *DO WANT* to clobber old group_by regardless
+  if ( keys %{$attrs->{collapse}}  ) {
     $sub_attrs->{group_by} = [ map { "$attrs->{alias}.$_" } ($rsrc->primary_columns) ]
   }
 
   $sub_attrs->{select} = $rsrc->storage->_subq_count_select ($rsrc, $sub_attrs);
 
-  # read the comment on top of the actual function to see what this does
-  $sub_attrs->{from} = $self->result_source->schema->storage->_straight_join_to_node (
-    $sub_attrs->{from}, $sub_attrs->{alias}
-  );
-
   # this is so that the query can be simplified e.g.
-  # * non-limiting joins can be pruned
   # * ordering can be thrown away in things like Top limit
   $sub_attrs->{-for_count_only} = 1;
 
@@ -1431,7 +1407,7 @@ sub _rs_update_delete {
   my $cond = $rsrc->schema->storage->_strip_cond_qualifiers ($self->{cond});
 
   my $needs_group_by_subq = $self->_has_resolved_attr (qw/collapse group_by -join/);
-  my $needs_subq = (not defined $cond) || $self->_has_resolved_attr(qw/row offset/);
+  my $needs_subq = $needs_group_by_subq || (not defined $cond) || $self->_has_resolved_attr(qw/row offset/);
 
   if ($needs_group_by_subq or $needs_subq) {
 
@@ -2047,7 +2023,7 @@ sub _remove_alias {
   return \%unaliased;
 }
 
-=head2 as_query (EXPERIMENTAL)
+=head2 as_query
 
 =over 4
 
@@ -2060,8 +2036,6 @@ sub _remove_alias {
 Returns the SQL query and bind vars associated with the invocant.
 
 This is generally used as the RHS for a subquery.
-
-B<NOTE>: This feature is still experimental.
 
 =cut
 
@@ -2512,17 +2486,27 @@ sub related_resultset {
 
   $self->{related_resultsets} ||= {};
   return $self->{related_resultsets}{$rel} ||= do {
-    my $rel_info = $self->result_source->relationship_info($rel);
+    my $rsrc = $self->result_source;
+    my $rel_info = $rsrc->relationship_info($rel);
 
     $self->throw_exception(
-      "search_related: result source '" . $self->result_source->source_name .
+      "search_related: result source '" . $rsrc->source_name .
         "' has no such relationship $rel")
       unless $rel_info;
 
     my $attrs = $self->_chain_relationship($rel);
 
     my $join_count = $attrs->{seen_join}{$rel};
-    my $alias = ($join_count > 1 ? join('_', $rel, $join_count) : $rel);
+
+    my $alias = $self->result_source->storage
+        ->relname_to_table_alias($rel, $join_count);
+
+    # since this is search_related, and we already slid the select window inwards
+    # (the select/as attrs were deleted in the beginning), we need to flip all 
+    # left joins to inner, so we get the expected results
+    # read the comment on top of the actual function to see what this does
+    $attrs->{from} = $rsrc->schema->storage->_straight_join_to_node ($attrs->{from}, $alias);
+
 
     #XXX - temp fix for result_class bug. There likely is a more elegant fix -groditi
     delete @{$attrs}{qw(result_class alias)};
@@ -2536,7 +2520,7 @@ sub related_resultset {
       }
     }
 
-    my $rel_source = $self->result_source->related_source($rel);
+    my $rel_source = $rsrc->related_source($rel);
 
     my $new = do {
 
@@ -2638,10 +2622,19 @@ sub _chain_relationship {
       ||
     $self->_has_resolved_attr (@force_subq_attrs)
   ) {
+    # Nuke the prefetch (if any) before the new $rs attrs
+    # are resolved (prefetch is useless - we are wrapping
+    # a subquery anyway).
+    my $rs_copy = $self->search;
+    $rs_copy->{attrs}{join} = $self->_merge_attr (
+      $rs_copy->{attrs}{join},
+      delete $rs_copy->{attrs}{prefetch},
+    );
+
     $from = [{
       -source_handle => $source->handle,
       -alias => $attrs->{alias},
-      $attrs->{alias} => $self->as_query,
+      $attrs->{alias} => $rs_copy->as_query,
     }];
     delete @{$attrs}{@force_subq_attrs, 'where'};
     $seen->{-relation_chain_depth} = 0;
@@ -2678,25 +2671,15 @@ sub _chain_relationship {
   # the join in question so we could tell it *is* the search_related)
   my $already_joined;
 
-
   # we consider the last one thus reverse
   for my $j (reverse @requested_joins) {
-    if ($rel eq $j->[0]{-join_path}[-1]) {
+    my ($last_j) = keys %{$j->[0]{-join_path}[-1]};
+    if ($rel eq $last_j) {
       $j->[0]{-relation_chain_depth}++;
       $already_joined++;
       last;
     }
   }
-
-# alternative way to scan the entire chain - not backwards compatible
-#  for my $j (reverse @$from) {
-#    next unless ref $j eq 'ARRAY';
-#    if ($j->[0]{-join_path} && $j->[0]{-join_path}[-1] eq $rel) {
-#      $j->[0]{-relation_chain_depth}++;
-#      $already_joined++;
-#      last;
-#    }
-#  }
 
   unless ($already_joined) {
     push @$from, $source->_resolve_join(
@@ -2868,11 +2851,10 @@ sub _resolved_attrs {
       my %already_grouped = map { $_ => 1 } (@{$attrs->{group_by}});
 
       my $storage = $self->result_source->schema->storage;
-      my $rs_column_list = $storage->_resolve_column_info ($attrs->{from});
-      my @chunks = $storage->sql_maker->_order_by_chunks ($attrs->{order_by});
 
-      for my $chunk (map { ref $_ ? @$_ : $_ } (@chunks) ) {
-        $chunk =~ s/\s+ (?: ASC|DESC ) \s* $//ix;
+      my $rs_column_list = $storage->_resolve_column_info ($attrs->{from});
+
+      for my $chunk ($storage->_parse_order_by($attrs->{order_by})) {
         if ($rs_column_list->{$chunk} && not $already_grouped{$chunk}++) {
           push @{$attrs->{group_by}}, $chunk;
         }
@@ -2886,7 +2868,26 @@ sub _resolved_attrs {
 
     my $prefetch_ordering = [];
 
-    my $join_map = $self->_joinpath_aliases ($attrs->{from}, $attrs->{seen_join});
+    # this is a separate structure (we don't look in {from} directly)
+    # as the resolver needs to shift things off the lists to work
+    # properly (identical-prefetches on different branches)
+    my $join_map = {};
+    if (ref $attrs->{from} eq 'ARRAY') {
+
+      my $start_depth = $attrs->{seen_join}{-relation_chain_depth} || 0;
+
+      for my $j ( @{$attrs->{from}}[1 .. $#{$attrs->{from}} ] ) {
+        next unless $j->[0]{-alias};
+        next unless $j->[0]{-join_path};
+        next if ($j->[0]{-relation_chain_depth} || 0) < $start_depth;
+
+        my @jpath = map { keys %$_ } @{$j->[0]{-join_path}};
+
+        my $p = $join_map;
+        $p = $p->{$_} ||= {} for @jpath[ ($start_depth/2) .. $#jpath]; #only even depths are actual jpath boundaries
+        push @{$p->{-join_aliases} }, $j->[0]{-alias};
+      }
+    }
 
     my @prefetch =
       $source->_resolve_prefetch( $prefetch, $alias, $join_map, $prefetch_ordering, $attrs->{collapse} );
@@ -2913,33 +2914,6 @@ sub _resolved_attrs {
   }
 
   return $self->{_attrs} = $attrs;
-}
-
-sub _joinpath_aliases {
-  my ($self, $fromspec, $seen) = @_;
-
-  my $paths = {};
-  return $paths unless ref $fromspec eq 'ARRAY';
-
-  my $cur_depth = $seen->{-relation_chain_depth} || 0;
-
-  if ($cur_depth % 2) {
-    $self->throw_exception ("-relation_chain_depth is not even, something went horribly wrong ($cur_depth)");
-  }
-
-  for my $j (@$fromspec) {
-
-    next if ref $j ne 'ARRAY';
-    next if ($j->[0]{-relation_chain_depth} || 0) < $cur_depth;
-
-    my $jpath = $j->[0]{-join_path};
-
-    my $p = $paths;
-    $p = $p->{$_} ||= {} for @{$jpath}[$cur_depth/2 .. $#$jpath]; #only even depths are actual jpath boundaries
-    push @{$p->{-join_aliases} }, $j->[0]{-alias};
-  }
-
-  return $paths;
 }
 
 sub _rollout_attr {

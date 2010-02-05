@@ -1,5 +1,46 @@
 Revision history for DBIx::Class
 
+0.08116 2010-02-05 16:38:00 (UTC)
+        - Perl 5.8.1 is now the minimum supported version
+        - Massive optimization of the join resolution code - now joins
+          will be removed from the resulting SQL if DBIC can prove they
+          are not referenced by anything
+        - Subqueries no longer marked experimental
+        - Support for Informix RDBMS (limit/offset and auto-inc columns)
+        - Support for Sybase SQLAnywhere, both native and via ODBC
+        - might_have/has_one now warn if applied calling class's column
+          has is_nullable set to true.
+        - Fixed regression in deploy() with a {sources} table limit applied
+          (RT#52812)
+        - Views without a view_definition will throw an exception when
+          parsed by SQL::Translator::Parser::DBIx::Class
+        - Stop the SQLT parser from auto-adding indexes identical to the
+          Primary Key
+        - InflateColumn::DateTime refactoring to allow fine grained method
+          overloads
+        - Fix ResultSetColumn improperly selecting more than the requested
+          column when +columns/+select is present
+        - Fix failure when update/delete of resultsets with complex WHERE
+          SQLA structures
+        - Fix regression in context sensitiveness of deployment_statements
+        - Fix regression resulting in overcomplicated query on
+          search_related from prefetching resultsets
+        - Fix regression on all-null returning searches (properly switch
+          LEFT JOIN to JOIN in order to distinguish between both cases)
+        - Fix regression in groupedresultset count() used on strict-mode
+          MySQL connections
+        - Better isolation of RNO-limited queries from the rest of a
+          prefetching resultset
+        - New MSSQL specific resultset attribute to allow hacky ordered
+          subquery support
+        - Fix nasty schema/dbhandle leak due to SQL::Translator
+        - Initial implementation of a mechanism for Schema::Version to
+          apply multiple step upgrades
+        - Fix regression on externally supplied $dbh with AutoCommit=0
+        - FAQ "Custom methods in Result classes"
+        - Cookbook POD fix for add_drop_table instead of add_drop_tables
+        - Schema POD improvement for dclone
+
 0.08115 2009-12-10 09:02:00 (CST)
         - Real limit/offset support for MSSQL server (via Row_Number)
         - Fix distinct => 1 with non-selecting order_by (the columns
