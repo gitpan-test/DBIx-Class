@@ -258,7 +258,7 @@ sub deploy {
 
 =back
 
-Virtual method that should be overriden to create an upgrade file.
+Virtual method that should be overridden to create an upgrade file.
 This is useful in the case of upgrading across multiple versions
 to concatenate several files to create one upgrade file.
 
@@ -279,7 +279,7 @@ sub create_upgrade_path {
 
 =back
 
-Virtual method that should be overriden to return an ordered list
+Virtual method that should be overridden to return an ordered list
 of schema versions. This is then used to produce a set of steps to
 upgrade through to achieve the required schema version.
 
@@ -617,8 +617,9 @@ sub _create_db_to_schema_diff {
     return;
   }
 
-  $self->throw_exception($self->storage->_sqlt_version_error)
-    if (not $self->storage->_sqlt_version_ok);
+  unless (DBIx::Class::Optional::Dependencies->req_ok_for ('deploy')) {
+    $self->throw_exception("Unable to proceed without " . DBIx::Class::Optional::Dependencies->req_missing_for ('deploy') );
+  }
 
   my $db_tr = SQL::Translator->new({
                                     add_drop_table => 1,

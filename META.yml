@@ -3,7 +3,7 @@ abstract: 'Extensible and flexible object <-> relational mapper.'
 author:
   - 'mst: Matt S. Trout <mst@shadowcatsystems.co.uk>'
 build_requires:
-  ExtUtils::MakeMaker: 6.42
+  DBD::SQLite: 1.25
   File::Temp: 0.22
   Test::Builder: 0.33
   Test::Deep: 0
@@ -13,7 +13,7 @@ build_requires:
 configure_requires:
   ExtUtils::MakeMaker: 6.42
 distribution_type: module
-generated_by: 'Module::Install version 0.92'
+generated_by: 'Module::Install version 0.93'
 license: perl
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
@@ -35,15 +35,13 @@ requires:
   Class::Accessor::Grouped: 0.09002
   Class::C3::Componentised: 1.0005
   Class::Inspector: 1.24
-  DBD::SQLite: 1.25
   DBI: 1.609
   Data::Dumper::Concise: 1.000
   Data::Page: 2.00
-  JSON::Any: 1.18
   List::Util: 0
   MRO::Compat: 0.09
   Module::Find: 0.06
-  Path::Class: 0.16
+  Path::Class: 0.18
   SQL::Abstract: 1.61
   SQL::Abstract::Limit: 0.13
   Scalar::Util: 0
@@ -56,4 +54,4 @@ resources:
   MailingList: http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class
   license: http://dev.perl.org/licenses/
   repository: http://dev.catalyst.perl.org/repos/bast/DBIx-Class/
-version: 0.08118
+version: 0.08119
