@@ -21,7 +21,9 @@ inc/Module/Install/WriteAll.pm
 lib/DBIx/Class.pm
 lib/DBIx/Class/AccessorGroup.pm
 lib/DBIx/Class/Admin.pm
+lib/DBIx/Class/Admin/Descriptive.pm
 lib/DBIx/Class/Admin/Types.pm
+lib/DBIx/Class/Admin/Usage.pm
 lib/DBIx/Class/CDBICompat.pm
 lib/DBIx/Class/CDBICompat/AbstractSearch.pm
 lib/DBIx/Class/CDBICompat/AccessorMapping.pm
@@ -114,7 +116,6 @@ lib/DBIx/Class/Storage.pm
 lib/DBIx/Class/Storage/DBI.pm
 lib/DBIx/Class/Storage/DBI/ADO.pm
 lib/DBIx/Class/Storage/DBI/ADO/Microsoft_SQL_Server.pm
-lib/DBIx/Class/Storage/DBI/AmbiguousGlob.pm
 lib/DBIx/Class/Storage/DBI/AutoCast.pm
 lib/DBIx/Class/Storage/DBI/Cursor.pm
 lib/DBIx/Class/Storage/DBI/DB2.pm
@@ -311,6 +312,7 @@ t/cdbi/testlib/OtherThing.pm
 t/cdbi/testlib/Thing.pm
 t/count/count_rs.t
 t/count/distinct.t
+t/count/group_by_func.t
 t/count/grouped_pager.t
 t/count/in_subquery.t
 t/count/joined.t

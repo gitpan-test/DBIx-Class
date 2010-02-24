@@ -20,7 +20,7 @@ Somewhere in your build-file (e.g. L<Module::Install>'s Makefile.PL):
 
   ...
 
-  configure_requires 'DBIx::Class' => '0.08119';
+  configure_requires 'DBIx::Class' => '0.08120';
 
   require DBIx::Class::Optional::Dependencies;
 
@@ -109,7 +109,7 @@ Modules required for L<DBIx::Class::Storage::DBI/deploy> and L<DBIx::Class::Stor
 
 =over
 
-=item * SQL::Translator >= 0.11002
+=item * SQL::Translator >= 0.11005
 
 =back
 
@@ -121,7 +121,7 @@ Modules required for L<DBIx::Class::Storage::DBI::Replicated>
 
 =over
 
-=item * Hash::Merge >= 0.11
+=item * Hash::Merge >= 0.12
 
 =item * Moose >= 0.98
 

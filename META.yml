@@ -6,7 +6,6 @@ build_requires:
   DBD::SQLite: 1.25
   File::Temp: 0.22
   Test::Builder: 0.33
-  Test::Deep: 0
   Test::Exception: 0
   Test::More: 0.92
   Test::Warn: 0.21
@@ -23,11 +22,12 @@ no_index:
   directory:
     - examples
     - inc
+    - lib/DBIx/Class/Admin
+    - lib/DBIx/Class/CDBICompat
     - lib/DBIx/Class/PK/Auto
     - lib/DBIx/Class/SQLAHacks
     - t
   package:
-    - DBIx::Class::Storage::DBI::AmbiguousGlob
     - DBIx::Class::SQLAHacks
     - DBIx::Class::Storage::DBIHacks
 requires:
@@ -35,18 +35,16 @@ requires:
   Class::Accessor::Grouped: 0.09002
   Class::C3::Componentised: 1.0005
   Class::Inspector: 1.24
+  Context::Preserve: 0.01
   DBI: 1.609
   Data::Dumper::Concise: 1.000
   Data::Page: 2.00
-  List::Util: 0
   MRO::Compat: 0.09
   Module::Find: 0.06
   Path::Class: 0.18
   SQL::Abstract: 1.61
   SQL::Abstract::Limit: 0.13
-  Scalar::Util: 0
   Scope::Guard: 0.03
-  Storable: 0
   Sub::Name: 0.04
   perl: 5.8.1
 resources:
@@ -54,4 +52,4 @@ resources:
   MailingList: http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class
   license: http://dev.perl.org/licenses/
   repository: http://dev.catalyst.perl.org/repos/bast/DBIx-Class/
-version: 0.08119
+version: 0.08120

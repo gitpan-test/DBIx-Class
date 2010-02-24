@@ -4,13 +4,17 @@ NAME
 GETTING HELP/SUPPORT
     The community can be found via:
 
-      Mailing list: http://lists.scsys.co.uk/mailman/listinfo/dbix-class/
+    *   IRC: <irc.perl.org#dbix-class (click for instant chatroom login) >
 
-      SVN: http://dev.catalyst.perl.org/repos/bast/DBIx-Class/
+    *   Mailing list: <http://lists.scsys.co.uk/mailman/listinfo/dbix-class>
 
-      SVNWeb: http://dev.catalyst.perl.org/svnweb/bast/browse/DBIx-Class/
+    *   RT Bug Tracker:
+        <https://rt.cpan.org/Dist/Display.html?Queue=DBIx-Class>
 
-      IRC: irc.perl.org#dbix-class
+    *   SVNWeb:
+        <http://dev.catalyst.perl.org/svnweb/bast/browse/DBIx-Class/0.08>
+
+    *   SVN: <http://dev.catalyst.perl.org/repos/bast/DBIx-Class/0.08>
 
 SYNOPSIS
     Create a schema class called MyDB/Schema.pm:
@@ -248,6 +252,8 @@ CONTRIBUTORS
 
     norbi: Norbert Buchmuller <norbi@nix.hu>
 
+    nuba: Nuba Princigalli <nuba@cpan.org>
+
     Numa: Dan Sully <daniel@cpan.org>
 
     ovid: Curtis "Ovid" Poe <ovid@cpan.org>
@@ -315,7 +321,7 @@ CONTRIBUTORS
     zamolxes: Bogdan Lucaciu <bogdan@wiz.ro>
 
 COPYRIGHT
-    Copyright (c) 2005 - 2009 the DBIx::Class "AUTHOR" and "CONTRIBUTORS" as
+    Copyright (c) 2005 - 2010 the DBIx::Class "AUTHOR" and "CONTRIBUTORS" as
     listed above.
 
 LICENSE
