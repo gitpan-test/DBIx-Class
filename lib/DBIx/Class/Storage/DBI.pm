@@ -18,7 +18,8 @@ use Sub::Name ();
 
 __PACKAGE__->mk_group_accessors('simple' =>
   qw/_connect_info _dbi_connect_info _dbh _sql_maker _sql_maker_opts _conn_pid
-     _conn_tid transaction_depth _dbh_autocommit _driver_determined savepoints/
+     _conn_tid transaction_depth _dbh_autocommit _driver_determined savepoints
+     _server_info_hash/
 );
 
 # the values for these accessors are picked out (and deleted) from
@@ -33,7 +34,10 @@ __PACKAGE__->mk_group_accessors('simple' => @storage_options);
 # default cursor class, overridable in connect_info attributes
 __PACKAGE__->cursor_class('DBIx::Class::Storage::DBI::Cursor');
 
-__PACKAGE__->mk_group_accessors('inherited' => qw/sql_maker_class/);
+__PACKAGE__->mk_group_accessors('inherited' => qw/
+  sql_maker_class
+  _supports_insert_returning
+/);
 __PACKAGE__->sql_maker_class('DBIx::Class::SQLAHacks');
 
 
@@ -89,7 +93,7 @@ DBIx::Class::Storage::DBI - DBI storage handler
   );
 
   $schema->resultset('Book')->search({
-     written_on => $schema->storage->datetime_parser(DateTime->now)
+     written_on => $schema->storage->datetime_parser->format_datetime(DateTime->now)
   });
 
 =head1 DESCRIPTION
@@ -742,6 +746,7 @@ sub disconnect {
 
     $self->_dbh_rollback unless $self->_dbh_autocommit;
 
+    %{ $self->_dbh->{CachedKids} } = ();
     $self->_dbh->disconnect;
     $self->_dbh(undef);
     $self->{_dbh_gen}++;
@@ -849,7 +854,7 @@ sub ensure_connected {
 Returns a C<$dbh> - a data base handle of class L<DBI>. The returned handle
 is guaranteed to be healthy by implicitly calling L</connected>, and if
 necessary performing a reconnection before returning. Keep in mind that this
-is very B<expensive> on some database engines. Consider using L<dbh_do>
+is very B<expensive> on some database engines. Consider using L</dbh_do>
 instead.
 
 =cut
@@ -903,6 +908,7 @@ sub _populate_dbh {
 
   my @info = @{$self->_dbi_connect_info || []};
   $self->_dbh(undef); # in case ->connected failed we might get sent here
+  $self->_server_info_hash (undef);
   $self->_dbh($self->_connect(@info));
 
   $self->_conn_pid($$);
@@ -927,6 +933,48 @@ sub _run_connection_actions {
   $self->_do_connection_actions(connect_call_ => $_) for @actions;
 }
 
+sub _server_info {
+  my $self = shift;
+
+  unless ($self->_server_info_hash) {
+
+    my %info;
+
+    my $server_version = $self->_get_server_version;
+
+    if (defined $server_version) {
+      $info{dbms_version} = $server_version;
+
+      my ($numeric_version) = $server_version =~ /^([\d\.]+)/;
+      my @verparts = split (/\./, $numeric_version);
+      if (
+        @verparts
+          &&
+        $verparts[0] <= 999
+      ) {
+        # consider only up to 3 version parts, iff not more than 3 digits
+        my @use_parts;
+        while (@verparts && @use_parts < 3) {
+          my $p = shift @verparts;
+          last if $p > 999;
+          push @use_parts, $p;
+        }
+        push @use_parts, 0 while @use_parts < 3;
+
+        $info{normalized_dbms_version} = sprintf "%d.%03d%03d", @use_parts;
+      }
+    }
+
+    $self->_server_info_hash(\%info);
+  }
+
+  return $self->_server_info_hash
+}
+
+sub _get_server_version {
+  eval { shift->_get_dbh->get_info(18) };
+}
+
 sub _determine_driver {
   my ($self) = @_;
 
@@ -949,15 +997,19 @@ sub _determine_driver {
         else {
           # try to use dsn to not require being connected, the driver may still
           # force a connection in _rebless to determine version
-          ($driver) = $self->_dbi_connect_info->[0] =~ /dbi:([^:]+):/i;
+          # (dsn may not be supplied at all if all we do is make a mock-schema)
+          my $dsn = $self->_dbi_connect_info->[0] || '';
+          ($driver) = $dsn =~ /dbi:([^:]+):/i;
         }
       }
 
-      my $storage_class = "DBIx::Class::Storage::DBI::${driver}";
-      if ($self->load_optional_class($storage_class)) {
-        mro::set_mro($storage_class, 'c3');
-        bless $self, $storage_class;
-        $self->_rebless();
+      if ($driver) {
+        my $storage_class = "DBIx::Class::Storage::DBI::${driver}";
+        if ($self->load_optional_class($storage_class)) {
+          mro::set_mro($storage_class, 'c3');
+          bless $self, $storage_class;
+          $self->_rebless();
+        }
       }
     }
 
@@ -1358,29 +1410,56 @@ sub _execute {
     $self->dbh_do('_dbh_execute', @_);  # retry over disconnects
 }
 
-sub insert {
+sub _prefetch_insert_auto_nextvals {
   my ($self, $source, $to_insert) = @_;
 
-  my $ident = $source->from;
-  my $bind_attributes = $self->source_bind_attributes($source);
-
-  my $updated_cols = {};
+  my $upd = {};
 
   foreach my $col ( $source->columns ) {
     if ( !defined $to_insert->{$col} ) {
       my $col_info = $source->column_info($col);
 
       if ( $col_info->{auto_nextval} ) {
-        $updated_cols->{$col} = $to_insert->{$col} = $self->_sequence_fetch(
+        $upd->{$col} = $to_insert->{$col} = $self->_sequence_fetch(
           'nextval',
-          $col_info->{sequence} ||
-            $self->_dbh_get_autoinc_seq($self->_get_dbh, $source)
+          $col_info->{sequence} ||=
+            $self->_dbh_get_autoinc_seq($self->_get_dbh, $source, $col)
         );
       }
     }
   }
 
-  $self->_execute('insert' => [], $source, $bind_attributes, $to_insert);
+  return $upd;
+}
+
+sub insert {
+  my $self = shift;
+  my ($source, $to_insert, $opts) = @_;
+
+  my $updated_cols = $self->_prefetch_insert_auto_nextvals (@_);
+
+  my $bind_attributes = $self->source_bind_attributes($source);
+
+  my ($rv, $sth) = $self->_execute('insert' => [], $source, $bind_attributes, $to_insert, $opts);
+
+  if ($opts->{returning}) {
+    my @ret_cols = @{$opts->{returning}};
+
+    my @ret_vals = eval {
+      local $SIG{__WARN__} = sub {};
+      my @r = $sth->fetchrow_array;
+      $sth->finish;
+      @r;
+    };
+
+    my %ret;
+    @ret{@ret_cols} = @ret_vals if (@ret_vals);
+
+    $updated_cols = {
+      %$updated_cols,
+      %ret,
+    };
+  }
 
   return $updated_cols;
 }
@@ -1467,7 +1546,7 @@ sub insert_bulk {
   # neither _execute_array, nor _execute_inserts_with_no_binds are
   # atomic (even if _execute _array is a single call). Thus a safety
   # scope guard
-  my $guard = $self->txn_scope_guard unless $self->{transaction_depth} != 0;
+  my $guard = $self->txn_scope_guard;
 
   $self->_query_start( $sql, ['__BULK__'] );
   my $sth = $self->sth($sql);
@@ -1484,8 +1563,7 @@ sub insert_bulk {
 
   $self->_query_end( $sql, ['__BULK__'] );
 
-
-  $guard->commit if $guard;
+  $guard->commit;
 
   return (wantarray ? ($rv, $sth, @bind) : $rv);
 }
@@ -1514,7 +1592,11 @@ sub _execute_array {
 
     my @data = map { $_->[$data_index] } @$data;
 
-    $sth->bind_param_array( $placeholder_index, [@data], $attributes );
+    $sth->bind_param_array(
+      $placeholder_index,
+      [@data],
+      (%$attributes ?  $attributes : ()),
+    );
     $placeholder_index++;
   }
 
@@ -2248,10 +2330,13 @@ them.
 sub create_ddl_dir {
   my ($self, $schema, $databases, $version, $dir, $preversion, $sqltargs) = @_;
 
-  if(!$dir || !-d $dir) {
+  unless ($dir) {
     carp "No directory given, using ./\n";
-    $dir = "./";
+    $dir = './';
   }
+
+  $self->throw_exception ("Directory '$dir' does not exist\n") unless(-d $dir);
+
   $databases ||= ['MySQL', 'SQLite', 'PostgreSQL'];
   $databases = [ $databases ] if(ref($databases) ne 'ARRAY');
 
@@ -2549,8 +2634,8 @@ queries.
 This hook is to allow specific L<DBIx::Class::Storage> drivers to change the
 way these aliases are named.
 
-The default behavior is C<"$relname_$join_count" if $join_count > 1>, otherwise
-C<"$relname">.
+The default behavior is C<< "$relname_$join_count" if $join_count > 1 >>,
+otherwise C<"$relname">.
 
 =cut
 

@@ -3,7 +3,7 @@ package DBIx::Class::Storage::DBI::MSSQL;
 use strict;
 use warnings;
 
-use base qw/DBIx::Class::Storage::DBI/;
+use base qw/DBIx::Class::Storage::DBI::UniqueIdentifier/;
 use mro 'c3';
 
 use List::Util();
@@ -66,42 +66,11 @@ sub insert_bulk {
   }
 }
 
-# support MSSQL GUID column types
-
 sub insert {
   my $self = shift;
   my ($source, $to_insert) = @_;
 
   my $supplied_col_info = $self->_resolve_column_info($source, [keys %$to_insert] );
-
-  my %guid_cols;
-  my @pk_cols = $source->primary_columns;
-  my %pk_cols;
-  @pk_cols{@pk_cols} = ();
-
-  my @pk_guids = grep {
-    $source->column_info($_)->{data_type}
-    &&
-    $source->column_info($_)->{data_type} =~ /^uniqueidentifier/i
-  } @pk_cols;
-
-  my @auto_guids = grep {
-    $source->column_info($_)->{data_type}
-    &&
-    $source->column_info($_)->{data_type} =~ /^uniqueidentifier/i
-    &&
-    $source->column_info($_)->{auto_nextval}
-  } grep { not exists $pk_cols{$_} } $source->columns;
-
-  my @get_guids_for =
-    grep { not exists $to_insert->{$_} } (@pk_guids, @auto_guids);
-
-  my $updated_cols = {};
-
-  for my $guid_col (@get_guids_for) {
-    my ($new_guid) = $self->_get_dbh->selectrow_array('SELECT NEWID()');
-    $updated_cols->{$guid_col} = $to_insert->{$guid_col} = $new_guid;
-  }
 
   my $is_identity_insert = (List::Util::first { $_->{is_auto_increment} } (values %$supplied_col_info) )
      ? 1
@@ -111,12 +80,11 @@ sub insert {
      $self->_set_identity_insert ($source->name);
   }
 
-  $updated_cols = { %$updated_cols, %{ $self->next::method(@_) } };
+  my $updated_cols = $self->next::method(@_);
 
   if ($is_identity_insert) {
      $self->_unset_identity_insert ($source->name);
   }
-
 
   return $updated_cols;
 }
@@ -232,24 +200,13 @@ sub build_datetime_parser {
 
 sub sqlt_type { 'SQLServer' }
 
-sub _get_mssql_version {
-  my $self = shift;
-
-  my $data = $self->_get_dbh->selectrow_hashref('xp_msver ProductVersion');
-
-  if ($data->{Character_Value} =~ /^(\d+)\./) {
-    return $1;
-  } else {
-    $self->throw_exception(q{Your ProductVersion's Character_Value is missing or malformed!});
-  }
-}
-
 sub sql_maker {
   my $self = shift;
 
   unless ($self->_sql_maker) {
     unless ($self->{_sql_maker_opts}{limit_dialect}) {
-      my $version = eval { $self->_get_mssql_version; } || 0;
+
+      my $version = $self->_server_info->{normalized_dbms_version} || 0;
 
       $self->{_sql_maker_opts} = {
         limit_dialect => ($version >= 9 ? 'RowNumberOver' : 'Top'),
@@ -261,6 +218,21 @@ sub sql_maker {
   }
 
   return $self->_sql_maker;
+}
+
+sub _ping {
+  my $self = shift;
+
+  my $dbh = $self->_dbh or return 0;
+
+  local $dbh->{RaiseError} = 1;
+  local $dbh->{PrintError} = 0;
+
+  eval {
+    $dbh->do('select 1');
+  };
+
+  return $@ ? 0 : 1;
 }
 
 1;
@@ -358,7 +330,7 @@ different/better way to get the same result - please file a bugreport.
 
 =head1 AUTHOR
 
-See L<DBIx::Class/CONTRIBUTORS>.
+See L<DBIx::Class/AUTHOR> and L<DBIx::Class/CONTRIBUTORS>.
 
 =head1 LICENSE
 

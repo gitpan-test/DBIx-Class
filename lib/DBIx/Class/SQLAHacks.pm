@@ -102,6 +102,24 @@ sub _SkipFirst {
   );
 }
 
+# Firebird specific limit, reverse of _SkipFirst for Informix
+sub _FirstSkip {
+  my ($self, $sql, $order, $rows, $offset) = @_;
+
+  $sql =~ s/^ \s* SELECT \s+ //ix
+    or croak "Unrecognizable SELECT: $sql";
+
+  return sprintf ('SELECT %s%s%s%s',
+    sprintf ('FIRST %d ', $rows),
+    $offset
+      ? sprintf ('SKIP %d ', $offset)
+      : ''
+    ,
+    $sql,
+    $self->_order_by ($order),
+  );
+}
+
 # Crappy Top based Limit/Offset support. Legacy from MSSQL.
 sub _Top {
   my ( $self, $sql, $order, $rows, $offset ) = @_;
@@ -342,7 +360,13 @@ sub insert {
   # which is sadly understood only by MySQL. Change default behavior here,
   # until SQLA2 comes with proper dialect support
   if (! $_[0] or (ref $_[0] eq 'HASH' and !keys %{$_[0]} ) ) {
-    return "INSERT INTO ${table} DEFAULT VALUES"
+    my $sql = "INSERT INTO ${table} DEFAULT VALUES";
+
+    if (my $ret = ($_[1]||{})->{returning} ) {
+      $sql .= $self->_insert_returning ($ret);
+    }
+
+    return $sql;
   }
 
   $self->SUPER::insert($table, @_);
@@ -485,6 +509,14 @@ sub _table {
   }
 }
 
+sub _generate_join_clause {
+    my ($self, $join_type) = @_;
+
+    return sprintf ('%s JOIN ',
+      $join_type ?  ' ' . uc($join_type) : ''
+    );
+}
+
 sub _recurse_from {
   my ($self, $from, @join) = @_;
   my @sqlf;
@@ -503,10 +535,7 @@ sub _recurse_from {
 
     $join_type = $self->{_default_jointype} if not defined $join_type;
 
-    my $join_clause = sprintf ('%s JOIN ',
-      $join_type ?  ' ' . uc($join_type) : ''
-    );
-    push @sqlf, $join_clause;
+    push @sqlf, $self->_generate_join_clause( $join_type );
 
     if (ref $to eq 'ARRAY') {
       push(@sqlf, '(', $self->_recurse_from(@$to), ')');

@@ -25,6 +25,10 @@ DBIx::Class::ResultSet - Represents a query used for fetching a set of results.
 =head1 SYNOPSIS
 
   my $users_rs   = $schema->resultset('User');
+  while( $user = $users_rs->next) {
+    print $user->username;
+  }
+
   my $registered_users_rs   = $schema->resultset('User')->search({ registered => 1 });
   my @cds_in_2005 = $schema->resultset('CD')->search({ year => 2005 })->all();
 
@@ -1003,7 +1007,7 @@ sub _collapse_result {
   # without having to contruct the full hash
 
   if (keys %collapse) {
-    my %pri = map { ($_ => 1) } $self->result_source->primary_columns;
+    my %pri = map { ($_ => 1) } $self->result_source->_pri_cols;
     foreach my $i (0 .. $#construct_as) {
       next if defined($construct_as[$i][0]); # only self table
       if (delete $pri{$construct_as[$i][1]}) {
@@ -1509,9 +1513,10 @@ sub update_all {
   my ($self, $values) = @_;
   $self->throw_exception('Values for update_all must be a hash')
     unless ref $values eq 'HASH';
-  foreach my $obj ($self->all) {
-    $obj->set_columns($values)->update;
-  }
+
+  my $guard = $self->result_source->schema->txn_scope_guard;
+  $_->update($values) for $self->all;
+  $guard->commit;
   return 1;
 }
 
@@ -1529,7 +1534,7 @@ Deletes the contents of the resultset from its result source. Note that this
 will not run DBIC cascade triggers. See L</delete_all> if you need triggers
 to run. See also L<DBIx::Class::Row/delete>.
 
-Return value will be the amount of rows deleted; exact type of return value
+Return value will be the number of rows deleted; exact type of return value
 is storage-dependent.
 
 =cut
@@ -1562,7 +1567,9 @@ sub delete_all {
   $self->throw_exception('delete_all does not accept any arguments')
     if @_;
 
+  my $guard = $self->result_source->schema->txn_scope_guard;
   $_->delete for $self->all;
+  $guard->commit;
   return 1;
 }
 
@@ -3255,23 +3262,27 @@ names:
     select => [
       'name',
       { count => 'employeeid' },
-      { sum => 'salary' }
+      { max => { length => 'name' }, -as => 'longest_name' }
     ]
   });
 
-When you use function/stored procedure names and do not supply an C<as>
-attribute, the column names returned are storage-dependent. E.g. MySQL would
-return a column named C<count(employeeid)> in the above example.
+  # Equivalent SQL
+  SELECT name, COUNT( employeeid ), MAX( LENGTH( name ) ) AS longest_name FROM employee
 
-B<NOTE:> You will almost always need a corresponding 'as' entry when you use
-'select'.
+B<NOTE:> You will almost always need a corresponding L</as> attribute when you
+use L</select>, to instruct DBIx::Class how to store the result of the column.
+Also note that the L</as> attribute has nothing to do with the SQL-side 'AS'
+identifier aliasing. You can however alias a function, so you can use it in
+e.g. an C<ORDER BY> clause. This is done via the C<-as> B<select function
+attribute> supplied as shown in the example above.
 
 =head2 +select
 
 =over 4
 
 Indicates additional columns to be selected from storage.  Works the same as
-L</select> but adds columns to the selection.
+L</select> but adds columns to the default selection, instead of specifying
+an explicit list.
 
 =back
 
@@ -3291,24 +3302,25 @@ Indicates additional column names for those added via L</+select>. See L</as>.
 
 =back
 
-Indicates column names for object inflation. That is, C<as>
-indicates the name that the column can be accessed as via the
-C<get_column> method (or via the object accessor, B<if one already
-exists>).  It has nothing to do with the SQL code C<SELECT foo AS bar>.
-
-The C<as> attribute is used in conjunction with C<select>,
-usually when C<select> contains one or more function or stored
-procedure names:
+Indicates column names for object inflation. That is L</as> indicates the
+slot name in which the column value will be stored within the
+L<Row|DBIx::Class::Row> object. The value will then be accessible via this
+identifier by the C<get_column> method (or via the object accessor B<if one
+with the same name already exists>) as shown below. The L</as> attribute has
+B<nothing to do> with the SQL-side C<AS>. See L</select> for details.
 
   $rs = $schema->resultset('Employee')->search(undef, {
     select => [
       'name',
-      { count => 'employeeid' }
+      { count => 'employeeid' },
+      { max => { length => 'name' }, -as => 'longest_name' }
     ],
-    as => ['name', 'employee_count'],
+    as => [qw/
+      name
+      employee_count
+      max_name_length
+    /],
   });
-
-  my $employee = $rs->first(); # get the first Employee
 
 If the object against which the search is performed already has an accessor
 matching a column name specified in C<as>, the value can be retrieved using
@@ -3323,16 +3335,6 @@ use C<get_column> instead:
 
 You can create your own accessors if required - see
 L<DBIx::Class::Manual::Cookbook> for details.
-
-Please note: This will NOT insert an C<AS employee_count> into the SQL
-statement produced, it is used for internal access only. Thus
-attempting to use the accessor in an C<order_by> clause or similar
-will fail miserably.
-
-To get around this limitation, you can supply literal SQL to your
-C<select> attribute that contains the C<AS alias> text, e.g.
-
-  select => [\'myfield AS alias']
 
 =head2 join
 

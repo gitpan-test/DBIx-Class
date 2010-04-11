@@ -45,7 +45,7 @@ my $runtime_requires = {
   'MRO::Compat'              => '0.09',
   'Module::Find'             => '0.06',
   'Path::Class'              => '0.18',
-  'SQL::Abstract'            => '1.61',
+  'SQL::Abstract'            => '1.64',
   'SQL::Abstract::Limit'     => '0.13',
   'Sub::Name'                => '0.04',
   'Data::Dumper::Concise'    => '1.000',
@@ -78,7 +78,7 @@ EOW
   require DBIx::Class::Optional::Dependencies;
   $reqs->{test_requires} = {
     %{$reqs->{test_requires}},
-    %{DBIx::Class::Optional::Dependencies->_all_optional_requirements},
+    map { %$_ } (values %{DBIx::Class::Optional::Dependencies->req_group_list}),
   };
 }
 

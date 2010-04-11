@@ -12,15 +12,13 @@
 
 DBIx::Class::Optional::Dependencies - Optional module dependency specifications (for module authors)
 
-=head1 SYNOPSIS (EXPERIMENTAL)
-
-B<THE USAGE SHOWN HERE IS EXPERIMENTAL>
+=head1 SYNOPSIS
 
 Somewhere in your build-file (e.g. L<Module::Install>'s Makefile.PL):
 
   ...
 
-  configure_requires 'DBIx::Class' => '0.08120';
+  configure_requires 'DBIx::Class' => '0.08121';
 
   require DBIx::Class::Optional::Dependencies;
 
@@ -135,6 +133,21 @@ Requirement group: B<replicated>
 
 =head1 METHODS
 
+=head2 req_group_list
+
+=over
+
+=item Arguments: $none
+
+=item Returns: \%list_of_requirement_groups
+
+=back
+
+This method should be used by DBIx::Class packagers, to get a hashref of all
+dependencies keyed by dependency group. Each key (group name) can be supplied
+to one of the group-specific methods below.
+
+
 =head2 req_list_for
 
 =over
@@ -147,7 +160,7 @@ Requirement group: B<replicated>
 
 This method should be used by DBIx::Class extension authors, to determine the
 version of modules a specific feature requires in the B<current> version of
-DBIx::Class. See the L<SYNOPSIS|/SYNOPSIS (EXPERIMENTAL)> for a real-world
+DBIx::Class. See the L</SYNOPSIS> for a real-world
 example.
 
 
@@ -178,10 +191,10 @@ This method would normally be used by DBIx::Class core-module author, to
 indicate to the user that he needs to install specific modules before he will
 be able to use a specific feature.
 
-For example if the requirements for C<replicated> are not available, the
-returned string would look like:
+For example if some of the requirements for C<deploy> are not available,
+the returned string could look like:
 
- Moose >= 0.98, MooseX::Types >= 0.21, namespace::clean (see DBIx::Class::Optional::Dependencies for details)
+ SQL::Translator >= 0.11005 (see DBIx::Class::Optional::Dependencies for details)
 
 The author is expected to prepend the necessary text to this message before
 returning the actual error seen by the user.

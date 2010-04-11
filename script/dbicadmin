@@ -217,12 +217,6 @@ display this help
 
 =cut
 
-=item B<--selfinject-pod>
-
-hidden
-
-=cut
-
 =back
 
 =head2 Arguments
