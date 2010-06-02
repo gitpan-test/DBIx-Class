@@ -18,7 +18,7 @@ Somewhere in your build-file (e.g. L<Module::Install>'s Makefile.PL):
 
   ...
 
-  configure_requires 'DBIx::Class' => '0.08121';
+  configure_requires 'DBIx::Class' => '0.0812101';
 
   require DBIx::Class::Optional::Dependencies;
 
@@ -50,7 +50,7 @@ authors alike.
 
 Dependencies are organized in C<groups> and each group can list one or more
 required modules, with an optional minimum version (or 0 for any version).
-The group name can be used in the 
+The group name can be used in the
 
 
 =head2 DBIx::Class::Admin
@@ -107,7 +107,7 @@ Modules required for L<DBIx::Class::Storage::DBI/deploy> and L<DBIx::Class::Stor
 
 =over
 
-=item * SQL::Translator >= 0.11005
+=item * SQL::Translator >= 0.11006
 
 =back
 
@@ -124,8 +124,6 @@ Modules required for L<DBIx::Class::Storage::DBI::Replicated>
 =item * Moose >= 0.98
 
 =item * MooseX::Types >= 0.21
-
-=item * namespace::clean >= 0.11
 
 =back
 
@@ -194,7 +192,7 @@ be able to use a specific feature.
 For example if some of the requirements for C<deploy> are not available,
 the returned string could look like:
 
- SQL::Translator >= 0.11005 (see DBIx::Class::Optional::Dependencies for details)
+ SQL::Translator >= 0.11006 (see DBIx::Class::Optional::Dependencies for details)
 
 The author is expected to prepend the necessary text to this message before
 returning the actual error seen by the user.

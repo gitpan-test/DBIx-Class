@@ -5,8 +5,9 @@ use warnings;
 
 use base qw/DBIx::Class::Storage::DBI::UniqueIdentifier/;
 use mro 'c3';
-
-use List::Util();
+use Try::Tiny;
+use List::Util 'first';
+use namespace::clean;
 
 __PACKAGE__->mk_group_accessors(simple => qw/
   _identity _identity_method
@@ -23,13 +24,13 @@ sub _set_identity_insert {
   );
 
   my $dbh = $self->_get_dbh;
-  eval { $dbh->do ($sql) };
-  if ($@) {
+  try { $dbh->do ($sql) }
+  catch {
     $self->throw_exception (sprintf "Error executing '%s': %s",
       $sql,
       $dbh->errstr,
     );
-  }
+  };
 }
 
 sub _unset_identity_insert {
@@ -48,12 +49,8 @@ sub insert_bulk {
   my $self = shift;
   my ($source, $cols, $data) = @_;
 
-  my $is_identity_insert = (List::Util::first
-      { $source->column_info ($_)->{is_auto_increment} }
-      (@{$cols})
-  )
-     ? 1
-     : 0;
+  my $is_identity_insert =
+    (first { $source->column_info ($_)->{is_auto_increment} } @{$cols}) ? 1 : 0;
 
   if ($is_identity_insert) {
      $self->_set_identity_insert ($source->name);
@@ -72,9 +69,8 @@ sub insert {
 
   my $supplied_col_info = $self->_resolve_column_info($source, [keys %$to_insert] );
 
-  my $is_identity_insert = (List::Util::first { $_->{is_auto_increment} } (values %$supplied_col_info) )
-     ? 1
-     : 0;
+  my $is_identity_insert =
+    (first { $_->{is_auto_increment} } values %$supplied_col_info) ? 1 : 0;
 
   if ($is_identity_insert) {
      $self->_set_identity_insert ($source->name);
@@ -128,7 +124,7 @@ sub _execute {
 
     # this should bring back the result of SELECT SCOPE_IDENTITY() we tacked
     # on in _prep_for_execute above
-    my ($identity) = eval { $sth->fetchrow_array };
+    my ($identity) = try { $sth->fetchrow_array };
 
     # SCOPE_IDENTITY failed, but we can do something else
     if ( (! $identity) && $self->_identity_method) {
@@ -158,7 +154,11 @@ sub _select_args_to_query {
 
   # see if this is an ordered subquery
   my $attrs = $_[3];
-  if ( scalar $self->_parse_order_by ($attrs->{order_by}) ) {
+  if (
+    $sql !~ /^ \s* SELECT \s+ TOP \s+ \d+ \s+ /xi
+      &&
+    scalar $self->_parse_order_by ($attrs->{order_by})
+  ) {
     $self->throw_exception(
       'An ordered subselect encountered - this is not safe! Please see "Ordered Subselects" in DBIx::Class::Storage::DBI::MSSQL
     ') unless $attrs->{unsafe_subselect_ok};
@@ -190,12 +190,8 @@ sub _svp_rollback {
   $self->_get_dbh->do("ROLLBACK TRANSACTION $name");
 }
 
-sub build_datetime_parser {
-  my $self = shift;
-  my $type = "DateTime::Format::Strptime";
-  eval "use ${type}";
-  $self->throw_exception("Couldn't load ${type}: $@") if $@;
-  return $type->new( pattern => '%Y-%m-%d %H:%M:%S' );  # %F %T
+sub datetime_parser_type {
+  'DBIx::Class::Storage::DBI::MSSQL::DateTime::Format'
 }
 
 sub sqlt_type { 'SQLServer' }
@@ -205,11 +201,24 @@ sub sql_maker {
 
   unless ($self->_sql_maker) {
     unless ($self->{_sql_maker_opts}{limit_dialect}) {
+      my $have_rno = 0;
 
-      my $version = $self->_server_info->{normalized_dbms_version} || 0;
+      if (exists $self->_server_info->{normalized_dbms_version}) {
+        $have_rno = 1 if $self->_server_info->{normalized_dbms_version} >= 9;
+      }
+      else {
+        # User is connecting via DBD::Sybase and has no permission to run
+        # stored procedures like xp_msver, or version detection failed for some
+        # other reason.
+        # So, we use a query to check if RNO is implemented.
+        try {
+          $self->_get_dbh->selectrow_array('SELECT row_number() OVER (ORDER BY rand())');
+          $have_rno = 1;
+        };
+      }
 
       $self->{_sql_maker_opts} = {
-        limit_dialect => ($version >= 9 ? 'RowNumberOver' : 'Top'),
+        limit_dialect => ($have_rno ? 'RowNumberOver' : 'Top'),
         %{$self->{_sql_maker_opts}||{}}
       };
     }
@@ -228,11 +237,60 @@ sub _ping {
   local $dbh->{RaiseError} = 1;
   local $dbh->{PrintError} = 0;
 
-  eval {
+  return try {
     $dbh->do('select 1');
+    1;
+  } catch {
+    0;
   };
+}
 
-  return $@ ? 0 : 1;
+package # hide from PAUSE
+  DBIx::Class::Storage::DBI::MSSQL::DateTime::Format;
+
+my $datetime_format      = '%Y-%m-%d %H:%M:%S.%3N'; # %F %T
+my $smalldatetime_format = '%Y-%m-%d %H:%M:%S';
+
+my ($datetime_parser, $smalldatetime_parser);
+
+sub parse_datetime {
+  shift;
+  require DateTime::Format::Strptime;
+  $datetime_parser ||= DateTime::Format::Strptime->new(
+    pattern  => $datetime_format,
+    on_error => 'croak',
+  );
+  return $datetime_parser->parse_datetime(shift);
+}
+
+sub format_datetime {
+  shift;
+  require DateTime::Format::Strptime;
+  $datetime_parser ||= DateTime::Format::Strptime->new(
+    pattern  => $datetime_format,
+    on_error => 'croak',
+  );
+  return $datetime_parser->format_datetime(shift);
+}
+
+sub parse_smalldatetime {
+  shift;
+  require DateTime::Format::Strptime;
+  $smalldatetime_parser ||= DateTime::Format::Strptime->new(
+    pattern  => $smalldatetime_format,
+    on_error => 'croak',
+  );
+  return $smalldatetime_parser->parse_datetime(shift);
+}
+
+sub format_smalldatetime {
+  shift;
+  require DateTime::Format::Strptime;
+  $smalldatetime_parser ||= DateTime::Format::Strptime->new(
+    pattern  => $smalldatetime_format,
+    on_error => 'croak',
+  );
+  return $smalldatetime_parser->format_datetime(shift);
 }
 
 1;

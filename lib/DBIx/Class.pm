@@ -27,7 +27,7 @@ sub component_base_class { 'DBIx::Class' }
 # Always remember to do all digits for the version even if they're 0
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
-$VERSION = '0.08121';
+$VERSION = '0.08121_01';
 
 $VERSION = eval $VERSION if $VERSION =~ /_/; # numify for warning-free dev releases
 
@@ -42,8 +42,11 @@ sub MODIFY_CODE_ATTRIBUTES {
 sub _attr_cache {
   my $self = shift;
   my $cache = $self->can('__attr_cache') ? $self->__attr_cache : {};
-  my $rest = eval { $self->next::method };
-  return $@ ? $cache : { %$cache, %$rest };
+
+  return {
+    %$cache,
+    %{ $self->maybe::next::method || {} },
+  };
 }
 
 1;
@@ -222,6 +225,8 @@ abraxxa: Alexander Hartmaier <abraxxa@cpan.org>
 
 aherzog: Adam Herzog <adam@herzogdesigns.com>
 
+Alexander Keusch <cpan@keusch.at>
+
 amoore: Andrew Moore <amoore@cpan.org>
 
 andyg: Andy Grundman <andy@hybridized.org>
@@ -340,6 +345,8 @@ quicksilver: Jules Bean
 
 rafl: Florian Ragwitz <rafl@debian.org>
 
+rbo: Robert Bohne <rbo@cpan.org>
+
 rbuels: Robert Buels <rmb32@cornell.edu>
 
 rdj: Ryan D Johnson <ryan@innerfence.com>
@@ -370,6 +377,8 @@ Todd Lipcon
 
 Tom Hukins
 
+tonvoon: Ton Voon <tonvoon@cpan.org>
+
 triode: Pete Gamache <gamache@cpan.org>
 
 typester: Daisuke Murase <typester@cpan.org>
@@ -383,6 +392,8 @@ willert: Sebastian Willert <willert@cpan.org>
 wreis: Wallace Reis <wreis@cpan.org>
 
 zamolxes: Bogdan Lucaciu <bogdan@wiz.ro>
+
+Possum: Daniel LeWarne <possum@cpan.org>
 
 =head1 COPYRIGHT
 

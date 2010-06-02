@@ -4,7 +4,9 @@ use strict;
 use warnings;
 use base qw/DBIx::Class::Storage::DBI/;
 use mro 'c3';
-use List::Util();
+use List::Util 'first';
+use Try::Tiny;
+use namespace::clean;
 
 =head1 NAME
 
@@ -39,13 +41,13 @@ sub _sequence_fetch {
   }
 
   $self->throw_exception('No sequence to fetch') unless $sequence;
-  
+
   my ($val) = $self->_get_dbh->selectrow_array(
 'SELECT GEN_ID(' . $self->sql_maker->_quote($sequence) .
 ', 1) FROM rdb$database');
 
   return $val;
-} 
+}
 
 sub _dbh_get_autoinc_seq {
   my ($self, $dbh, $source, $col) = @_;
@@ -78,7 +80,7 @@ EOF
       $generator = uc $generator unless $quoted;
 
       return $generator
-        if List::Util::first {
+        if first {
           $self->sql_maker->quote_char ? ($_ eq $col) : (uc($_) eq uc($col))
         } @trig_cols;
     }
@@ -125,11 +127,12 @@ sub _ping {
   local $dbh->{RaiseError} = 1;
   local $dbh->{PrintError} = 0;
 
-  eval {
+  return try {
     $dbh->do('select 1 from rdb$database');
+    1;
+  } catch {
+    0;
   };
-
-  return $@ ? 0 : 1;
 }
 
 # We want dialect 3 for new features and quoting to work, DBD::InterBase uses

@@ -4,8 +4,7 @@ NAME
 GETTING HELP/SUPPORT
     The community can be found via:
 
-    *   IRC: irc.perl.org#dbix-class (click for instant chatroom login)
-        <http://mibbit.com/chat/#dbix-class@irc.perl.org>
+    *   IRC: <irc.perl.org#dbix-class (click for instant chatroom login) >
 
     *   Mailing list: <http://lists.scsys.co.uk/mailman/listinfo/dbix-class>
 
@@ -165,6 +164,8 @@ CONTRIBUTORS
 
     aherzog: Adam Herzog <adam@herzogdesigns.com>
 
+    Alexander Keusch <cpan@keusch.at>
+
     amoore: Andrew Moore <amoore@cpan.org>
 
     andyg: Andy Grundman <andy@hybridized.org>
@@ -283,6 +284,8 @@ CONTRIBUTORS
 
     rafl: Florian Ragwitz <rafl@debian.org>
 
+    rbo: Robert Bohne <rbo@cpan.org>
+
     rbuels: Robert Buels <rmb32@cornell.edu>
 
     rdj: Ryan D Johnson <ryan@innerfence.com>
@@ -313,6 +316,8 @@ CONTRIBUTORS
 
     Tom Hukins
 
+    tonvoon: Ton Voon <tonvoon@cpan.org>
+
     triode: Pete Gamache <gamache@cpan.org>
 
     typester: Daisuke Murase <typester@cpan.org>
@@ -326,6 +331,8 @@ CONTRIBUTORS
     wreis: Wallace Reis <wreis@cpan.org>
 
     zamolxes: Bogdan Lucaciu <bogdan@wiz.ro>
+
+    Possum: Daniel LeWarne <possum@cpan.org>
 
 COPYRIGHT
     Copyright (c) 2005 - 2010 the DBIx::Class "AUTHOR" and "CONTRIBUTORS" as

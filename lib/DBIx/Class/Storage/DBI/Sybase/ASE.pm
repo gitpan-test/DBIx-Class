@@ -9,10 +9,12 @@ use base qw/
 /;
 use mro 'c3';
 use Carp::Clan qw/^DBIx::Class/;
-use Scalar::Util();
-use List::Util();
+use Scalar::Util 'blessed';
+use List::Util 'first';
 use Sub::Name();
-use Data::Dumper::Concise();
+use Data::Dumper::Concise 'Dumper';
+use Try::Tiny;
+use namespace::clean;
 
 __PACKAGE__->mk_group_accessors('simple' =>
     qw/_identity _blob_log_on_update _writer_storage _is_extra_storage
@@ -247,19 +249,18 @@ sub _prep_for_execute {
 
   my ($sql, $bind) = $self->next::method (@_);
 
-  my $table = Scalar::Util::blessed($ident) ? $ident->from : $ident;
+  my $table = blessed $ident ? $ident->from : $ident;
 
   my $bind_info = $self->_resolve_column_info(
     $ident, [map $_->[0], @{$bind}]
   );
-  my $bound_identity_col = List::Util::first
-    { $bind_info->{$_}{is_auto_increment} }
-    (keys %$bind_info)
+  my $bound_identity_col =
+    first { $bind_info->{$_}{is_auto_increment} }
+    keys %$bind_info
   ;
-  my $identity_col = Scalar::Util::blessed($ident) &&
-    List::Util::first
-    { $ident->column_info($_)->{is_auto_increment} }
-    $ident->columns
+  my $identity_col =
+    blessed $ident &&
+    first { $ident->column_info($_)->{is_auto_increment} } $ident->columns
   ;
 
   if (($op eq 'insert' && $bound_identity_col) ||
@@ -347,9 +348,9 @@ sub insert {
   my $self = shift;
   my ($source, $to_insert) = @_;
 
-  my $identity_col = (List::Util::first
-    { $source->column_info($_)->{is_auto_increment} }
-    $source->columns) || '';
+  my $identity_col =
+    (first { $source->column_info($_)->{is_auto_increment} } $source->columns)
+    || '';
 
   # check for empty insert
   # INSERT INTO foo DEFAULT VALUES -- does not work with Sybase
@@ -432,9 +433,8 @@ sub update {
 
   my $table = $source->name;
 
-  my $identity_col = List::Util::first
-    { $source->column_info($_)->{is_auto_increment} }
-    $source->columns;
+  my $identity_col =
+    first { $source->column_info($_)->{is_auto_increment} } $source->columns;
 
   my $is_identity_update = $identity_col && defined $fields->{$identity_col};
 
@@ -483,14 +483,10 @@ sub insert_bulk {
   my $self = shift;
   my ($source, $cols, $data) = @_;
 
-  my $identity_col = List::Util::first
-    { $source->column_info($_)->{is_auto_increment} }
-    $source->columns;
+  my $identity_col =
+    first { $source->column_info($_)->{is_auto_increment} } $source->columns;
 
-  my $is_identity_insert = (List::Util::first
-    { $_ eq $identity_col }
-    @{$cols}
-  ) ? 1 : 0;
+  my $is_identity_insert = (first { $_ eq $identity_col } @{$cols}) ? 1 : 0;
 
   my @source_columns = $source->columns;
 
@@ -596,7 +592,8 @@ EOF
       return 0;
   });
 
-  eval {
+  my $exception = '';
+  try {
     my $bulk = $self->_bulk_storage;
 
     my $guard = $bulk->txn_scope_guard;
@@ -640,9 +637,10 @@ EOF
     );
 
     $bulk->_query_end($sql);
+  } catch {
+    $exception = shift;
   };
 
-  my $exception = $@;
   DBD::Sybase::set_cslib_cb($orig_cslib_cb);
 
   if ($exception =~ /-Y option/) {
@@ -728,9 +726,11 @@ sub _remove_blob_cols_array {
 sub _update_blobs {
   my ($self, $source, $blob_cols, $where) = @_;
 
-  my @primary_cols = eval { $source->_pri_cols };
-  $self->throw_exception("Cannot update TEXT/IMAGE column(s): $@")
-    if $@;
+  my @primary_cols = try
+    { $source->_pri_cols }
+    catch {
+      $self->throw_exception("Cannot update TEXT/IMAGE column(s): $_")
+    };
 
 # check if we're updating a single row by PK
   my $pk_cols_in_where = 0;
@@ -762,9 +762,11 @@ sub _insert_blobs {
   my $table = $source->name;
 
   my %row = %$row;
-  my @primary_cols = eval { $source->_pri_cols} ;
-  $self->throw_exception("Cannot update TEXT/IMAGE column(s): $@")
-    if $@;
+  my @primary_cols = try
+    { $source->_pri_cols }
+    catch {
+      $self->throw_exception("Cannot update TEXT/IMAGE column(s): $_")
+    };
 
   $self->throw_exception('Cannot update TEXT/IMAGE column(s) without primary key values')
     if ((grep { defined $row{$_} } @primary_cols) != @primary_cols);
@@ -779,14 +781,13 @@ sub _insert_blobs {
     my $sth = $cursor->sth;
 
     if (not $sth) {
-
       $self->throw_exception(
           "Could not find row in table '$table' for blob update:\n"
-        . Data::Dumper::Concise::Dumper (\%where)
+        . (Dumper \%where)
       );
     }
 
-    eval {
+    try {
       do {
         $sth->func('CS_GET', 1, 'ct_data_info') or die $sth->errstr;
       } while $sth->fetch;
@@ -804,19 +805,20 @@ sub _insert_blobs {
       $sth->func($blob, length($blob), 'ct_send_data') or die $sth->errstr;
 
       $sth->func('ct_finish_send') or die $sth->errstr;
-    };
-    my $exception = $@;
-    $sth->finish if $sth;
-    if ($exception) {
+    }
+    catch {
       if ($self->using_freetds) {
         $self->throw_exception (
-          'TEXT/IMAGE operation failed, probably because you are using FreeTDS: '
-          . $exception
+          "TEXT/IMAGE operation failed, probably because you are using FreeTDS: $_"
         );
-      } else {
-        $self->throw_exception($exception);
+      }
+      else {
+        $self->throw_exception($_);
       }
     }
+    finally {
+      $sth->finish if $sth;
+    };
   }
 }
 

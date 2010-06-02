@@ -3,7 +3,9 @@ package DBIx::Class::Storage::DBI::Oracle::Generic;
 use strict;
 use warnings;
 use Scope::Guard ();
-use Context::Preserve ();
+use Context::Preserve 'preserve_context';
+use Try::Tiny;
+use namespace::clean;
 
 =head1 NAME
 
@@ -16,6 +18,51 @@ DBIx::Class::Storage::DBI::Oracle::Generic - Oracle Support for DBIx::Class
   __PACKAGE__->add_columns({ id => { sequence => 'mysequence', auto_nextval => 1 } });
   __PACKAGE__->set_primary_key('id');
   __PACKAGE__->sequence('mysequence');
+
+  # Somewhere in your Code
+  # add some data to a table with a hierarchical relationship
+  $schema->resultset('Person')->create ({
+        firstname => 'foo',
+        lastname => 'bar',
+        children => [
+            {
+                firstname => 'child1',
+                lastname => 'bar',
+                children => [
+                    {
+                        firstname => 'grandchild',
+                        lastname => 'bar',
+                    }
+                ],
+            },
+            {
+                firstname => 'child2',
+                lastname => 'bar',
+            },
+        ],
+    });
+
+  # select from the hierarchical relationship
+  my $rs = $schema->resultset('Person')->search({},
+    {
+      'start_with' => { 'firstname' => 'foo', 'lastname' => 'bar' },
+      'connect_by' => { 'parentid' => { '-prior' => \'persionid' },
+      'order_siblings_by' => { -asc => 'name' },
+    };
+  );
+
+  # this will select the whole tree starting from person "foo bar", creating
+  # following query:
+  # SELECT
+  #     me.persionid me.firstname, me.lastname, me.parentid
+  # FROM
+  #     person me
+  # START WITH
+  #     firstname = 'foo' and lastname = 'bar'
+  # CONNECT BY
+  #     parentid = prior persionid
+  # ORDER SIBLINGS BY
+  #     firstname ASC
 
 =head1 DESCRIPTION
 
@@ -30,6 +77,8 @@ versions before 9.
 use base qw/DBIx::Class::Storage::DBI/;
 use mro 'c3';
 
+__PACKAGE__->sql_maker_class('DBIx::Class::SQLAHacks::Oracle');
+
 sub deployment_statements {
   my $self = shift;;
   my ($schema, $type, $version, $dir, $sqltargs, @rest) = @_;
@@ -39,7 +88,7 @@ sub deployment_statements {
   $sqltargs->{quote_table_names} = $quote_char ? 1 : 0;
   $sqltargs->{quote_field_names} = $quote_char ? 1 : 0;
 
-  my $oracle_version = eval { $self->_get_dbh->get_info(18) };
+  my $oracle_version = try { $self->_get_dbh->get_info(18) };
 
   $sqltargs->{producer_args}{oracle_version} = $oracle_version;
 
@@ -85,7 +134,7 @@ sub _dbh_get_autoinc_seq {
     {
       $schema ? (owner => $schema) : (),
       table_name => $table || $source_name,
-      triggering_event => 'INSERT',
+      triggering_event => { -like => '%INSERT%' },
       status => 'ENABLED',
      },
   );
@@ -112,45 +161,51 @@ sub _ping {
   local $dbh->{RaiseError} = 1;
   local $dbh->{PrintError} = 0;
 
-  eval {
+  return try {
     $dbh->do('select 1 from dual');
+    1;
+  } catch {
+    0;
   };
-
-  return $@ ? 0 : 1;
 }
 
 sub _dbh_execute {
   my $self = shift;
   my ($dbh, $op, $extra_bind, $ident, $bind_attributes, @args) = @_;
 
-  my $wantarray = wantarray;
+  my (@res, $tried);
+  my $wantarray = wantarray();
+  my $next = $self->next::can;
+  do {
+    try {
+      my $exec = sub { $self->$next($dbh, $op, $extra_bind, $ident, $bind_attributes, @args) };
 
-  my (@res, $exception, $retried);
+      if (!defined $wantarray) {
+        $exec->();
+      }
+      elsif (! $wantarray) {
+        $res[0] = $exec->();
+      }
+      else {
+        @res = $exec->();
+      }
 
-  RETRY: {
-    do {
-      eval {
-        if ($wantarray) {
-          @res    = $self->next::method(@_);
-        } else {
-          $res[0] = $self->next::method(@_);
-        }
-      };
-      $exception = $@;
-      if ($exception =~ /ORA-01003/) {
+      $tried++;
+    }
+    catch {
+      if (! $tried and $_ =~ /ORA-01003/) {
         # ORA-01003: no statement parsed (someone changed the table somehow,
         # invalidating your cursor.)
         my ($sql, $bind) = $self->_prep_for_execute($op, $extra_bind, $ident, \@args);
         delete $dbh->{CachedKids}{$sql};
-      } else {
-        last RETRY;
       }
-    } while (not $retried++);
-  }
+      else {
+        $self->throw_exception($_);
+      }
+    };
+  } while (! $tried++);
 
-  $self->throw_exception($exception) if $exception;
-
-  $wantarray ? @res : $res[0]
+  return $wantarray ? @res : $res[0];
 }
 
 =head2 get_autoinc_seq
@@ -163,19 +218,6 @@ sub get_autoinc_seq {
   my ($self, $source, $col) = @_;
 
   $self->dbh_do('_dbh_get_autoinc_seq', $source, $col);
-}
-
-=head2 columns_info_for
-
-This wraps the superclass version of this method to force table
-names to uppercase
-
-=cut
-
-sub columns_info_for {
-  my ($self, $table) = @_;
-
-  $self->next::method($table);
 }
 
 =head2 datetime_parser_type
@@ -361,14 +403,98 @@ sub with_deferred_fk_checks {
   my $txn_scope_guard = $self->txn_scope_guard;
 
   $self->_do_query('alter session set constraints = deferred');
-  
+
   my $sg = Scope::Guard->new(sub {
     $self->_do_query('alter session set constraints = immediate');
   });
 
-  return Context::Preserve::preserve_context(sub { $sub->() },
-    after => sub { $txn_scope_guard->commit });
+  return
+    preserve_context { $sub->() } after => sub { $txn_scope_guard->commit };
 }
+
+=head1 ATTRIBUTES
+
+Following additional attributes can be used in resultsets.
+
+=head2 connect_by or connect_by_nocycle
+
+=over 4
+
+=item Value: \%connect_by
+
+=back
+
+A hashref of conditions used to specify the relationship between parent rows
+and child rows of the hierarchy.
+
+
+  connect_by => { parentid => 'prior personid' }
+
+  # adds a connect by statement to the query:
+  # SELECT
+  #     me.persionid me.firstname, me.lastname, me.parentid
+  # FROM
+  #     person me
+  # CONNECT BY
+  #     parentid = prior persionid
+  
+
+  connect_by_nocycle => { parentid => 'prior personid' }
+
+  # adds a connect by statement to the query:
+  # SELECT
+  #     me.persionid me.firstname, me.lastname, me.parentid
+  # FROM
+  #     person me
+  # CONNECT BY NOCYCLE
+  #     parentid = prior persionid
+
+
+=head2 start_with
+
+=over 4
+
+=item Value: \%condition
+
+=back
+
+A hashref of conditions which specify the root row(s) of the hierarchy.
+
+It uses the same syntax as L<DBIx::Class::ResultSet/search>
+
+  start_with => { firstname => 'Foo', lastname => 'Bar' }
+
+  # SELECT
+  #     me.persionid me.firstname, me.lastname, me.parentid
+  # FROM
+  #     person me
+  # START WITH
+  #     firstname = 'foo' and lastname = 'bar'
+  # CONNECT BY
+  #     parentid = prior persionid
+
+=head2 order_siblings_by
+
+=over 4
+
+=item Value: ($order_siblings_by | \@order_siblings_by)
+
+=back
+
+Which column(s) to order the siblings by.
+
+It uses the same syntax as L<DBIx::Class::ResultSet/order_by>
+
+  'order_siblings_by' => 'firstname ASC'
+
+  # SELECT
+  #     me.persionid me.firstname, me.lastname, me.parentid
+  # FROM
+  #     person me
+  # CONNECT BY
+  #     parentid = prior persionid
+  # ORDER SIBLINGS BY
+  #     firstname ASC
 
 =head1 AUTHOR
 

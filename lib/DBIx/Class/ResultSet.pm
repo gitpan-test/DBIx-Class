@@ -2,10 +2,7 @@ package DBIx::Class::ResultSet;
 
 use strict;
 use warnings;
-use overload
-        '0+'     => "count",
-        'bool'   => "_bool",
-        fallback => 1;
+use base qw/DBIx::Class/;
 use Carp::Clan qw/^DBIx::Class/;
 use DBIx::Class::Exception;
 use Data::Page;
@@ -13,8 +10,13 @@ use Storable;
 use DBIx::Class::ResultSetColumn;
 use DBIx::Class::ResultSourceHandle;
 use List::Util ();
-use Scalar::Util ();
-use base qw/DBIx::Class/;
+use Scalar::Util 'blessed';
+use namespace::clean;
+
+use overload
+        '0+'     => "count",
+        'bool'   => "_bool",
+        fallback => 1;
 
 __PACKAGE__->mk_group_accessors('simple' => qw/_result_class _source_handle/);
 
@@ -57,7 +59,12 @@ represents.
 
 The query that the ResultSet represents is B<only> executed against
 the database when these methods are called:
-L</find> L</next> L</all> L</first> L</single> L</count>
+L</find>, L</next>, L</all>, L</first>, L</single>, L</count>.
+
+If a resultset is used in a numeric context it returns the L</count>.
+However, if it is used in a boolean context it is B<always> true.  So if
+you want to check if a resultset has any results, you must use C<if $rs
+!= 0>.
 
 =head1 EXAMPLES
 
@@ -101,7 +108,7 @@ attributes with the same keys need resolving.
 L</join>, L</prefetch>, L</+select>, L</+as> attributes are merged
 into the existing ones from the original resultset.
 
-The L</where>, L</having> attribute, and any search conditions are
+The L</where> and L</having> attributes, and any search conditions, are
 merged with an SQL C<AND> to the existing condition from the original
 resultset.
 
@@ -141,13 +148,6 @@ Which is the same as:
   });
 
 See: L</search>, L</count>, L</get_column>, L</all>, L</create>.
-
-=head1 OVERLOADING
-
-If a resultset is used in a numeric context it returns the L</count>.
-However, if it is used in a boolean context it is always true.  So if
-you want to check if a resultset has any results use C<if $rs != 0>.
-C<if $rs> will always be true.
 
 =head1 METHODS
 
@@ -199,7 +199,6 @@ sub new {
   my $self = {
     _source_handle => $source,
     cond => $attrs->{where},
-    count => undef,
     pager => undef,
     attrs => $attrs
   };
@@ -538,8 +537,8 @@ sub find {
       : $self->_add_alias($input_query, $alias);
   }
 
-  # Run the query
-  my $rs = $self->search ($query, $attrs);
+  # Run the query, passing the result_class since it should propagate for find
+  my $rs = $self->search ($query, {result_class => $self->result_class, %$attrs});
   if (keys %{$rs->_resolved_attrs->{collapse}}) {
     my $row = $rs->next;
     carp "Query returned more than one row" if $rs->next;
@@ -1138,9 +1137,14 @@ in the original source class will not run.
 sub result_class {
   my ($self, $result_class) = @_;
   if ($result_class) {
-    $self->ensure_class_loaded($result_class);
+    unless (ref $result_class) { # don't fire this for an object
+      $self->ensure_class_loaded($result_class);
+    }
     $self->_result_class($result_class);
-    $self->{attrs}{result_class} = $result_class if ref $self;
+    # THIS LINE WOULD BE A BUG - this accessor specifically exists to
+    # permit the user to set result class on one result set only; it only
+    # chains if provided to search()
+    #$self->{attrs}{result_class} = $result_class if ref $self;
   }
   $self->_result_class;
 }
@@ -1236,12 +1240,11 @@ sub _count_rs {
   $attrs ||= $self->_resolved_attrs;
 
   my $tmp_attrs = { %$attrs };
-
-  # take off any limits, record_filter is cdbi, and no point of ordering a count
-  delete $tmp_attrs->{$_} for (qw/select as rows offset order_by record_filter/);
+  # take off any limits, record_filter is cdbi, and no point of ordering nor locking a count
+  delete @{$tmp_attrs}{qw/rows offset order_by record_filter for/};
 
   # overwrite the selector (supplied by the storage)
-  $tmp_attrs->{select} = $rsrc->storage->_count_select ($rsrc, $tmp_attrs);
+  $tmp_attrs->{select} = $rsrc->storage->_count_select ($rsrc, $attrs);
   $tmp_attrs->{as} = 'count';
 
   my $tmp_rs = $rsrc->resultset_class->new($rsrc, $tmp_attrs)->get_column ('count');
@@ -1256,12 +1259,11 @@ sub _count_subq_rs {
   my ($self, $attrs) = @_;
 
   my $rsrc = $self->result_source;
-  $attrs ||= $self->_resolved_attrs_copy;
+  $attrs ||= $self->_resolved_attrs;
 
   my $sub_attrs = { %$attrs };
-
-  # extra selectors do not go in the subquery and there is no point of ordering it
-  delete $sub_attrs->{$_} for qw/collapse select _prefetch_select as order_by/;
+  # extra selectors do not go in the subquery and there is no point of ordering it, nor locking it
+  delete @{$sub_attrs}{qw/collapse select _prefetch_select as order_by for/};
 
   # if we multi-prefetch we group_by primary keys only as this is what we would
   # get out of the rs via ->next/->all. We *DO WANT* to clobber old group_by regardless
@@ -1269,24 +1271,30 @@ sub _count_subq_rs {
     $sub_attrs->{group_by} = [ map { "$attrs->{alias}.$_" } ($rsrc->_pri_cols) ]
   }
 
-  $sub_attrs->{select} = $rsrc->storage->_subq_count_select ($rsrc, $attrs);
+  # Calculate subquery selector
+  if (my $g = $sub_attrs->{group_by}) {
 
-  # this is so that the query can be simplified e.g.
-  # * ordering can be thrown away in things like Top limit
-  $sub_attrs->{-for_count_only} = 1;
+    # necessary as the group_by may refer to aliased functions
+    my $sel_index;
+    for my $sel (@{$attrs->{select}}) {
+      $sel_index->{$sel->{-as}} = $sel
+        if (ref $sel eq 'HASH' and $sel->{-as});
+    }
 
-  my $sub_rs = $rsrc->resultset_class->new ($rsrc, $sub_attrs);
+    for my $g_part (@$g) {
+      push @{$sub_attrs->{select}}, $sel_index->{$g_part} || $g_part;
+    }
+  }
+  else {
+    my @pcols = map { "$attrs->{alias}.$_" } ($rsrc->primary_columns);
+    $sub_attrs->{select} = @pcols ? \@pcols : [ 1 ];
+  }
 
-  $attrs->{from} = [{
-    -alias => 'count_subq',
-    -source_handle => $rsrc->handle,
-    count_subq => $sub_rs->as_query,
-  }];
-
-  # the subquery replaces this
-  delete $attrs->{$_} for qw/where bind collapse group_by having having_bind rows offset/;
-
-  return $self->_count_rs ($attrs);
+  return $rsrc->resultset_class
+               ->new ($rsrc, $sub_attrs)
+                ->as_subselect_rs
+                 ->search ({}, { columns => { count => $rsrc->storage->_count_select ($rsrc, $attrs) } })
+                  ->get_column ('count');
 }
 
 sub _bool {
@@ -1417,14 +1425,15 @@ sub _rs_update_delete {
   my $cond = $rsrc->schema->storage->_strip_cond_qualifiers ($self->{cond});
 
   my $needs_group_by_subq = $self->_has_resolved_attr (qw/collapse group_by -join/);
-  my $needs_subq = $needs_group_by_subq || (not defined $cond) || $self->_has_resolved_attr(qw/row offset/);
+  my $needs_subq = $needs_group_by_subq || (not defined $cond) || $self->_has_resolved_attr(qw/rows offset/);
 
   if ($needs_group_by_subq or $needs_subq) {
 
     # make a new $rs selecting only the PKs (that's all we really need)
     my $attrs = $self->_resolved_attrs_copy;
 
-    delete $attrs->{$_} for qw/collapse select as/;
+
+    delete $attrs->{$_} for qw/collapse _collapse_order_by select _prefetch_select as/;
     $attrs->{columns} = [ map { "$attrs->{alias}.$_" } ($self->result_source->_pri_cols) ];
 
     if ($needs_group_by_subq) {
@@ -1458,7 +1467,6 @@ sub _rs_update_delete {
     }
 
     my $subrs = (ref $self)->new($rsrc, $attrs);
-
     return $self->result_source->storage->_subq_update_delete($subrs, $op, $values);
   }
   else {
@@ -1924,7 +1932,7 @@ sub _is_deterministic_value {
   my $value = shift;
   my $ref_type = ref $value;
   return 1 if $ref_type eq '' || $ref_type eq 'SCALAR';
-  return 1 if Scalar::Util::blessed($value);
+  return 1 if blessed $value;
   return 0;
 }
 
@@ -2298,7 +2306,7 @@ For example:
     producer => $producer,
     name => 'harry',
   }, {
-    key => 'primary,
+    key => 'primary',
   });
 
 
@@ -2668,16 +2676,26 @@ but because we isolated the group by into a subselect the above works.
 =cut
 
 sub as_subselect_rs {
-   my $self = shift;
+  my $self = shift;
 
-   return $self->result_source->resultset->search( undef, {
-      alias => $self->current_source_alias,
-      from => [{
-            $self->current_source_alias => $self->as_query,
-            -alias         => $self->current_source_alias,
-            -source_handle => $self->result_source->handle,
-         }]
-   });
+  my $attrs = $self->_resolved_attrs;
+
+  my $fresh_rs = (ref $self)->new (
+    $self->result_source
+  );
+
+  # these pieces will be locked in the subquery
+  delete $fresh_rs->{cond};
+  delete @{$fresh_rs->{attrs}}{qw/where bind/};
+
+  return $fresh_rs->search( {}, {
+    from => [{
+      $attrs->{alias} => $self->as_query,
+      -alias         => $attrs->{alias},
+      -source_handle => $self->result_source->handle,
+    }],
+    alias => $attrs->{alias},
+  });
 }
 
 # This code is called by search_related, and makes sure there
@@ -2702,7 +2720,7 @@ sub _chain_relationship {
   # ->_resolve_join as otherwise they get lost - captainL
   my $join = $self->_merge_attr( $attrs->{join}, $attrs->{prefetch} );
 
-  delete @{$attrs}{qw/join prefetch collapse distinct select as columns +select +as +columns/};
+  delete @{$attrs}{qw/join prefetch collapse group_by distinct select as columns +select +as +columns/};
 
   my $seen = { %{ (delete $attrs->{seen_join}) || {} } };
 
@@ -2728,7 +2746,7 @@ sub _chain_relationship {
       -alias => $attrs->{alias},
       $attrs->{alias} => $rs_copy->as_query,
     }];
-    delete @{$attrs}{@force_subq_attrs, 'where'};
+    delete @{$attrs}{@force_subq_attrs, qw/where bind/};
     $seen->{-relation_chain_depth} = 0;
   }
   elsif ($attrs->{from}) {  #shallow copy suffices
