@@ -12,7 +12,7 @@ build_requires:
 configure_requires:
   ExtUtils::MakeMaker: 6.42
 distribution_type: module
-generated_by: 'Module::Install version 0.98'
+generated_by: 'Module::Install version 0.99'
 license: perl
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
@@ -27,6 +27,7 @@ no_index:
     - lib/DBIx/Class/PK/Auto
     - lib/DBIx/Class/SQLAHacks
     - t
+    - xt
   package:
     - DBIx::Class::SQLAHacks
     - DBIx::Class::Storage::DBIHacks
@@ -39,16 +40,13 @@ requires:
   Class::Trigger: 0
   Clone: 0
   Context::Preserve: 0.01
-  DBD::Pg: 2.009002
   DBD::SQLite: 1.25
-  DBD::mysql: 0
   DBI: 1.609
   DBIx::ContextualFetch: 0
   Data::Dumper::Concise: 1.000
   Data::Page: 2.00
   Date::Simple: 3.03
   DateTime::Format::MySQL: 0
-  DateTime::Format::Oracle: 0
   DateTime::Format::Pg: 0
   DateTime::Format::SQLite: 0
   DateTime::Format::Strptime: 0
@@ -67,9 +65,9 @@ requires:
   Pod::Coverage: 0.20
   SQL::Abstract: 1.67
   SQL::Abstract::Limit: 0.13
+  SQL::Translator: 0.11006
   Scope::Guard: 0.03
   Sub::Name: 0.04
-  Sys::SigAction: 0
   Test::Builder: 0.33
   Test::EOL: 0.6
   Test::Exception: 0
@@ -88,6 +86,7 @@ requires:
 resources:
   IRC: irc://irc.perl.org/#dbix-class
   MailingList: http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class
+  homepage: http://www.dbix-class.org/
   license: http://dev.perl.org/licenses/
-  repository: http://dev.catalyst.perl.org/repos/bast/DBIx-Class/
-version: 0.08121_01
+  repository: git://git.shadowcat.co.uk/dbsrgits/DBIx-Class.git
+version: 0.08122

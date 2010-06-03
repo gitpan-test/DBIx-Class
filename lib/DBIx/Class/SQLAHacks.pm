@@ -33,6 +33,11 @@ BEGIN {
   }
 }
 
+# the "oh noes offset/top without limit" constant
+# limited to 32 bits for sanity (and since it is fed
+# to sprintf %u)
+sub __max_int { 0xFFFFFFFF };
+
 
 # Tries to determine limit dialect.
 #
@@ -390,6 +395,21 @@ sub _Top {
 
   $sql =~ s/\s*\n\s*/ /g;   # easier to read in the debugger
   return $sql;
+}
+
+# This for Sybase ASE, to use SET ROWCOUNT when there is no offset, and
+# GenericSubQ otherwise.
+sub _RowCountOrGenericSubQ {
+  my $self = shift;
+  my ($sql, $rs_attrs, $rows, $offset) = @_;
+
+  return $self->_GenericSubQ(@_) if $offset;
+
+  return sprintf <<"EOF", $rows, $sql;
+SET ROWCOUNT %d
+%s
+SET ROWCOUNT 0
+EOF
 }
 
 # This is the most evil limit "dialect" (more of a hack) for *really*

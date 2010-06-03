@@ -8,6 +8,7 @@ examples/Schema/MyDatabase/Main/Result/Track.pm
 examples/Schema/testdb.pl
 inc/Module/AutoInstall.pm
 inc/Module/Install.pm
+inc/Module/Install/AuthorTests.pm
 inc/Module/Install/AutoInstall.pm
 inc/Module/Install/Base.pm
 inc/Module/Install/Can.pm
@@ -168,19 +169,14 @@ MANIFEST			This list of files
 META.yml
 README
 script/dbicadmin
-t/02pod.t
-t/03podcoverage.t
 t/04dont_break_c3.t
 t/05components.t
-t/06notabs.t
-t/07eol.t
 t/100extra_source.t
 t/100populate.t
 t/101populate_rs.t
 t/102load_classes.t
 t/103many_to_many_warning.t
 t/104view.t
-t/10optional_deps.t
 t/18insert_default.t
 t/20setuperrors.t
 t/26dumper.t
@@ -251,7 +247,6 @@ t/99dbic_sqlt_parser.t
 t/admin/01load.t
 t/admin/02ddl.t
 t/admin/03data.t
-t/admin/04include.t
 t/admin/10script.t
 t/bind/attribute.t
 t/bind/bindtype_columns.t
@@ -525,3 +520,8 @@ t/storage/txn.t
 t/update/type_aware.t
 t/zzzzzzz_perl_perf_bug.t
 t/zzzzzzz_sqlite_deadlock.t
+xt/eol.t
+xt/notabs.t
+xt/optional_deps.t
+xt/pod.t
+xt/podcoverage.t

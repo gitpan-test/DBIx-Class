@@ -4,17 +4,18 @@ NAME
 GETTING HELP/SUPPORT
     The community can be found via:
 
-    *   IRC: <irc.perl.org#dbix-class (click for instant chatroom login) >
+    *   IRC: irc.perl.org#dbix-class
 
     *   Mailing list: <http://lists.scsys.co.uk/mailman/listinfo/dbix-class>
 
     *   RT Bug Tracker:
         <https://rt.cpan.org/Dist/Display.html?Queue=DBIx-Class>
 
-    *   SVNWeb:
-        <http://dev.catalyst.perl.org/svnweb/bast/browse/DBIx-Class/0.08>
+    *   gitweb:
+        <http://git.shadowcat.co.uk/gitweb/gitweb.cgi?p=dbsrgits/DBIx-Class.
+        git>
 
-    *   SVN: <http://dev.catalyst.perl.org/repos/bast/DBIx-Class/0.08>
+    *   git: <git://git.shadowcat.co.uk/dbsrgits/DBIx-Class.git>
 
 SYNOPSIS
     Create a schema class called MyDB/Schema.pm:
@@ -219,6 +220,8 @@ CONTRIBUTORS
     gphat: Cory G Watson <gphat@cpan.org>
 
     groditi: Guillermo Roditi <groditi@cpan.org>
+
+    Haarg: Graham Knop <haarg@haarg.org>
 
     hobbs: Andrew Rodland <arodland@cpan.org>
 
