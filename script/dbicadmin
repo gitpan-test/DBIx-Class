@@ -139,12 +139,12 @@ dbicadmin - utility for administrating DBIx::Class schemata
 dbicadmin: [-I] [long options...]
 
   deploy a schema to a database
-  %c --schema=MyApp::Schema \
+  dbicadmin --schema=MyApp::Schema \
     --connect='["dbi:SQLite:my.db", "", ""]' \
     --deploy
 
   update an existing record
-  %c --schema=MyApp::Schema --class=Employee \
+  dbicadmin --schema=MyApp::Schema --class=Employee \
     --connect='["dbi:SQLite:my.db", "", ""]' \
     --op=update --set='{ "name": "New_Employee" }'
 
