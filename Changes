@@ -1,7 +1,9 @@
 Revision history for DBIx::Class
 
-0.08123_01 2010-10-26 14:33 (UTC)
+0.08123_02 2010-10-26 14:59 (UTC)
     * New Features / Changes
+        - Add new -ident "function" indicating rhs is a column name
+          { col => { -ident => 'othercol' } } vs { col => \'othercol' }
         - Extend 'proxy' relationship attribute
         - Use DBIx::Class::Storage::Debug::PrettyPrint when the
           environment variable DBIC_TRACE_PROFILE is set, see
@@ -30,6 +32,8 @@ Revision history for DBIx::Class
 
     * Fixes
         - Fix memory leak during populate() on 5.8.x perls
+        - Temporarily fixed 5.13.x failures (RT#58225)
+          (perl-core fix still pending)
         - Fix result_soutrce_instance leaks on compose_namespace
         - Make sure exception_action does not allow exception-hiding
           due to badly-written handlers (the mechanism was never meant

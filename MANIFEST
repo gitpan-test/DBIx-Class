@@ -528,6 +528,7 @@ t/sqlmaker/limit_dialects/generic_subq.t
 t/sqlmaker/limit_dialects/rno.t
 t/sqlmaker/limit_dialects/rownum.t
 t/sqlmaker/limit_dialects/toplimit.t
+t/sqlmaker/op_ident.t
 t/sqlmaker/oracle.t
 t/sqlmaker/oraclejoin.t
 t/sqlmaker/order_by_func.t
@@ -552,6 +553,7 @@ t/storage/reconnect.t
 t/storage/replicated.t
 t/storage/stats.t
 t/storage/txn.t
+t/storage/txn_scope_guard.t
 t/update/type_aware.t
 t/zzzzzzz_perl_perf_bug.t
 t/zzzzzzz_sqlite_deadlock.t
