@@ -487,7 +487,7 @@ named C<primary>.
 Note: you normally do want to define a primary key on your sources
 B<even if the underlying database table does not have a primary key>.
 See
-L<DBIx::Class::Intro/The Significance and Importance of Primary Keys>
+L<DBIx::Class::Manual::Intro/The Significance and Importance of Primary Keys>
 for more info.
 
 =cut
@@ -531,7 +531,8 @@ sub _pri_cols {
   my @pcols = $self->primary_columns
     or $self->throw_exception (sprintf(
       "Operation requires a primary key to be declared on '%s' via set_primary_key",
-      $self->source_name,
+      # source_name is set only after schema-registration
+      $self->source_name || $self->result_class || $self->name || 'Unknown source...?',
     ));
   return @pcols;
 }
@@ -573,8 +574,22 @@ the result source.
 
 sub add_unique_constraint {
   my $self = shift;
+
+  if (@_ > 2) {
+    $self->throw_exception(
+        'add_unique_constraint() does not accept multiple constraints, use '
+      . 'add_unique_constraints() instead'
+    );
+  }
+
   my $cols = pop @_;
-  my $name = shift;
+  if (ref $cols ne 'ARRAY') {
+    $self->throw_exception (
+      'Expecting an arrayref of constraint columns, got ' . ($cols||'NOTHING')
+    );
+  }
+
+  my $name = shift @_;
 
   $name ||= $self->name_unique_constraint($cols);
 
@@ -588,18 +603,70 @@ sub add_unique_constraint {
   $self->_unique_constraints(\%unique_constraints);
 }
 
+=head2 add_unique_constraints
+
+=over 4
+
+=item Arguments: @constraints
+
+=item Return value: undefined
+
+=back
+
+Declare multiple unique constraints on this source.
+
+  __PACKAGE__->add_unique_constraints(
+    constraint_name1 => [ qw/column1 column2/ ],
+    constraint_name2 => [ qw/column2 column3/ ],
+  );
+
+Alternatively, you can specify only the columns:
+
+  __PACKAGE__->add_unique_constraints(
+    [ qw/column1 column2/ ],
+    [ qw/column3 column4/ ]
+  );
+
+This will result in unique constraints named C<table_column1_column2> and
+C<table_column3_column4>, where C<table> is replaced with the table name.
+
+Throws an error if any of the given column names do not yet exist on
+the result source.
+
+See also L</add_unique_constraint>.
+
+=cut
+
+sub add_unique_constraints {
+  my $self = shift;
+  my @constraints = @_;
+
+  if ( !(@constraints % 2) && first { ref $_ ne 'ARRAY' } @constraints ) {
+    # with constraint name
+    while (my ($name, $constraint) = splice @constraints, 0, 2) {
+      $self->add_unique_constraint($name => $constraint);
+    }
+  }
+  else {
+    # no constraint name
+    foreach my $constraint (@constraints) {
+      $self->add_unique_constraint($constraint);
+    }
+  }
+}
+
 =head2 name_unique_constraint
 
 =over 4
 
-=item Arguments: @colnames
+=item Arguments: \@colnames
 
 =item Return value: Constraint name
 
 =back
 
   $source->table('mytable');
-  $source->name_unique_constraint('col1', 'col2');
+  $source->name_unique_constraint(['col1', 'col2']);
   # returns
   'mytable_col1_col2'
 
@@ -1478,13 +1545,33 @@ sub _resolve_prefetch {
         # in ResultSet->_collapse_result
       my @key = map { (/^foreign\.(.+)$/ ? ($1) : ()); }
                     keys %{$rel_info->{cond}};
-      my @ord = (ref($rel_info->{attrs}{order_by}) eq 'ARRAY'
-                   ? @{$rel_info->{attrs}{order_by}}
+      push @$order, map { "${as}.$_" } @key;
 
-                : (defined $rel_info->{attrs}{order_by}
-                       ? ($rel_info->{attrs}{order_by})
-                       : ()));
-      push(@$order, map { "${as}.$_" } (@key, @ord));
+      if (my $rel_order = $rel_info->{attrs}{order_by}) {
+        # this is kludgy and incomplete, I am well aware
+        # but the parent method is going away entirely anyway
+        # so sod it
+        my $sql_maker = $self->storage->sql_maker;
+        my ($orig_ql, $orig_qr) = $sql_maker->_quote_chars;
+        my $sep = $sql_maker->name_sep;
+
+        # install our own quoter, so we can catch unqualified stuff
+        local $sql_maker->{quote_char} = ["\x00", "\xFF"];
+
+        my $quoted_prefix = "\x00${as}\xFF";
+
+        for my $chunk ( $sql_maker->_order_by_chunks ($rel_order) ) {
+          my @bind;
+          ($chunk, @bind) = @$chunk if ref $chunk;
+
+          $chunk = "${quoted_prefix}${sep}${chunk}"
+            unless $chunk =~ /\Q$sep/;
+
+          $chunk =~ s/\x00/$orig_ql/g;
+          $chunk =~ s/\xFF/$orig_qr/g;
+          push @$order, \[$chunk, @bind];
+        }
+      }
     }
 
     return map { [ "${as}.$_", "${as_prefix}${pre}.$_", ] }

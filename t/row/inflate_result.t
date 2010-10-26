@@ -76,7 +76,7 @@ my $admin_data = {
     admin    => 1
 };
 
-ok( my $schema = My::Schema->connection('dbi:SQLite:dbname=:memory:') );
+ok( my $schema = My::Schema->connection(DBICTest->_database) );
 
 ok(
     $schema->storage->dbh->do(
@@ -91,7 +91,6 @@ TODO: {
 
     is( ref $user,  'My::Schema::Result::User' );
     is( ref $admin, 'My::Schema::Result::User::Admin' );
-
 }
 
 my $user  = $schema->resultset('User')->single($user_data);

@@ -7,6 +7,8 @@ use Context::Preserve 'preserve_context';
 use Try::Tiny;
 use namespace::clean;
 
+__PACKAGE__->sql_limit_dialect ('RowNum');
+
 =head1 NAME
 
 DBIx::Class::Storage::DBI::Oracle::Generic - Oracle Support for DBIx::Class
@@ -77,7 +79,7 @@ versions before 9.
 use base qw/DBIx::Class::Storage::DBI/;
 use mro 'c3';
 
-__PACKAGE__->sql_maker_class('DBIx::Class::SQLAHacks::Oracle');
+__PACKAGE__->sql_maker_class('DBIx::Class::SQLMaker::Oracle');
 
 sub deployment_statements {
   my $self = shift;;
@@ -146,12 +148,12 @@ sub _dbh_get_autoinc_seq {
   $sth->execute (@bind);
 
   while (my ($insert_trigger, $schema) = $sth->fetchrow_array) {
-    my ($seq_name) = $insert_trigger =~ m!("?[.\w"]+?"?)\.nextval!i;
+    my ($seq_name) = $insert_trigger =~ m/("?[.\w"]+"?)\.nextval .+ into \s+ :new\.$col/xmsi;
 
     next unless $seq_name;
 
     if ($seq_name !~ /\./) {
-      $seq_name = join '.' => map $self->sql_maker->_quote($_), $schema, $seq_name;
+      $seq_name = join '.' => $schema, $seq_name;
     }
 
     return $seq_name;

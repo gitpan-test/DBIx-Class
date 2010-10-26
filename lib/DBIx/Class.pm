@@ -27,7 +27,7 @@ sub component_base_class { 'DBIx::Class' }
 # Always remember to do all digits for the version even if they're 0
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
-$VERSION = '0.08123';
+$VERSION = '0.08123_01';
 
 $VERSION = eval $VERSION if $VERSION =~ /_/; # numify for warning-free dev releases
 
@@ -64,7 +64,7 @@ The community can be found via:
 =item * IRC: irc.perl.org#dbix-class
 
 =for html
-<a href="http://mibbit.com/chat/#dbix-class@irc.perl.org">(click for instant chatroom login)</a>
+<a href="http://chat.mibbit.com/#dbix-class@irc.perl.org">(click for instant chatroom login)</a>
 
 =item * Mailing list: L<http://lists.scsys.co.uk/mailman/listinfo/dbix-class>
 
@@ -73,6 +73,8 @@ The community can be found via:
 =item * gitweb: L<http://git.shadowcat.co.uk/gitweb/gitweb.cgi?p=dbsrgits/DBIx-Class.git>
 
 =item * git: L<git://git.shadowcat.co.uk/dbsrgits/DBIx-Class.git>
+
+=item * twitter L<http://www.twitter.com/dbix_class>
 
 =back
 
@@ -229,11 +231,15 @@ aherzog: Adam Herzog <adam@herzogdesigns.com>
 
 Alexander Keusch <cpan@keusch.at>
 
+amiri: Amiri Barksdale <amiri@metalabel.com>
+
 amoore: Andrew Moore <amoore@cpan.org>
 
 andyg: Andy Grundman <andy@hybridized.org>
 
 ank: Andres Kievsky
+
+arc: Aaron Crane <arc@cpan.org>
 
 arcanez: Justin Hunter <justin.d.hunter@gmail.com>
 
@@ -345,9 +351,13 @@ phaylon: Robert Sedlacek <phaylon@dunkelheit.at>
 
 plu: Johannes Plunien <plu@cpan.org>
 
+Possum: Daniel LeWarne <possum@cpan.org>
+
 quicksilver: Jules Bean
 
 rafl: Florian Ragwitz <rafl@debian.org>
+
+rainboxx: Matthias Dietrich <perl@rb.ly>
 
 rbo: Robert Bohne <rbo@cpan.org>
 
@@ -395,9 +405,9 @@ willert: Sebastian Willert <willert@cpan.org>
 
 wreis: Wallace Reis <wreis@cpan.org>
 
-zamolxes: Bogdan Lucaciu <bogdan@wiz.ro>
+yrlnry: Mark Jason Dominus <mjd@plover.com>
 
-Possum: Daniel LeWarne <possum@cpan.org>
+zamolxes: Bogdan Lucaciu <bogdan@wiz.ro>
 
 =head1 COPYRIGHT
 

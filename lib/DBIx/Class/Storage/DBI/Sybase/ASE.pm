@@ -16,6 +16,8 @@ use Data::Dumper::Concise 'Dumper';
 use Try::Tiny;
 use namespace::clean;
 
+__PACKAGE__->sql_limit_dialect ('RowCountOrGenericSubQ');
+
 __PACKAGE__->mk_group_accessors('simple' =>
     qw/_identity _blob_log_on_update _writer_storage _is_extra_storage
        _bulk_storage _is_bulk_storage _began_bulk_work
@@ -83,8 +85,8 @@ To turn off this warning set the DBIC_SYBASE_FREETDS_NOWARN environment
 variable.
 EOF
 
-    if (not $self->_typeless_placeholders_supported) {
-      if ($self->_placeholders_supported) {
+    if (not $self->_use_typeless_placeholders) {
+      if ($self->_use_placeholders) {
         $self->auto_cast(1);
       }
       else {
@@ -102,7 +104,7 @@ EOF
     $self->_rebless;
   }
   # this is highly unlikely, but we check just in case
-  elsif (not $self->_typeless_placeholders_supported) {
+  elsif (not $self->_use_typeless_placeholders) {
     $self->auto_cast(1);
   }
 }
@@ -150,16 +152,6 @@ for my $method (@also_proxy_to_extra_storages) {
     $self->_bulk_storage->$replaced(@_)   if $self->_bulk_storage;
     return $self->$replaced(@_);
   };
-}
-
-sub _sql_maker_opts {
-  my ( $self, $opts ) = @_;
-
-  if ( $opts ) {
-    $self->{_sql_maker_opts} = { %$opts };
-  }
-
-  return { limit_dialect => 'RowCountOrGenericSubQ', %{$self->{_sql_maker_opts}||{}} };
 }
 
 sub disconnect {
@@ -1160,7 +1152,7 @@ Real limits and limited counts using stored procedures deployed on startup.
 
 =item *
 
-Adaptive Server Anywhere (ASA) support, with possible SQLA::Limit support.
+Adaptive Server Anywhere (ASA) support
 
 =item *
 

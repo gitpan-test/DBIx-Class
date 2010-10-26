@@ -30,7 +30,10 @@ __PACKAGE__->add_columns(
   },
 );
 __PACKAGE__->set_primary_key('artistid');
+__PACKAGE__->add_unique_constraint(['name']);
 __PACKAGE__->add_unique_constraint(artist => ['artistid']); # do not remove, part of a test
+__PACKAGE__->add_unique_constraint(u_nullable => [qw/charfield rank/]);
+
 
 __PACKAGE__->mk_classdata('field_name_for', {
     artistid    => 'primary key',
@@ -39,7 +42,7 @@ __PACKAGE__->mk_classdata('field_name_for', {
 
 __PACKAGE__->has_many(
     cds => 'DBICTest::Schema::CD', undef,
-    { order_by => 'year' },
+    { order_by => { -asc => 'year'} },
 );
 __PACKAGE__->has_many(
     cds_unordered => 'DBICTest::Schema::CD'

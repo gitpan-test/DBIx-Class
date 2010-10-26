@@ -8,7 +8,7 @@ use DBICTest;
 use namespace::clean;
 
 # Don't run tests for installs
-unless ( DBICTest::AuthorCheck->is_author || $ENV{AUTOMATED_TESTING} || $ENV{RELEASE_TESTING} ) {
+if ( DBICTest::RunMode->is_plain ) {
   plan( skip_all => "Author tests not required for installation" );
 }
 
@@ -113,9 +113,10 @@ my $exceptions = {
 
 # test some specific components whose parents are exempt below
     'DBIx::Class::Relationship::Base'               => {},
+    'DBIx::Class::SQLMaker::LimitDialects'          => {},
 
 # internals
-    'DBIx::Class::SQLAHacks*'                       => { skip => 1 },
+    'DBIx::Class::SQLMaker*'                        => { skip => 1 },
     'DBIx::Class::Storage::DBI*'                    => { skip => 1 },
     'SQL::Translator::*'                            => { skip => 1 },
 

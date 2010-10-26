@@ -17,6 +17,8 @@ GETTING HELP/SUPPORT
 
     *   git: <git://git.shadowcat.co.uk/dbsrgits/DBIx-Class.git>
 
+    *   twitter <http://www.twitter.com/dbix_class>
+
 SYNOPSIS
     Create a schema class called MyDB/Schema.pm:
 
@@ -167,11 +169,15 @@ CONTRIBUTORS
 
     Alexander Keusch <cpan@keusch.at>
 
+    amiri: Amiri Barksdale <amiri@metalabel.com>
+
     amoore: Andrew Moore <amoore@cpan.org>
 
     andyg: Andy Grundman <andy@hybridized.org>
 
     ank: Andres Kievsky
+
+    arc: Aaron Crane <arc@cpan.org>
 
     arcanez: Justin Hunter <justin.d.hunter@gmail.com>
 
@@ -283,9 +289,13 @@ CONTRIBUTORS
 
     plu: Johannes Plunien <plu@cpan.org>
 
+    Possum: Daniel LeWarne <possum@cpan.org>
+
     quicksilver: Jules Bean
 
     rafl: Florian Ragwitz <rafl@debian.org>
+
+    rainboxx: Matthias Dietrich <perl@rb.ly>
 
     rbo: Robert Bohne <rbo@cpan.org>
 
@@ -333,9 +343,9 @@ CONTRIBUTORS
 
     wreis: Wallace Reis <wreis@cpan.org>
 
-    zamolxes: Bogdan Lucaciu <bogdan@wiz.ro>
+    yrlnry: Mark Jason Dominus <mjd@plover.com>
 
-    Possum: Daniel LeWarne <possum@cpan.org>
+    zamolxes: Bogdan Lucaciu <bogdan@wiz.ro>
 
 COPYRIGHT
     Copyright (c) 2005 - 2010 the DBIx::Class "AUTHOR" and "CONTRIBUTORS" as

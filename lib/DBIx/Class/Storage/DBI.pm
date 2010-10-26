@@ -7,7 +7,7 @@ use warnings;
 use base qw/DBIx::Class::Storage::DBIHacks DBIx::Class::Storage/;
 use mro 'c3';
 
-use Carp::Clan qw/^DBIx::Class/;
+use Carp::Clan qw/^DBIx::Class|^Try::Tiny/;
 use DBI;
 use DBIx::Class::Storage::DBI::Cursor;
 use DBIx::Class::Storage::Statistics;
@@ -18,9 +18,16 @@ use Try::Tiny;
 use File::Path 'make_path';
 use namespace::clean;
 
+
+# default cursor class, overridable in connect_info attributes
+__PACKAGE__->cursor_class('DBIx::Class::Storage::DBI::Cursor');
+
+__PACKAGE__->mk_group_accessors('inherited' => qw/sql_maker_class sql_limit_dialect/);
+__PACKAGE__->sql_maker_class('DBIx::Class::SQLMaker');
+
 __PACKAGE__->mk_group_accessors('simple' => qw/
   _connect_info _dbi_connect_info _dbic_connect_attributes _driver_determined
-  _dbh _server_info_hash _conn_pid _conn_tid _sql_maker _sql_maker_opts
+  _dbh _dbh_details _conn_pid _conn_tid _sql_maker _sql_maker_opts
   transaction_depth _dbh_autocommit  savepoints
 /);
 
@@ -33,17 +40,31 @@ my @storage_options = qw/
 __PACKAGE__->mk_group_accessors('simple' => @storage_options);
 
 
-# default cursor class, overridable in connect_info attributes
-__PACKAGE__->cursor_class('DBIx::Class::Storage::DBI::Cursor');
+# capability definitions, using a 2-tiered accessor system
+# The rationale is:
+#
+# A driver/user may define _use_X, which blindly without any checks says:
+# "(do not) use this capability", (use_dbms_capability is an "inherited"
+# type accessor)
+#
+# If _use_X is undef, _supports_X is then queried. This is a "simple" style
+# accessor, which in turn calls _determine_supports_X, and stores the return
+# in a special slot on the storage object, which is wiped every time a $dbh
+# reconnection takes place (it is not guaranteed that upon reconnection we
+# will get the same rdbms version). _determine_supports_X does not need to
+# exist on a driver, as we ->can for it before calling.
 
-__PACKAGE__->mk_group_accessors('inherited' => qw/
-  sql_maker_class
-  _supports_insert_returning
-/);
-__PACKAGE__->sql_maker_class('DBIx::Class::SQLAHacks');
+my @capabilities = (qw/insert_returning placeholders typeless_placeholders/);
+__PACKAGE__->mk_group_accessors( dbms_capability => map { "_supports_$_" } @capabilities );
+__PACKAGE__->mk_group_accessors( use_dbms_capability => map { "_use_$_" } @capabilities );
+
 
 # Each of these methods need _determine_driver called before itself
 # in order to function reliably. This is a purely DRY optimization
+#
+# get_(use)_dbms_capability need to be called on the correct Storage
+# class, as _use_X may be hardcoded class-wide, and _supports_X calls
+# _determine_supports_X which obv. needs a correct driver as well
 my @rdbms_specific_methods = qw/
   deployment_statements
   sqlt_type
@@ -57,21 +78,33 @@ my @rdbms_specific_methods = qw/
   delete
   select
   select_single
+
+  get_use_dbms_capability
+  get_dbms_capability
+
+  _server_info
+  _get_server_version
 /;
 
 for my $meth (@rdbms_specific_methods) {
 
   my $orig = __PACKAGE__->can ($meth)
-    or next;
+    or die "$meth is not a ::Storage::DBI method!";
 
   no strict qw/refs/;
   no warnings qw/redefine/;
   *{__PACKAGE__ ."::$meth"} = subname $meth => sub {
-    if (not $_[0]->_driver_determined) {
+    if (not $_[0]->_driver_determined and not $_[0]->{_in_determine_driver}) {
       $_[0]->_determine_driver;
-      goto $_[0]->can($meth);
+
+      # This for some reason crashes and burns on perl 5.8.1
+      # IFF the method ends up throwing an exception
+      #goto $_[0]->can ($meth);
+
+      my $cref = $_[0]->can ($meth);
+      goto $cref;
     }
-    $orig->(@_);
+    goto $orig;
   };
 }
 
@@ -113,6 +146,7 @@ sub new {
 
   $new->transaction_depth(0);
   $new->_sql_maker_opts({});
+  $new->_dbh_details({});
   $new->{savepoints} = [];
   $new->{_in_dbh_do} = 0;
   $new->{_dbh_gen} = 0;
@@ -153,17 +187,8 @@ sub new {
 sub DESTROY {
   my $self = shift;
 
-  # destroy just the object if not native to this process/thread
-  $self->_preserve_foreign_dbh;
-
-  # some databases need this to stop spewing warnings
-  if (my $dbh = $self->_dbh) {
-    try {
-      %{ $dbh->{CachedKids} } = ();
-      $dbh->disconnect;
-    };
-  }
-
+  # some databases spew warnings on implicit disconnect
+  local $SIG{__WARN__} = sub {};
   $self->_dbh(undef);
 }
 
@@ -422,14 +447,13 @@ statement handles via L<DBI/prepare_cached>.
 
 =item limit_dialect
 
-Sets the limit dialect. This is useful for JDBC-bridge among others
-where the remote SQL-dialect cannot be determined by the name of the
-driver alone. See also L<SQL::Abstract::Limit>.
+Sets a specific SQL::Abstract::Limit-style limit dialect, overriding the
+default L</sql_limit_dialect> setting of the storage (if any). For a list
+of available limit dialects see L<DBIx::Class::SQLMaker::LimitDialects>.
 
 =item quote_char
 
-Specifies what characters to use to quote table and column names. If
-you use this you will want to specify L</name_sep> as well.
+Specifies what characters to use to quote table and column names.
 
 C<quote_char> expects either a single character, in which case is it
 is placed on either side of the table/column name, or an arrayref of length
@@ -440,14 +464,9 @@ SQL Server you should use C<< quote_char => [qw/[ ]/] >>.
 
 =item name_sep
 
-This only needs to be used in conjunction with C<quote_char>, and is used to
+This parameter is only useful in conjunction with C<quote_char>, and is used to
 specify the character that separates elements (schemas, tables, columns) from
-each other. In most cases this is simply a C<.>.
-
-The consequences of not supplying this value is that L<SQL::Abstract>
-will assume DBIx::Class' uses of aliases to be complete column
-names. The output will look like I<"me.name"> when it should actually
-be I<"me"."name">.
+each other. If unspecified it defaults to the most commonly used C<.>.
 
 =item unsafe
 
@@ -500,7 +519,7 @@ L<DBIx::Class::Schema/connect>
       'postgres',
       'my_pg_password',
       { AutoCommit => 1 },
-      { quote_char => q{"}, name_sep => q{.} },
+      { quote_char => q{"} },
     ]
   );
 
@@ -759,8 +778,6 @@ sub txn_do {
   ref $coderef eq 'CODE' or $self->throw_exception
     ('$coderef must be a CODE reference');
 
-  return $coderef->(@_) if $self->{transaction_depth} && ! $self->auto_savepoint;
-
   local $self->{_in_dbh_do} = 1;
 
   my @result;
@@ -774,9 +791,8 @@ sub txn_do {
     my $args = \@_;
 
     try {
-      $self->_get_dbh;
-
       $self->txn_begin;
+      my $txn_start_depth = $self->transaction_depth;
       if($want_array) {
           @result = $coderef->(@$args);
       }
@@ -786,14 +802,22 @@ sub txn_do {
       else {
           $coderef->(@$args);
       }
-      $self->txn_commit;
+
+      my $delta_txn = $txn_start_depth - $self->transaction_depth;
+      if ($delta_txn == 0) {
+        $self->txn_commit;
+      }
+      elsif ($delta_txn != 1) {
+        # an off-by-one would mean we fired a rollback
+        carp "Unexpected reduction of transaction depth by $delta_txn after execution of $coderef";
+      }
     } catch {
       $exception = $_;
     };
 
     if(! defined $exception) { return $want_array ? @result : $result[0] }
 
-    if($tried++ || $self->connected) {
+    if($self->transaction_depth > 1 || $tried++ || $self->connected) {
       my $rollback_exception;
       try { $self->txn_rollback } catch { $rollback_exception = shift };
       if(defined $rollback_exception) {
@@ -812,7 +836,7 @@ sub txn_do {
     # We were not connected, and was first try - reconnect and retry
     # via the while loop
     carp "Retrying $coderef after catching disconnected exception: $exception"
-      if $ENV{DBIC_DBIRETRY_DEBUG};
+      if $ENV{DBIC_TXNRETRY_DEBUG};
     $self->_populate_dbh;
   }
 }
@@ -947,23 +971,38 @@ sub _get_dbh {
   return $self->_dbh;
 }
 
-sub _sql_maker_args {
-    my ($self) = @_;
-
-    return (
-      bindtype=>'columns',
-      array_datatypes => 1,
-      limit_dialect => $self->_get_dbh,
-      %{$self->_sql_maker_opts}
-    );
-}
-
 sub sql_maker {
   my ($self) = @_;
   unless ($self->_sql_maker) {
     my $sql_maker_class = $self->sql_maker_class;
     $self->ensure_class_loaded ($sql_maker_class);
-    $self->_sql_maker($sql_maker_class->new( $self->_sql_maker_args ));
+
+    my %opts = %{$self->_sql_maker_opts||{}};
+    my $dialect =
+      $opts{limit_dialect}
+        ||
+      $self->sql_limit_dialect
+        ||
+      do {
+        my $s_class = (ref $self) || $self;
+        carp (
+          "Your storage class ($s_class) does not set sql_limit_dialect and you "
+        . 'have not supplied an explicit limit_dialect in your connection_info. '
+        . 'DBIC will attempt to use the GenericSubQ dialect, which works on most '
+        . 'databases but can be (and often is) painfully slow.'
+        );
+
+        'GenericSubQ';
+      }
+    ;
+
+    $self->_sql_maker($sql_maker_class->new(
+      bindtype=>'columns',
+      array_datatypes => 1,
+      limit_dialect => $dialect,
+      name_sep => '.',
+      %opts,
+    ));
   }
   return $self->_sql_maker;
 }
@@ -977,7 +1016,8 @@ sub _populate_dbh {
 
   my @info = @{$self->_dbi_connect_info || []};
   $self->_dbh(undef); # in case ->connected failed we might get sent here
-  $self->_server_info_hash (undef);
+  $self->_dbh_details({}); # reset everything we know
+
   $self->_dbh($self->_connect(@info));
 
   $self->_conn_pid($$);
@@ -1002,17 +1042,57 @@ sub _run_connection_actions {
   $self->_do_connection_actions(connect_call_ => $_) for @actions;
 }
 
+
+
+sub set_use_dbms_capability {
+  $_[0]->set_inherited ($_[1], $_[2]);
+}
+
+sub get_use_dbms_capability {
+  my ($self, $capname) = @_;
+
+  my $use = $self->get_inherited ($capname);
+  return defined $use
+    ? $use
+    : do { $capname =~ s/^_use_/_supports_/; $self->get_dbms_capability ($capname) }
+  ;
+}
+
+sub set_dbms_capability {
+  $_[0]->_dbh_details->{capability}{$_[1]} = $_[2];
+}
+
+sub get_dbms_capability {
+  my ($self, $capname) = @_;
+
+  my $cap = $self->_dbh_details->{capability}{$capname};
+
+  unless (defined $cap) {
+    if (my $meth = $self->can ("_determine$capname")) {
+      $cap = $self->$meth ? 1 : 0;
+    }
+    else {
+      $cap = 0;
+    }
+
+    $self->set_dbms_capability ($capname, $cap);
+  }
+
+  return $cap;
+}
+
 sub _server_info {
   my $self = shift;
 
-  unless ($self->_server_info_hash) {
+  my $info;
+  unless ($info = $self->_dbh_details->{info}) {
 
-    my %info;
+    $info = {};
 
     my $server_version = try { $self->_get_server_version };
 
     if (defined $server_version) {
-      $info{dbms_version} = $server_version;
+      $info->{dbms_version} = $server_version;
 
       my ($numeric_version) = $server_version =~ /^([\d\.]+)/;
       my @verparts = split (/\./, $numeric_version);
@@ -1030,14 +1110,14 @@ sub _server_info {
         }
         push @use_parts, 0 while @use_parts < 3;
 
-        $info{normalized_dbms_version} = sprintf "%d.%03d%03d", @use_parts;
+        $info->{normalized_dbms_version} = sprintf "%d.%03d%03d", @use_parts;
       }
     }
 
-    $self->_server_info_hash(\%info);
+    $self->_dbh_details->{info} = $info;
   }
 
-  return $self->_server_info_hash
+  return $info;
 }
 
 sub _get_server_version {
@@ -1166,9 +1246,7 @@ sub _connect {
     $DBI::connect_via = 'connect';
   }
 
-  # FIXME - this should have been Try::Tiny, but triggers a leak-bug in perl(!)
-  # related to coderef refcounting. A failing test has been submitted to T::T
-  my $connect_ok = eval {
+  try {
     if(ref $info[0] eq 'CODE') {
        $dbh = $info[0]->();
     }
@@ -1181,32 +1259,37 @@ sub _connect {
     }
 
     unless ($self->unsafe) {
-      my $weak_self = $self;
-      weaken $weak_self;
-      $dbh->{HandleError} = sub {
+
+      # this odd anonymous coderef dereference is in fact really
+      # necessary to avoid the unwanted effect described in perl5
+      # RT#75792
+      sub {
+        my $weak_self = $_[0];
+        weaken $weak_self;
+
+        $_[1]->{HandleError} = sub {
           if ($weak_self) {
             $weak_self->throw_exception("DBI Exception: $_[0]");
           }
           else {
             # the handler may be invoked by something totally out of
             # the scope of DBIC
-            croak ("DBI Exception: $_[0]");
+            croak ("DBI Exception (unhandled by DBIC, ::Schema GCed): $_[0]");
           }
-      };
+        };
+      }->($self, $dbh);
+
       $dbh->{ShowErrorStatement} = 1;
       $dbh->{RaiseError} = 1;
       $dbh->{PrintError} = 0;
     }
-
-    1;
-  };
-
-  my $possible_err = $@;
-  $DBI::connect_via = $old_connect_via if $old_connect_via;
-
-  unless ($connect_ok) {
-    $self->throw_exception("DBI Connection failed: $possible_err")
   }
+  catch {
+    $self->throw_exception("DBI Connection failed: $_")
+  }
+  finally {
+    $DBI::connect_via = $old_connect_via if $old_connect_via;
+  };
 
   $self->_dbh_autocommit($dbh->{AutoCommit});
   $dbh;
@@ -1292,9 +1375,8 @@ sub svp_rollback {
 }
 
 sub _svp_generate_name {
-    my ($self) = @_;
-
-    return 'savepoint_'.scalar(@{ $self->{'savepoints'} });
+  my ($self) = @_;
+  return 'savepoint_'.scalar(@{ $self->{'savepoints'} });
 }
 
 sub txn_begin {
@@ -1302,9 +1384,18 @@ sub txn_begin {
 
   # this means we have not yet connected and do not know the AC status
   # (e.g. coderef $dbh)
-  $self->ensure_connected if (! defined $self->_dbh_autocommit);
+  if (! defined $self->_dbh_autocommit) {
+    $self->ensure_connected;
+  }
+  # otherwise re-connect on pid changes, so
+  # that the txn_depth is adjusted properly
+  # the lightweight _get_dbh is good enoug here
+  # (only superficial handle check, no pings)
+  else {
+    $self->_get_dbh;
+  }
 
-  if($self->{transaction_depth} == 0) {
+  if($self->transaction_depth == 0) {
     $self->debugobj->txn_begin()
       if $self->debug;
     $self->_dbh_begin_work;
@@ -1343,6 +1434,9 @@ sub txn_commit {
     $self->{transaction_depth}--;
     $self->svp_release
       if $self->auto_savepoint;
+  }
+  else {
+    $self->throw_exception( 'Refusing to commit without a started transaction' );
   }
 }
 
@@ -1631,7 +1725,7 @@ sub insert_bulk {
   # scope guard
   my $guard = $self->txn_scope_guard;
 
-  $self->_query_start( $sql, ['__BULK__'] );
+  $self->_query_start( $sql, [ dummy => '__BULK_INSERT__' ] );
   my $sth = $self->sth($sql);
   my $rv = do {
     if ($empty_bind) {
@@ -1644,7 +1738,7 @@ sub insert_bulk {
     }
   };
 
-  $self->_query_end( $sql, ['__BULK__'] );
+  $self->_query_end( $sql, [ dummy => '__BULK_INSERT__' ] );
 
   $guard->commit;
 
@@ -1689,15 +1783,14 @@ sub _execute_array {
   }
   catch {
     $err = shift;
+  };
+
+  # Statement must finish even if there was an exception.
+  try {
+    $sth->finish
   }
-  finally {
-    # Statement must finish even if there was an exception.
-    try {
-      $sth->finish
-    }
-    catch {
-      $err = shift unless defined $err
-    };
+  catch {
+    $err = shift unless defined $err
   };
 
   $err = $sth->errstr
@@ -1935,12 +2028,19 @@ sub _select_args {
     }
   }
 
-  # adjust limits
-  if (defined $attrs->{rows}) {
-    $self->throw_exception("rows attribute must be positive if present")
-      unless $attrs->{rows} > 0;
+  # Sanity check the attributes (SQLMaker does it too, but
+  # in case of a software_limit we'll never reach there)
+  if (defined $attrs->{offset}) {
+    $self->throw_exception('A supplied offset attribute must be a non-negative integer')
+      if ( $attrs->{offset} =~ /\D/ or $attrs->{offset} < 0 );
   }
-  elsif (defined $attrs->{offset}) {
+  $attrs->{offset} ||= 0;
+
+  if (defined $attrs->{rows}) {
+    $self->throw_exception("The rows attribute must be a positive integer if present")
+      if ( $attrs->{rows} =~ /\D/ or $attrs->{rows} <= 0 );
+  }
+  elsif ($attrs->{offset}) {
     # MySQL actually recommends this approach.  I cringe.
     $attrs->{rows} = $sql_maker->__max_int;
   }
@@ -2040,6 +2140,13 @@ sub select_single {
   $sth->finish();
   return @row;
 }
+
+=head2 sql_limit_dialect
+
+This is an accessor for the default SQL limit dialect used by a particular
+storage driver. Can be overriden by supplying an explicit L</limit_dialect>
+to L<DBIx::Class::Schema/connect>. For a list of available limit dialects
+see L<DBIx::Class::SQLMaker::LimitDialects>.
 
 =head2 sth
 
@@ -2192,7 +2299,7 @@ sub _native_data_type {
 }
 
 # Check if placeholders are supported at all
-sub _placeholders_supported {
+sub _determine_supports_placeholders {
   my $self = shift;
   my $dbh  = $self->_get_dbh;
 
@@ -2211,7 +2318,7 @@ sub _placeholders_supported {
 
 # Check if placeholders bound to non-string types throw exceptions
 #
-sub _typeless_placeholders_supported {
+sub _determine_supports_typeless_placeholders {
   my $self = shift;
   my $dbh  = $self->_get_dbh;
 

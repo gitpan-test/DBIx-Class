@@ -1669,7 +1669,8 @@ brackets, or a C<"> or C<'>:
 
 Check the documentation of your database for the correct quote
 characters to use. C<name_sep> needs to be set to allow the SQL
-generator to put the quotes the correct place.
+generator to put the quotes the correct place, and defaults to
+C<.> if not supplied.
 
 In most cases you should set these as part of the arguments passed to
 L<DBIx::Class::Schema/connect>:
@@ -1694,24 +1695,6 @@ this, you can also overload the C<connection> method for your schema class:
      $rv->storage->sql_maker->name_sep('.');
      return $rv;
  }
-
-=head2 Setting limit dialect for SQL::Abstract::Limit
-
-In some cases, SQL::Abstract::Limit cannot determine the dialect of
-the remote SQL server by looking at the database handle. This is a
-common problem when using the DBD::JDBC, since the DBD-driver only
-know that in has a Java-driver available, not which JDBC driver the
-Java component has loaded.  This specifically sets the limit_dialect
-to Microsoft SQL-server (See more names in SQL::Abstract::Limit
--documentation.
-
-  __PACKAGE__->storage->sql_maker->limit_dialect('mssql');
-
-The JDBC bridge is one way of getting access to a MSSQL server from a platform
-that Microsoft doesn't deliver native client libraries for. (e.g. Linux)
-
-The limit dialect can also be set at connect time by specifying a
-C<limit_dialect> key in the final hash as shown above.
 
 =head2 Working with PostgreSQL array types
 
@@ -1825,9 +1808,9 @@ C<unicode>).
 =head2 Easy migration from class-based to schema-based setup
 
 You want to start using the schema-based approach to L<DBIx::Class>
-(see L<SchemaIntro.pod>), but have an established class-based setup with lots
-of existing classes that you don't want to move by hand. Try this nifty script
-instead:
+(see L<DBIx::Class::Manual::Intro/Setting it up manually>), but have an
+established class-based setup with lots of existing classes that you don't
+want to move by hand. Try this nifty script instead:
 
   use MyDB;
   use SQL::Translator;
@@ -1895,7 +1878,7 @@ just looking for this.
 For example, say that you have three columns, C<id>, C<number>, and
 C<squared>.  You would like to make changes to C<number> and have
 C<squared> be automagically set to the value of C<number> squared.
-You can accomplish this by overriding C<store_column>:
+You can accomplish this by overriding C<store_column> in your L<Result class|DBIx::Class::Manual::Glossary/Result class>:
 
   sub store_column {
     my ( $self, $name, $value ) = @_;
@@ -1907,6 +1890,10 @@ You can accomplish this by overriding C<store_column>:
 
 Note that the hard work is done by the call to C<next::method>, which
 redispatches your call to store_column in the superclass(es).
+
+Generally, if this is a calculation your database can easily do, try
+and avoid storing the calculated value, it is safer to calculate when
+needed, than rely on the data being in sync.
 
 =head2 Automatically creating related objects
 

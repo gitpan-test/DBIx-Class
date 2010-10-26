@@ -308,14 +308,12 @@ has 'write_handler' => (
 
     backup
     is_datatype_numeric
-    _supports_insert_returning
     _count_select
     _subq_update_delete
     svp_rollback
     svp_begin
     svp_release
     relname_to_table_alias
-    _straight_join_to_node
     _dbh_last_insert_id
     _fix_bind_params
     _default_dbi_connect_attributes
@@ -329,7 +327,6 @@ has 'write_handler' => (
     _dbh
     _select_args
     _dbh_execute_array
-    _sql_maker_args
     _sql_maker
     _query_start
     _sqlt_version_error
@@ -344,12 +341,10 @@ has 'write_handler' => (
     _parse_connect_do
     _dbh_commit
     _execute_array
-    _placeholders_supported
     savepoints
     _sqlt_minimum_version
     _sql_maker_opts
     _conn_pid
-    _typeless_placeholders_supported
     _conn_tid
     _dbh_autocommit
     _native_data_type
@@ -361,14 +356,13 @@ has 'write_handler' => (
     _resolve_column_info
     _prune_unused_joins
     _strip_cond_qualifiers
-    _parse_order_by
+    _extract_order_columns
     _resolve_aliastypes_from_select_args
     _execute
     _do_query
     _dbh_sth
     _dbh_execute
     _prefetch_insert_auto_nextvals
-    _server_info_hash
   /],
 );
 
@@ -377,6 +371,28 @@ my @unimplemented = qw(
   _preserve_foreign_dbh
   _verify_pid
   _verify_tid
+
+  get_use_dbms_capability
+  set_use_dbms_capability
+  get_dbms_capability
+  set_dbms_capability
+
+  sql_limit_dialect
+
+  _dbh_details
+
+  _use_insert_returning
+  _supports_insert_returning
+
+  _use_placeholders
+  _supports_placeholders
+  _determine_supports_placeholders
+
+  _use_typeless_placeholders
+  _supports_typeless_placeholders
+  _determine_supports_typeless_placeholders
+
+  _inner_join_to_node
 );
 
 for my $method (@unimplemented) {
@@ -738,7 +754,7 @@ sub limit_dialect {
   foreach my $source ($self->all_storages) {
     $source->limit_dialect(@_);
   }
-  return $self->master->quote_char;
+  return $self->master->limit_dialect;
 }
 
 =head2 quote_char
@@ -1018,28 +1034,27 @@ sub _ping {
   return min map $_->_ping, $self->all_storages;
 }
 
+# not using the normalized_version, because we want to preserve
+# version numbers much longer than the conventional xxx.yyyzzz
 my $numify_ver = sub {
   my $ver = shift;
   my @numparts = split /\D+/, $ver;
-  my $format = '%d.' . (join '', ('%05d') x (@numparts - 1));
+  my $format = '%d.' . (join '', ('%06d') x (@numparts - 1));
 
   return sprintf $format, @numparts;
 };
-
 sub _server_info {
   my $self = shift;
 
-  if (not $self->_server_info_hash) {
-    my $min_version_info = (
+  if (not $self->_dbh_details->{info}) {
+    $self->_dbh_details->{info} = (
       reduce { $a->[0] < $b->[0] ? $a : $b }
       map [ $numify_ver->($_->{dbms_version}), $_ ],
       map $_->_server_info, $self->all_storages
     )->[1];
-
-    $self->_server_info_hash($min_version_info); # on master
   }
 
-  return $self->_server_info_hash;
+  return $self->next::method;
 }
 
 sub _get_server_version {

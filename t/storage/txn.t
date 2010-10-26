@@ -99,6 +99,145 @@ my $code = sub {
   is( $schema->storage->{transaction_depth}, 0, 'txn depth has been reset');
 }
 
+# test nested txn_begin on fresh connection
+{
+  my $schema = DBICTest->init_schema(sqlite_use_file => 1, no_deploy => 1);
+  $schema->storage->ensure_connected;
+
+  is ($schema->storage->transaction_depth, 0, 'Start outside txn');
+
+  my @pids;
+  for my $action (
+    sub {
+      my $s = shift;
+      die "$$ starts in txn!" if $s->storage->transaction_depth != 0;
+      $s->txn_do ( sub {
+        die "$$ not in txn!" if $s->storage->transaction_depth == 0;
+        $s->storage->dbh->do('SELECT 1') } 
+      );
+      die "$$ did not finish txn!" if $s->storage->transaction_depth != 0;
+    },
+    sub {
+      $_[0]->txn_begin;
+      $_[0]->storage->dbh->do('SELECT 1');
+      $_[0]->txn_commit
+    },
+    sub {
+      my $guard = $_[0]->txn_scope_guard;
+      $_[0]->storage->dbh->do('SELECT 1');
+      $guard->commit
+    },
+  ) {
+    push @pids, fork();
+    die "Unable to fork: $!\n"
+      if ! defined $pids[-1];
+
+    if ($pids[-1]) {
+      next;
+    }
+
+    $action->($schema);
+    exit 0;
+  }
+
+  is ($schema->storage->transaction_depth, 0, 'Parent still outside txn');
+
+  for my $pid (@pids) {
+    waitpid ($pid, 0);
+    ok (! $?, "Child $pid exit ok");
+  }
+}
+
+# Test txn_do/scope_guard with forking: outer txn_do
+{
+  my $schema = DBICTest->init_schema( sqlite_use_file => 1 );
+
+  for my $pass (1..2) {
+
+    # do something trying to destabilize the depth count
+    for (1..2) {
+      eval {
+        my $guard = $schema->txn_scope_guard;
+        $schema->txn_do( sub { die } );
+      };
+      $schema->txn_do( sub {
+        ok ($schema->storage->_dbh->do ('SELECT 1'), "Query after exceptions ok ($_)");
+      });
+    }
+
+    for my $pid ( $schema->txn_do ( sub { _forking_action ($schema) } ) ) {
+      waitpid ($pid, 0);
+      ok (! $?, "Child $pid exit ok (pass $pass)");
+      isa_ok ($schema->resultset ('Artist')->find ({ name => "forking action $pid" }), 'DBIx::Class::Row');
+    }
+  }
+}
+
+# same test with outer guard
+{
+  my $schema = DBICTest->init_schema( sqlite_use_file => 1 );
+
+  for my $pass (1..2) {
+
+    # do something trying to destabilize the depth count
+    for (1..2) {
+      eval {
+        my $guard = $schema->txn_scope_guard;
+        $schema->txn_do( sub { die } );
+      };
+      $schema->txn_do( sub {
+        ok ($schema->storage->_dbh->do ('SELECT 1'), "Query after exceptions ok ($_)");
+      });
+    }
+
+    my @pids;
+    my $guard = $schema->txn_scope_guard;
+    _forking_action ($schema);
+    $guard->commit;
+
+    for my $pid (@pids) {
+      waitpid ($pid, 0);
+      ok (! $?, "Child $pid exit ok (pass $pass)");
+      isa_ok ($schema->resultset ('Artist')->find ({ name => "forking action $pid" }), 'DBIx::Class::Row');
+    }
+  }
+}
+
+sub _forking_action {
+  my $schema = shift;
+
+  my @pids;
+  while (@pids < 5) {
+
+    push @pids, fork();
+    die "Unable to fork: $!\n"
+      if ! defined $pids[-1];
+
+    if ($pids[-1]) {
+      next;
+    }
+
+    if (@pids % 2) {
+      $schema->txn_do (sub {
+        my $depth = $schema->storage->transaction_depth;
+        die "$$(txn_do)unexpected txn depth $depth!" if $depth != 1;
+        $schema->resultset ('Artist')->create ({ name => "forking action $$"});
+      });
+    }
+    else {
+      my $guard = $schema->txn_scope_guard;
+      my $depth = $schema->storage->transaction_depth;
+      die "$$(scope_guard) unexpected txn depth $depth!" if $depth != 1;
+      $schema->resultset ('Artist')->create ({ name => "forking action $$"});
+      $guard->commit;
+    }
+
+    exit 0;
+  }
+
+  return @pids;
+}
+
 my $fail_code = sub {
   my ($artist) = @_;
   $artist->create_related('cds', {
@@ -184,13 +323,16 @@ my $fail_code = sub {
   })->first;
   ok(!defined($cd), q{deleted the failed txn's cd});
   $schema->storage->_dbh->rollback;
+
 }
 
 # reset schema object (the txn_rollback meddling screws it up)
-$schema = DBICTest->init_schema();
+undef $schema;
 
 # Test nested failed txn_do()
 {
+  my $schema = DBICTest->init_schema();
+
   is( $schema->storage->{transaction_depth}, 0, 'txn depth starts at 0');
 
   my $nested_fail_code = sub {
@@ -221,18 +363,16 @@ $schema = DBICTest->init_schema();
 
 # Grab a new schema to test txn before connect
 {
-    my $schema2 = DBICTest->init_schema(no_deploy => 1);
-    lives_ok (sub {
-        $schema2->txn_begin();
-        $schema2->txn_begin();
-    }, 'Pre-connection nested transactions.');
+  my $schema = DBICTest->init_schema(no_deploy => 1);
+  lives_ok (sub {
+    $schema->txn_begin();
+    $schema->txn_begin();
+  }, 'Pre-connection nested transactions.');
 
-    # although not connected DBI would still warn about rolling back at disconnect
-    $schema2->txn_rollback;
-    $schema2->txn_rollback;
-    $schema2->storage->disconnect;
+  # although not connected DBI would still warn about rolling back at disconnect
+  $schema->txn_rollback;
+  $schema->txn_rollback;
 }
-$schema->storage->disconnect;
 
 # Test txn_scope_guard
 {
@@ -240,10 +380,10 @@ $schema->storage->disconnect;
 
   is($schema->storage->transaction_depth, 0, "Correct transaction depth");
   my $artist_rs = $schema->resultset('Artist');
+
   my $fn = __FILE__;
   throws_ok {
    my $guard = $schema->txn_scope_guard;
-
 
     $artist_rs->create({
       name => 'Death Cab for Cutie',
@@ -263,22 +403,28 @@ $schema->storage->disconnect;
   ok(!$artist_rs->find({name => 'Death Cab for Cutie'}), "Artist not created");
 
   lives_ok (sub {
+
+    # this weird assignment is to stop perl <= 5.8.9 leaking $schema on nested sub{}s
+    my $s = $schema;
+
     warnings_exist ( sub {
       # The 0 arg says don't die, just let the scope guard go out of scope
       # forcing a txn_rollback to happen
-      outer($schema, 0);
+      outer($s, 0);
     }, qr/A DBIx::Class::Storage::TxnScopeGuard went out of scope without explicit commit or error. Rolling back./, 'Out of scope warning detected');
+
     ok(!$artist_rs->find({name => 'Death Cab for Cutie'}), "Artist not created");
+
   }, 'rollback successful withot exception');
 
   sub outer {
-    my ($schema) = @_;
+    my ($schema, $fatal) = @_;
 
     my $guard = $schema->txn_scope_guard;
     $schema->resultset('Artist')->create({
       name => 'Death Cab for Cutie',
     });
-    inner(@_);
+    inner($schema, $fatal);
   }
 
   sub inner {
@@ -287,7 +433,7 @@ $schema->storage->disconnect;
     my $inner_guard = $schema->txn_scope_guard;
     is($schema->storage->transaction_depth, 2, "Correct transaction depth");
 
-    my $artist = $artist_rs->find({ name => 'Death Cab for Cutie' });
+    my $artist = $schema->resultset('Artist')->find({ name => 'Death Cab for Cutie' });
 
     eval {
       $artist->cds->create({
@@ -309,12 +455,20 @@ $schema->storage->disconnect;
 
 # make sure the guard does not eat exceptions
 {
-  my $schema = DBICTest->init_schema();
+  my $schema = DBICTest->init_schema;
+
+  no strict 'refs';
+  no warnings 'redefine';
+  local *{DBIx::Class::Storage::DBI::txn_rollback} = sub { die 'die die my darling' };
+
   throws_ok (sub {
     my $guard = $schema->txn_scope_guard;
     $schema->resultset ('Artist')->create ({ name => 'bohhoo'});
 
-    $schema->storage->disconnect;  # this should freak out the guard rollback
+    # this should freak out the guard rollback
+    # but it won't work because DBD::SQLite is buggy
+    # instead just install a toxic rollback above
+    #$schema->storage->_dbh( $schema->storage->_dbh->clone );
 
     die 'Deliberate exception';
   }, qr/Deliberate exception.+Rollback failed/s);
@@ -324,14 +478,21 @@ $schema->storage->disconnect;
 {
   my $schema = DBICTest->init_schema();
 
-  # something is really confusing Test::Warn here, no time to debug
+  no strict 'refs';
+  no warnings 'redefine';
+  local *{DBIx::Class::Storage::DBI::txn_rollback} = sub { die 'die die my darling' };
+
+#The warn from within a DESTROY callback freaks out Test::Warn, do it old-school
 =begin
   warnings_exist (
     sub {
       my $guard = $schema->txn_scope_guard;
       $schema->resultset ('Artist')->create ({ name => 'bohhoo'});
 
-      $schema->storage->disconnect;  # this should freak out the guard rollback
+      # this should freak out the guard rollback
+      # but it won't work because DBD::SQLite is buggy
+      # instead just install a toxic rollback above
+      #$schema->storage->_dbh( $schema->storage->_dbh->clone );
     },
     [
       qr/A DBIx::Class::Storage::TxnScopeGuard went out of scope without explicit commit or error. Rolling back./,
@@ -341,6 +502,7 @@ $schema->storage->disconnect;
   );
 =cut
 
+# delete this once the above works properly (same test)
   my @want = (
     qr/A DBIx::Class::Storage::TxnScopeGuard went out of scope without explicit commit or error. Rolling back./,
     qr/\*+ ROLLBACK FAILED\!\!\! \*+/,
@@ -358,15 +520,13 @@ $schema->storage->disconnect;
   {
       my $guard = $schema->txn_scope_guard;
       $schema->resultset ('Artist')->create ({ name => 'bohhoo'});
-
-      $schema->storage->disconnect;  # this should freak out the guard rollback
   }
 
   is (@w, 2, 'Both expected warnings found');
 }
 
 # make sure AutoCommit => 0 on external handles behaves correctly with scope_guard
-{
+warnings_are {
   my $factory = DBICTest->init_schema (AutoCommit => 0);
   cmp_ok ($factory->resultset('CD')->count, '>', 0, 'Something to delete');
   my $dbh = $factory->storage->dbh;
@@ -374,18 +534,21 @@ $schema->storage->disconnect;
   ok (!$dbh->{AutoCommit}, 'AutoCommit is off on $dbh');
   my $schema = DBICTest::Schema->connect (sub { $dbh });
 
-
   lives_ok ( sub {
     my $guard = $schema->txn_scope_guard;
     $schema->resultset('CD')->delete;
     $guard->commit;
   }, 'No attempt to start a transaction with scope guard');
 
-  is ($schema->resultset('CD')->count, 0, 'Deletion successful');
-}
+  is ($schema->resultset('CD')->count, 0, 'Deletion successful in txn');
+
+  # this will commit the implicitly started txn
+  $dbh->commit;
+
+} [], 'No warnings on AutoCommit => 0 with txn_guard';
 
 # make sure AutoCommit => 0 on external handles behaves correctly with txn_do
-{
+warnings_are {
   my $factory = DBICTest->init_schema (AutoCommit => 0);
   cmp_ok ($factory->resultset('CD')->count, '>', 0, 'Something to delete');
   my $dbh = $factory->storage->dbh;
@@ -399,6 +562,10 @@ $schema->storage->disconnect;
   }, 'No attempt to start a atransaction with txn_do');
 
   is ($schema->resultset('CD')->count, 0, 'Deletion successful');
-}
+
+  # this will commit the implicitly started txn
+  $dbh->commit;
+
+} [], 'No warnings on AutoCommit => 0 with txn_do';
 
 done_testing;

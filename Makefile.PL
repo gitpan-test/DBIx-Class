@@ -1,7 +1,6 @@
-use inc::Module::Install 0.97;
+use inc::Module::Install 1.00;
 use strict;
 use warnings;
-use POSIX ();
 
 use 5.008001;
 
@@ -12,14 +11,26 @@ use lib "$FindBin::Bin/lib";
 use Config;
 $ENV{PERL5LIB} = join ($Config{path_sep}, @INC);
 
-use Getopt::Long qw/:config gnu_getopt bundling_override no_ignore_case pass_through/;
+use Getopt::Long ();
+
+my $getopt = Getopt::Long::Parser->new(
+  config => [qw/gnu_getopt bundling_override no_ignore_case pass_through/]
+);
 my $args = {
   skip_author_deps => undef,
 };
-GetOptions ($args, 'skip_author_deps');
+$getopt->getoptions($args, 'skip_author_deps');
 if (@ARGV) {
   warn "\nIgnoring unrecognized option(s): @ARGV\n\n";
 }
+
+# get cpanX --installdeps . to behave in a checkout (most users do not need
+# the deps for a full test suite run, and if they do - there's MI::AutoInstall
+# for that)
+##
+## DO NOT USE THIS HACK IN YOUR DISTS!!! (it makes #toolchain sad)
+##
+$Module::Install::AUTHOR = 0 if (grep { $ENV{"PERL5_${_}_IS_RUNNING"} } (qw/CPANM CPANPLUS CPAN/) );
 
 ###
 ### DO NOT ADD OPTIONAL DEPENDENCIES HERE, EVEN AS recommends()
@@ -31,20 +42,20 @@ perl_version '5.008001';
 all_from 'lib/DBIx/Class.pm';
 
 my $build_requires = {
-  'DBD::SQLite'              => '1.25',
+  'DBD::SQLite'              => '1.29',
 };
 
 my $test_requires = {
   'File::Temp'               => '0.22',
   'Test::Builder'            => '0.33',
-  'Test::Exception'          => '0',
+  'Test::Exception'          => '0.31',
   'Test::More'               => '0.92',
   'Test::Warn'               => '0.21',
 };
 
 my $runtime_requires = {
   'Carp::Clan'               => '6.0',
-  'Class::Accessor::Grouped' => '0.09003',
+  'Class::Accessor::Grouped' => '0.09008',
   'Class::C3::Componentised' => '1.0005',
   'Class::Inspector'         => '1.24',
   'Data::Page'               => '2.00',
@@ -53,9 +64,9 @@ my $runtime_requires = {
   'MRO::Compat'              => '0.09',
   'Module::Find'             => '0.06',
   'Path::Class'              => '0.18',
-  'SQL::Abstract'            => '1.67',
-  'SQL::Abstract::Limit'     => '0.13',
+  'SQL::Abstract'            => '1.68',
   'Sub::Name'                => '0.04',
+  'Variable::Magic'          => '0.44',
   'Data::Dumper::Concise'    => '1.000',
   'Scope::Guard'             => '0.03',
   'Context::Preserve'        => '0.01',
@@ -63,6 +74,7 @@ my $runtime_requires = {
   'namespace::clean'         => '0.14',
   'Math::BigInt'             => '1.89',
   'Math::Base36'             => '0.07',
+  'Config::Any'              => '0.20',
 };
 
 # this is so we can order requires alphabetically
@@ -101,7 +113,7 @@ EOW
 ******************************************************************************
 ***                                                                        ***
 *** AUTHOR MODE: all optional test dependencies converted to hard requires ***
-***      ( to disabled re-run Makefile.PL with --skip_author_deps )        ***
+***       ( to disable re-run Makefile.PL with --skip_author_deps )        ***
 ***                                                                        ***
 ******************************************************************************
 ******************************************************************************
@@ -155,7 +167,7 @@ if ($Module::Install::AUTHOR) {
 
   print "Regenerating Optional/Dependencies.pod\n";
   require DBIx::Class::Optional::Dependencies;
-  DBIx::Class::Optional::Dependencies->_gen_pod;
+  DBIx::Class::Optional::Dependencies->_gen_pod (Meta->version);
 
   # FIXME Disabled due to unsolved issues, ask theorbtwo
   #  require Module::Install::Pod::Inherit;
@@ -173,7 +185,7 @@ eval {
   recursive_author_tests (qw/xt/);
   1;
 } || do {
-  unless ($args->{skip_author_deps}) {
+  if ($Module::Install::AUTHOR && ! $args->{skip_author_deps}) {
     my $err = $@;
     eval { require Module::Install::AuthorTests }
       || die "\nYou need Module::Install::AuthorTests installed to run this Makefile.PL in author mode (or supply --skip_author_deps):\n\n$@\n";
@@ -214,18 +226,17 @@ resources 'IRC'         => 'irc://irc.perl.org/#dbix-class';
 resources 'license'     => 'http://dev.perl.org/licenses/';
 resources 'repository'  => 'git://git.shadowcat.co.uk/dbsrgits/DBIx-Class.git';
 resources 'MailingList' => 'http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class';
+resources 'bugtracker'  => 'http://rt.cpan.org/NoAuth/Bugs.html?Dist=DBIx-Class';
 
 # Deprecated/internal modules need no exposure
 no_index directory => $_ for (qw|
   lib/DBIx/Class/Admin
-  lib/DBIx/Class/SQLAHacks
   lib/DBIx/Class/PK/Auto
   lib/DBIx/Class/CDBICompat
 |);
 no_index package => $_ for (qw/
-  DBIx::Class::SQLAHacks DBIx::Class::Storage::DBIHacks
+  DBIx::Class::Storage::DBIHacks
 /);
-
 
 WriteAll();
 
@@ -260,7 +271,9 @@ if ($Module::Install::AUTHOR && ! $args->{skip_author_deps} ) {
   }
 
   if (keys %removed_build_requires) {
-    die join ("\n", "\n\nFATAL FAIL! It looks like some author dependencies made it to the META.yml:\n",
+    die join ("\n",
+      "\n\nFATAL FAIL! It looks like some author dependencies made it to the META.yml:",
+      "(most likely a broken Module::Install)\n",
       map { "\t$_" } (keys %removed_build_requires)
     ) . "\n\n";
   }

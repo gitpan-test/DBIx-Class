@@ -37,7 +37,6 @@ sub _prune_unused_joins {
   # {multiplying} joins can go
   delete $aliastypes->{multiplying} if $attrs->{group_by};
 
-
   my @newfrom = $from->[0]; # FROM head is always present
 
   my %need_joins = (map { %{$_||{}} } (values %$aliastypes) );
@@ -103,7 +102,11 @@ sub _adjust_select_args_for_complex_prefetch {
 
   # construct the inner $from for the subquery
   # we need to prune first, because this will determine if we need a group_by below
-  my $inner_from = $self->_prune_unused_joins ($from, $inner_select, $where, $inner_attrs);
+  # the fake group_by is so that the pruner throws away all non-selecting, non-restricting
+  # multijoins (since we def. do not care about those inside the subquery)
+  my $inner_from = $self->_prune_unused_joins ($from, $inner_select, $where, {
+    group_by => ['dummy'], %$inner_attrs,
+  });
 
   # if a multi-type join was needed in the subquery - add a group_by to simulate the
   # collapse in the subq
@@ -134,14 +137,13 @@ sub _adjust_select_args_for_complex_prefetch {
   # - it is part of the restrictions, in which case we need to collapse the outer
   #   result by tackling yet another group_by to the outside of the query
 
-  # normalize a copy of $from, so it will be easier to work with further
-  # down (i.e. promote the initial hashref to an AoH)
   $from = [ @$from ];
-  $from->[0] = [ $from->[0] ];
 
   # so first generate the outer_from, up to the substitution point
   my @outer_from;
   while (my $j = shift @$from) {
+    $j = [ $j ] unless ref $j eq 'ARRAY'; # promote the head-from to an AoH
+
     if ($j->[0]{-alias} eq $attrs->{alias}) { # time to swap
       push @outer_from, [
         $subq_joinspec,
@@ -218,7 +220,7 @@ sub _resolve_aliastypes_from_select_args {
 
     $alias_list->{$al} = $j;
     $aliases_by_type->{multiplying}{$al} = 1
-      unless $j->{-is_single};
+      if ref($_) eq 'ARRAY' and ! $j->{-is_single}; # not array == {from} head == can't be multiplying
   }
 
   # get a column to source/alias map (including unqualified ones)
@@ -226,21 +228,26 @@ sub _resolve_aliastypes_from_select_args {
 
   # set up a botched SQLA
   my $sql_maker = $self->sql_maker;
-  my $sep = quotemeta ($self->_sql_maker_opts->{name_sep} || '.');
 
-  my ($orig_lquote, $orig_rquote) = map { quotemeta $_ } (do {
-    if (ref $sql_maker->{quote_char} eq 'ARRAY') {
-      @{$sql_maker->{quote_char}}
-    }
-    else {
-      ($sql_maker->{quote_char} || '') x 2;
-    }
-  });
+  local $sql_maker->{having_bind};  # these are throw away results
 
-  local $sql_maker->{quote_char} = "\x00"; # so that we can regex away
+  # we can't scan properly without any quoting (\b doesn't cut it
+  # everywhere), so unless there is proper quoting set - use our
+  # own weird impossible character.
+  # Also in the case of no quoting, we need to explicitly disable
+  # name_sep, otherwise sorry nasty legacy syntax like
+  # { 'count(foo.id)' => { '>' => 3 } } will stop working >:(
+  local $sql_maker->{quote_char} = $sql_maker->{quote_char};
+  local $sql_maker->{name_sep} = $sql_maker->{name_sep};
+
+  unless (defined $sql_maker->{quote_char} and length $sql_maker->{quote_char}) {
+    $sql_maker->{quote_char} = "\x00";
+    $sql_maker->{name_sep} = '';
+  }
+
+  my ($lquote, $rquote, $sep) = map { quotemeta $_ } ($sql_maker->_quote_chars, $sql_maker->name_sep);
 
   # generate sql chunks
-  local $sql_maker->{having_bind};  # these are throw away results
   my $to_scan = {
     restricting => [
       $sql_maker->_recurse_where ($where),
@@ -249,7 +256,7 @@ sub _resolve_aliastypes_from_select_args {
       }),
     ],
     selecting => [
-      $self->_parse_order_by ($attrs->{order_by}, $sql_maker),
+      $self->_extract_order_columns ($attrs->{order_by}, $sql_maker),
       $sql_maker->_recurse_fields ($select),
     ],
   };
@@ -261,15 +268,10 @@ sub _resolve_aliastypes_from_select_args {
   # alias (should work even if they are in scalarrefs)
   for my $alias (keys %$alias_list) {
     my $al_re = qr/
-      \x00 $alias \x00 $sep
+      $lquote $alias $rquote $sep
         |
-      \b $alias $sep
+      \b $alias \.
     /x;
-
-    # add matching for possible quoted literal sql
-    $al_re = qr/ $al_re | $orig_lquote $alias $orig_rquote /x
-      if ($orig_lquote && $orig_rquote);
-
 
     for my $type (keys %$to_scan) {
       for my $piece (@{$to_scan->{$type}}) {
@@ -281,12 +283,9 @@ sub _resolve_aliastypes_from_select_args {
   # now loop through unqualified column names, and try to locate them within
   # the chunks
   for my $col (keys %$colinfo) {
-    next if $col =~ $sep;   # if column is qualified it was caught by the above
+    next if $col =~ / \. /x;   # if column is qualified it was caught by the above
 
-    my $col_re = qr/ \x00 $col \x00 /x;
-
-    $col_re = qr/ $col_re | $orig_lquote $col $orig_rquote /x
-      if ($orig_lquote && $orig_rquote);
+    my $col_re = qr/ $lquote $col $rquote /x;
 
     for my $type (keys %$to_scan) {
       for my $piece (@{$to_scan->{$type}}) {
@@ -361,9 +360,6 @@ sub _resolve_column_info {
   my ($self, $ident, $colnames) = @_;
   my ($alias2src, $root_alias) = $self->_resolve_ident_sources($ident);
 
-  my $sep = $self->_sql_maker_opts->{name_sep} || '.';
-  my $qsep = quotemeta $sep;
-
   my (%return, %seen_cols, @auto_colnames);
 
   # compile a global list of column names, to be able to properly
@@ -372,7 +368,7 @@ sub _resolve_column_info {
     my $rsrc = $alias2src->{$alias};
     for my $colname ($rsrc->columns) {
       push @{$seen_cols{$colname}}, $alias;
-      push @auto_colnames, "$alias$sep$colname" unless $colnames;
+      push @auto_colnames, "$alias.$colname" unless $colnames;
     }
   }
 
@@ -383,7 +379,7 @@ sub _resolve_column_info {
 
   COLUMN:
   foreach my $col (@$colnames) {
-    my ($alias, $colname) = $col =~ m/^ (?: ([^$qsep]+) $qsep)? (.+) $/x;
+    my ($alias, $colname) = $col =~ m/^ (?: ([^\.]+) \. )? (.+) $/x;
 
     unless ($alias) {
       # see if the column was seen exactly once (so we know which rsrc it came from)
@@ -421,7 +417,7 @@ sub _resolve_column_info {
 # the top of the stack, and if not - make sure the chain is inner-joined down
 # to the root.
 #
-sub _straight_join_to_node {
+sub _inner_join_to_node {
   my ($self, $from, $alias) = @_;
 
   # subqueries and other oddness are naturally not supported
@@ -524,8 +520,13 @@ sub _strip_cond_qualifiers {
     }
     else {
       foreach my $key (keys %$where) {
-        $key =~ /([^.]+)$/;
-        $cond->{$1} = $where->{$key};
+        if ($key eq '-or' && ref $where->{$key} eq 'ARRAY') {
+          $cond->{$key} = $self->_strip_cond_qualifiers($where->{$key});
+        }
+        else {
+          $key =~ /([^.]+)$/;
+          $cond->{$1} = $where->{$key};
+        }
       }
     }
   }
@@ -536,7 +537,7 @@ sub _strip_cond_qualifiers {
   return $cond;
 }
 
-sub _parse_order_by {
+sub _extract_order_columns {
   my ($self, $order_by, $sql_maker) = @_;
 
   my $parser = sub {

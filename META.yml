@@ -3,15 +3,17 @@ abstract: 'Extensible and flexible object <-> relational mapper.'
 author:
   - 'mst: Matt S. Trout <mst@shadowcatsystems.co.uk>'
 build_requires:
-  DBD::SQLite: 1.25
+  DBD::SQLite: 1.29
+  ExtUtils::MakeMaker: 6.42
   File::Temp: 0.22
   Test::Builder: 0.33
+  Test::Exception: 0.31
   Test::More: 0.92
   Test::Warn: 0.21
 configure_requires:
   ExtUtils::MakeMaker: 6.42
 distribution_type: module
-generated_by: 'Module::Install version 0.99'
+generated_by: 'Module::Install version 1.00'
 license: perl
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
@@ -24,17 +26,16 @@ no_index:
     - lib/DBIx/Class/Admin
     - lib/DBIx/Class/CDBICompat
     - lib/DBIx/Class/PK/Auto
-    - lib/DBIx/Class/SQLAHacks
     - t
     - xt
   package:
-    - DBIx::Class::SQLAHacks
     - DBIx::Class::Storage::DBIHacks
 requires:
   Carp::Clan: 6.0
-  Class::Accessor::Grouped: 0.09003
+  Class::Accessor::Grouped: 0.09008
   Class::C3::Componentised: 1.0005
   Class::Inspector: 1.24
+  Config::Any: 0.20
   Context::Preserve: 0.01
   DBI: 1.609
   Data::Dumper::Concise: 1.000
@@ -45,17 +46,18 @@ requires:
   Math::BigInt: 1.89
   Module::Find: 0.06
   Path::Class: 0.18
-  SQL::Abstract: 1.67
-  SQL::Abstract::Limit: 0.13
+  SQL::Abstract: 1.68
   Scope::Guard: 0.03
   Sub::Name: 0.04
   Try::Tiny: 0.04
+  Variable::Magic: 0.44
   namespace::clean: 0.14
   perl: 5.8.1
 resources:
   IRC: irc://irc.perl.org/#dbix-class
   MailingList: http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class
+  bugtracker: http://rt.cpan.org/NoAuth/Bugs.html?Dist=DBIx-Class
   homepage: http://www.dbix-class.org/
   license: http://dev.perl.org/licenses/
   repository: git://git.shadowcat.co.uk/dbsrgits/DBIx-Class.git
-version: 0.08123
+version: 0.08123_01

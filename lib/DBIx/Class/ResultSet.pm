@@ -10,7 +10,8 @@ use Storable;
 use DBIx::Class::ResultSetColumn;
 use DBIx::Class::ResultSourceHandle;
 use List::Util ();
-use Scalar::Util 'blessed';
+use Scalar::Util qw/blessed weaken/;
+use Try::Tiny;
 use namespace::clean;
 
 use overload
@@ -271,104 +272,94 @@ sub search_rs {
 
   # Special-case handling for (undef, undef).
   if ( @_ == 2 && !defined $_[1] && !defined $_[0] ) {
-    pop(@_); pop(@_);
+    @_ = ();
   }
 
-  my $attrs = {};
-  $attrs = pop(@_) if @_ > 1 and ref $_[$#_] eq 'HASH';
-  my $our_attrs = { %{$self->{attrs}} };
-  my $having = delete $our_attrs->{having};
-  my $where = delete $our_attrs->{where};
+  my $call_attrs = {};
+  $call_attrs = pop(@_) if @_ > 1 and ref $_[-1] eq 'HASH';
 
-  my $rows;
-
+  # see if we can keep the cache (no $rs changes)
+  my $cache;
   my %safe = (alias => 1, cache => 1);
-
-  unless (
-    (@_ && defined($_[0])) # @_ == () or (undef)
-    ||
-    (keys %$attrs # empty attrs or only 'safe' attrs
-    && List::Util::first { !$safe{$_} } keys %$attrs)
-  ) {
-    # no search, effectively just a clone
-    $rows = $self->get_cache;
+  if ( ! List::Util::first { !$safe{$_} } keys %$call_attrs and (
+    ! defined $_[0]
+      or
+    ref $_[0] eq 'HASH' && ! keys %{$_[0]}
+      or
+    ref $_[0] eq 'ARRAY' && ! @{$_[0]}
+  )) {
+    $cache = $self->get_cache;
   }
+
+  my $old_attrs = { %{$self->{attrs}} };
+  my $old_having = delete $old_attrs->{having};
+  my $old_where = delete $old_attrs->{where};
 
   # reset the selector list
-  if (List::Util::first { exists $attrs->{$_} } qw{columns select as}) {
-     delete @{$our_attrs}{qw{select as columns +select +as +columns include_columns}};
+  if (List::Util::first { exists $call_attrs->{$_} } qw{columns select as}) {
+     delete @{$old_attrs}{qw{select as columns +select +as +columns include_columns}};
   }
 
-  my $new_attrs = { %{$our_attrs}, %{$attrs} };
+  my $new_attrs = { %{$old_attrs}, %{$call_attrs} };
 
   # merge new attrs into inherited
   foreach my $key (qw/join prefetch +select +as +columns include_columns bind/) {
-    next unless exists $attrs->{$key};
-    $new_attrs->{$key} = $self->_merge_attr($our_attrs->{$key}, $attrs->{$key});
+    next unless exists $call_attrs->{$key};
+    $new_attrs->{$key} = $self->_merge_attr($old_attrs->{$key}, $call_attrs->{$key});
   }
 
-  my $cond = (@_
-    ? (
-        (@_ == 1 || ref $_[0] eq "HASH")
-          ? (
-              (ref $_[0] eq 'HASH')
-                ? (
-                    (keys %{ $_[0] }  > 0)
-                      ? shift
-                      : undef
-                   )
-                :  shift
-             )
-          : (
-              (@_ % 2)
-                ? $self->throw_exception("Odd number of arguments to search")
-                : {@_}
-             )
-      )
-    : undef
-  );
+  # rip apart the rest of @_, parse a condition
+  my $call_cond = do {
 
-  if (defined $where) {
-    $new_attrs->{where} = (
-      defined $new_attrs->{where}
-        ? { '-and' => [
-              map {
-                ref $_ eq 'ARRAY' ? [ -or => $_ ] : $_
-              } $where, $new_attrs->{where}
-            ]
-          }
-        : $where);
+    if (ref $_[0] eq 'HASH') {
+      (keys %{$_[0]}) ? $_[0] : undef
+    }
+    elsif (@_ == 1) {
+      $_[0]
+    }
+    elsif (@_ % 2) {
+      $self->throw_exception('Odd number of arguments to search')
+    }
+    else {
+      +{ @_ }
+    }
+
+  } if @_;
+
+  for ($old_where, $call_cond) {
+    if (defined $_) {
+      $new_attrs->{where} = $self->_stack_cond (
+        $_, $new_attrs->{where}
+      );
+    }
   }
 
-  if (defined $cond) {
-    $new_attrs->{where} = (
-      defined $new_attrs->{where}
-        ? { '-and' => [
-              map {
-                ref $_ eq 'ARRAY' ? [ -or => $_ ] : $_
-              } $cond, $new_attrs->{where}
-            ]
-          }
-        : $cond);
-  }
-
-  if (defined $having) {
-    $new_attrs->{having} = (
-      defined $new_attrs->{having}
-        ? { '-and' => [
-              map {
-                ref $_ eq 'ARRAY' ? [ -or => $_ ] : $_
-              } $having, $new_attrs->{having}
-            ]
-          }
-        : $having);
+  if (defined $old_having) {
+    $new_attrs->{having} = $self->_stack_cond (
+      $old_having, $new_attrs->{having}
+    )
   }
 
   my $rs = (ref $self)->new($self->result_source, $new_attrs);
 
-  $rs->set_cache($rows) if ($rows);
+  $rs->set_cache($cache) if ($cache);
 
   return $rs;
+}
+
+sub _stack_cond {
+  my ($self, $left, $right) = @_;
+  if (defined $left xor defined $right) {
+    return defined $left ? $left : $right;
+  }
+  elsif (defined $left) {
+    return { -and => [ map
+      { ref $_ eq 'ARRAY' ? [ -or => $_ ] : $_ }
+      ($left, $right)
+    ]};
+  }
+
+  return undef;
 }
 
 =head2 search_literal
@@ -417,25 +408,56 @@ sub search_literal {
 
 =over 4
 
-=item Arguments: @values | \%cols, \%attrs?
+=item Arguments: \%columns_values | @pk_values, \%attrs?
 
 =item Return Value: $row_object | undef
 
 =back
 
-Finds a row based on its primary key or unique constraint. For example, to find
-a row by its primary key:
+Finds and returns a single row based on supplied criteria. Takes either a
+hashref with the same format as L</create> (including inference of foreign
+keys from related objects), or a list of primary key values in the same
+order as the L<primary columns|DBIx::Class::ResultSource/primary_columns>
+declaration on the L</result_source>.
+
+In either case an attempt is made to combine conditions already existing on
+the resultset with the condition passed to this method.
+
+To aid with preparing the correct query for the storage you may supply the
+C<key> attribute, which is the name of a
+L<unique constraint|DBIx::Class::ResultSource/add_unique_constraint> (the
+unique constraint corresponding to the
+L<primary columns|DBIx::Class::ResultSource/primary_columns> is always named
+C<primary>). If the C<key> attribute has been supplied, and DBIC is unable
+to construct a query that satisfies the named unique constraint fully (
+non-NULL values for each column member of the constraint) an exception is
+thrown.
+
+If no C<key> is specified, the search is carried over all unique constraints
+which are fully defined by the available condition.
+
+If no such constraint is found, C<find> currently defaults to a simple
+C<< search->(\%column_values) >> which may or may not do what you expect.
+Note that this fallback behavior may be deprecated in further versions. If
+you need to search with arbitrary conditions - use L</search>.
+
+In addition to C<key>, L</find> recognizes and applies standard
+L<resultset attributes|/ATTRIBUTES> in the same way as L</search> does.
+
+If the resulting query produces more than one row, a warning to the effect is
+issued, though only the first row is constructed and returned as C<$row_object>
+
+Note that if you have extra concerns about the correctness of the resulting
+query you need to specify the C<key> attribute and supply the entire condition
+as an argument to find (since it is not always possible to perform the
+combination of the resultset condition with the supplied one, especially if
+the resultset condition contains literal sql).
+
+For example, to find a row by its primary key:
 
   my $cd = $schema->resultset('CD')->find(5);
 
-You can also find a row by a specific unique constraint using the C<key>
-attribute. For example:
-
-  my $cd = $schema->resultset('CD')->find('Massive Attack', 'Mezzanine', {
-    key => 'cd_artist_title'
-  });
-
-Additionally, you can specify the columns explicitly by name:
+You can also find a row by a specific unique constraint:
 
   my $cd = $schema->resultset('CD')->find(
     {
@@ -445,24 +467,7 @@ Additionally, you can specify the columns explicitly by name:
     { key => 'cd_artist_title' }
   );
 
-If the C<key> is specified as C<primary>, it searches only on the primary key.
-
-If no C<key> is specified, it searches on all unique constraints defined on the
-source for which column data is provided, including the primary key.
-
-If your table does not have a primary key, you B<must> provide a value for the
-C<key> attribute matching one of the unique constraints on the source.
-
-In addition to C<key>, L</find> recognizes and applies standard
-L<resultset attributes|/ATTRIBUTES> in the same way as L</search> does.
-
-Note: If your query does not return only one row, a warning is generated:
-
-  Query returned more than one row
-
-See also L</find_or_create> and L</update_or_create>. For information on how to
-declare unique constraints, see
-L<DBIx::Class::ResultSource/add_unique_constraint>.
+See also L</find_or_create> and L</update_or_create>.
 
 =cut
 
@@ -470,57 +475,64 @@ sub find {
   my $self = shift;
   my $attrs = (@_ > 1 && ref $_[$#_] eq 'HASH' ? pop(@_) : {});
 
-  # Default to the primary key, but allow a specific key
-  my @cols = exists $attrs->{key}
-    ? $self->result_source->unique_constraint_columns($attrs->{key})
-    : $self->result_source->primary_columns;
-  $self->throw_exception(
-    "Can't find unless a primary key is defined or unique constraint is specified"
-  ) unless @cols;
+  my $rsrc = $self->result_source;
 
-  # Parse out a hashref from input
-  my $input_query;
+  # Parse out the condition from input
+  my $call_cond;
   if (ref $_[0] eq 'HASH') {
-    $input_query = { %{$_[0]} };
-  }
-  elsif (@_ == @cols) {
-    $input_query = {};
-    @{$input_query}{@cols} = @_;
+    $call_cond = { %{$_[0]} };
   }
   else {
-    # Compatibility: Allow e.g. find(id => $value)
-    carp "Find by key => value deprecated; please use a hashref instead";
-    $input_query = {@_};
+    my $constraint = exists $attrs->{key} ? $attrs->{key} : 'primary';
+    my @c_cols = $rsrc->unique_constraint_columns($constraint);
+
+    $self->throw_exception(
+      "No constraint columns, maybe a malformed '$constraint' constraint?"
+    ) unless @c_cols;
+
+    $self->throw_exception (
+      'find() expects either a column/value hashref, or a list of values '
+    . "corresponding to the columns of the specified unique constraint '$constraint'"
+    ) unless @c_cols == @_;
+
+    $call_cond = {};
+    @{$call_cond}{@c_cols} = @_;
   }
 
-  my (%related, $info);
+  my %related;
+  for my $key (keys %$call_cond) {
+    if (
+      my $keyref = ref($call_cond->{$key})
+        and
+      my $relinfo = $rsrc->relationship_info($key)
+    ) {
+      my $val = delete $call_cond->{$key};
 
-  KEY: foreach my $key (keys %$input_query) {
-    if (ref($input_query->{$key})
-        && ($info = $self->result_source->relationship_info($key))) {
-      my $val = delete $input_query->{$key};
-      next KEY if (ref($val) eq 'ARRAY'); # has_many for multi_create
-      my $rel_q = $self->result_source->_resolve_condition(
-                    $info->{cond}, $val, $key
-                  );
-      die "Can't handle OR join condition in find" if ref($rel_q) eq 'ARRAY';
+      next if $keyref eq 'ARRAY'; # has_many for multi_create
+
+      my $rel_q = $rsrc->_resolve_condition(
+        $relinfo->{cond}, $val, $key
+      );
+      die "Can't handle complex relationship conditions in find" if ref($rel_q) ne 'HASH';
       @related{keys %$rel_q} = values %$rel_q;
     }
   }
-  if (my @keys = keys %related) {
-    @{$input_query}{@keys} = values %related;
-  }
 
+  # relationship conditions take precedence (?)
+  @{$call_cond}{keys %related} = values %related;
 
-  # Build the final query: Default to the disjunction of the unique queries,
-  # but allow the input query in case the ResultSet defines the query or the
-  # user is abusing find
   my $alias = exists $attrs->{alias} ? $attrs->{alias} : $self->{attrs}{alias};
-  my $query;
+  my $final_cond;
   if (exists $attrs->{key}) {
-    my @unique_cols = $self->result_source->unique_constraint_columns($attrs->{key});
-    my $unique_query = $self->_build_unique_query($input_query, \@unique_cols);
-    $query = $self->_add_alias($unique_query, $alias);
+    $final_cond = $self->_qualify_cond_columns (
+
+      $self->_build_unique_cond (
+        $attrs->{key},
+        $call_cond,
+      ),
+
+      $alias,
+    );
   }
   elsif ($self->{attrs}{accessor} and $self->{attrs}{accessor} eq 'single') {
     # This means that we got here after a merger of relationship conditions
@@ -531,14 +543,28 @@ sub find {
     # relationship
   }
   else {
-    my @unique_queries = $self->_unique_queries($input_query, $attrs);
-    $query = @unique_queries
-      ? [ map { $self->_add_alias($_, $alias) } @unique_queries ]
-      : $self->_add_alias($input_query, $alias);
+    # no key was specified - fall down to heuristics mode:
+    # run through all unique queries registered on the resultset, and
+    # 'OR' all qualifying queries together
+    my (@unique_queries, %seen_column_combinations);
+    for my $c_name ($rsrc->unique_constraint_names) {
+      next if $seen_column_combinations{
+        join "\x00", sort $rsrc->unique_constraint_columns($c_name)
+      }++;
+
+      push @unique_queries, try {
+        $self->_build_unique_cond ($c_name, $call_cond)
+      } || ();
+    }
+
+    $final_cond = @unique_queries
+      ? [ map { $self->_qualify_cond_columns($_, $alias) } @unique_queries ]
+      : $self->_qualify_cond_columns($call_cond, $alias)
+    ;
   }
 
   # Run the query, passing the result_class since it should propagate for find
-  my $rs = $self->search ($query, {result_class => $self->result_class, %$attrs});
+  my $rs = $self->search ($final_cond, {result_class => $self->result_class, %$attrs});
   if (keys %{$rs->_resolved_attrs->{collapse}}) {
     my $row = $rs->next;
     carp "Query returned more than one row" if $rs->next;
@@ -549,71 +575,41 @@ sub find {
   }
 }
 
-# _add_alias
-#
-# Add the specified alias to the specified query hash. A copy is made so the
-# original query is not modified.
+sub _qualify_cond_columns {
+  my ($self, $cond, $alias) = @_;
 
-sub _add_alias {
-  my ($self, $query, $alias) = @_;
-
-  my %aliased = %$query;
-  foreach my $col (grep { ! m/\./ } keys %aliased) {
-    $aliased{"$alias.$col"} = delete $aliased{$col};
+  my %aliased = %$cond;
+  for (keys %aliased) {
+    $aliased{"$alias.$_"} = delete $aliased{$_}
+      if $_ !~ /\./;
   }
 
   return \%aliased;
 }
 
-# _unique_queries
-#
-# Build a list of queries which satisfy unique constraints.
+sub _build_unique_cond {
+  my ($self, $constraint_name, $extra_cond) = @_;
 
-sub _unique_queries {
-  my ($self, $query, $attrs) = @_;
+  my @c_cols = $self->result_source->unique_constraint_columns($constraint_name);
 
-  my @constraint_names = exists $attrs->{key}
-    ? ($attrs->{key})
-    : $self->result_source->unique_constraint_names;
+  # combination may fail if $self->{cond} is non-trivial
+  my ($final_cond) = try {
+    $self->_merge_with_rscond ($extra_cond)
+  } catch {
+    +{ %$extra_cond }
+  };
 
-  my $where = $self->_collapse_cond($self->{attrs}{where} || {});
-  my $num_where = scalar keys %$where;
+  # trim out everything not in $columns
+  $final_cond = { map { $_ => $final_cond->{$_} } @c_cols };
 
-  my (@unique_queries, %seen_column_combinations);
-  foreach my $name (@constraint_names) {
-    my @constraint_cols = $self->result_source->unique_constraint_columns($name);
-
-    my $constraint_sig = join "\x00", sort @constraint_cols;
-    next if $seen_column_combinations{$constraint_sig}++;
-
-    my $unique_query = $self->_build_unique_query($query, \@constraint_cols);
-
-    my $num_cols = scalar @constraint_cols;
-    my $num_query = scalar keys %$unique_query;
-
-    my $total = $num_query + $num_where;
-    if ($num_query && ($num_query == $num_cols || $total == $num_cols)) {
-      # The query is either unique on its own or is unique in combination with
-      # the existing where clause
-      push @unique_queries, $unique_query;
-    }
+  if (my @missing = grep { ! defined $final_cond->{$_} } (@c_cols) ) {
+    $self->throw_exception( sprintf ( "Unable to satisfy constraint '%s', no values for column(s): %s",
+      $constraint_name,
+      join (', ', map { "'$_'" } @missing),
+    ) );
   }
 
-  return @unique_queries;
-}
-
-# _build_unique_query
-#
-# Constrain the specified query hash based on the specified column names.
-
-sub _build_unique_query {
-  my ($self, $query, $unique_cols) = @_;
-
-  return {
-    map  { $_ => $query->{$_} }
-    grep { exists $query->{$_} }
-      @$unique_cols
-  };
+  return $final_cond;
 }
 
 =head2 search_related
@@ -681,15 +677,15 @@ sub cursor {
 
 =item Arguments: $cond?
 
-=item Return Value: $row_object?
+=item Return Value: $row_object | undef
 
 =back
 
   my $cd = $schema->resultset('CD')->single({ year => 2001 });
 
 Inflates the first result without creating a cursor if the resultset has
-any records in it; if not returns nothing. Used by L</find> as a lean version of
-L</search>.
+any records in it; if not returns C<undef>. Used by L</find> as a lean version
+of L</search>.
 
 While this method can take an optional search condition (just like L</search>)
 being a fast-code-path it does not recognize search attributes. If you need to
@@ -744,12 +740,6 @@ sub single {
     }
   }
 
-#  XXX: Disabled since it doesn't infer uniqueness in all cases
-#  unless ($self->_is_unique_query($attrs->{where})) {
-#    carp "Query not guaranteed to return a single row"
-#      . "; please declare your unique constraints or use search instead";
-#  }
-
   my @data = $self->result_source->storage->select_single(
     $attrs->{from}, $attrs->{select},
     $attrs->{where}, $attrs
@@ -758,38 +748,6 @@ sub single {
   return (@data ? ($self->_construct_object(@data))[0] : undef);
 }
 
-
-# _is_unique_query
-#
-# Try to determine if the specified query is guaranteed to be unique, based on
-# the declared unique constraints.
-
-sub _is_unique_query {
-  my ($self, $query) = @_;
-
-  my $collapsed = $self->_collapse_query($query);
-  my $alias = $self->{attrs}{alias};
-
-  foreach my $name ($self->result_source->unique_constraint_names) {
-    my @unique_cols = map {
-      "$alias.$_"
-    } $self->result_source->unique_constraint_columns($name);
-
-    # Count the values for each unique column
-    my %seen = map { $_ => 0 } @unique_cols;
-
-    foreach my $key (keys %$collapsed) {
-      my $aliased = $key =~ /\./ ? $key : "$alias.$key";
-      next unless exists $seen{$aliased};  # Additional constraints are okay
-      $seen{$aliased} = scalar keys %{ $collapsed->{$key} };
-    }
-
-    # If we get 0 or more than 1 value for a column, it's not necessarily unique
-    return 1 unless grep { $_ != 1 } values %seen;
-  }
-
-  return 0;
-}
 
 # _collapse_query
 #
@@ -912,7 +870,7 @@ sub slice {
   $attrs->{offset} = $self->{attrs}{offset} || 0;
   $attrs->{offset} += $min;
   $attrs->{rows} = ($max ? ($max - $min + 1) : 1);
-  return $self->search(undef(), $attrs);
+  return $self->search(undef, $attrs);
   #my $slice = (ref $self)->new($self->result_source, $attrs);
   #return (wantarray ? $slice->all : $slice);
 }
@@ -923,7 +881,7 @@ sub slice {
 
 =item Arguments: none
 
-=item Return Value: $result?
+=item Return Value: $result | undef
 
 =back
 
@@ -949,6 +907,7 @@ sub next {
     return $cache->[$self->{all_cache_position}++];
   }
   if ($self->{attrs}{cache}) {
+    delete $self->{pager};
     $self->{all_cache_position} = 1;
     return ($self->all)[0];
   }
@@ -1407,12 +1366,12 @@ sub reset {
 
 =item Arguments: none
 
-=item Return Value: $object?
+=item Return Value: $object | undef
 
 =back
 
-Resets the resultset and returns an object for the first result (if the
-resultset returns anything).
+Resets the resultset and returns an object for the first result (or C<undef>
+if the resultset is empty).
 
 =cut
 
@@ -1501,8 +1460,16 @@ sub _rs_update_delete {
 =back
 
 Sets the specified columns in the resultset to the supplied values in a
-single query. Return value will be true if the update succeeded or false
-if no records were updated; exact type of success value is storage-dependent.
+single query. Note that this will not run any accessor/set_column/update
+triggers, nor will it update any row object instances derived from this
+resultset (this includes the contents of the L<resultset cache|/set_cache>
+if any). See L</update_all> if you need to execute any on-update
+triggers or cascades defined either by you or a
+L<result component|DBIx::Class::Manual::Component/WHAT_IS_A_COMPONENT>.
+
+The return value is a pass through of what the underlying
+storage backend returned, and may vary. See L<DBI/execute> for the most
+common case.
 
 =cut
 
@@ -1524,8 +1491,9 @@ sub update {
 
 =back
 
-Fetches all objects and updates them one at a time. Note that C<update_all>
-will run DBIC cascade triggers, while L</update> will not.
+Fetches all objects and updates them one at a time via
+L<DBIx::Class::Row/update>. Note that C<update_all> will run DBIC defined
+triggers, while L</update> will not.
 
 =cut
 
@@ -1550,12 +1518,16 @@ sub update_all {
 
 =back
 
-Deletes the contents of the resultset from its result source. Note that this
-will not run DBIC cascade triggers. See L</delete_all> if you need triggers
-to run. See also L<DBIx::Class::Row/delete>.
+Deletes the rows matching this resultset in a single query. Note that this
+will not run any delete triggers, nor will it alter the
+L<in_storage|DBIx::Class::Row/in_storage> status of any row object instances
+derived from this resultset (this includes the contents of the
+L<resultset cache|/set_cache> if any). See L</delete_all> if you need to
+execute any on-delete triggers or cascades defined either by you or a
+L<result component|DBIx::Class::Manual::Component/WHAT_IS_A_COMPONENT>.
 
-Return value will be the number of rows deleted; exact type of return value
-is storage-dependent.
+The return value is a pass through of what the underlying storage backend
+returned, and may vary. See L<DBI/execute> for the most common case.
 
 =cut
 
@@ -1577,8 +1549,9 @@ sub delete {
 
 =back
 
-Fetches all objects and deletes them one at a time. Note that C<delete_all>
-will run DBIC cascade triggers, while L</delete> will not.
+Fetches all objects and deletes them one at a time via
+L<DBIx::Class::Row/delete>. Note that C<delete_all> will run DBIC defined
+triggers, while L</delete> will not.
 
 =cut
 
@@ -1725,7 +1698,7 @@ sub populate {
     }
 
     ## inherit the data locked in the conditions of the resultset
-    my ($rs_data) = $self->_merge_cond_with_data({});
+    my ($rs_data) = $self->_merge_with_rscond({});
     delete @{$rs_data}{@columns};
     my @inherit_cols = keys %$rs_data;
     my @inherit_data = values %$rs_data;
@@ -1804,10 +1777,114 @@ C<total_entries> on the L<Data::Page> object.
 
 =cut
 
+# make a wizard good for both a scalar and a hashref
+my $mk_lazy_count_wizard = sub {
+  require Variable::Magic;
+
+  my $stash = { total_rs => shift };
+  my $slot = shift; # only used by the hashref magic
+
+  my $magic = Variable::Magic::wizard (
+    data => sub { $stash },
+
+    (!$slot)
+    ? (
+      # the scalar magic
+      get => sub {
+        # set value lazily, and dispell for good
+        ${$_[0]} = $_[1]{total_rs}->count;
+        Variable::Magic::dispell (${$_[0]}, $_[1]{magic_selfref});
+        return 1;
+      },
+      set => sub {
+        # an explicit set implies dispell as well
+        # the unless() is to work around "fun and giggles" below
+        Variable::Magic::dispell (${$_[0]}, $_[1]{magic_selfref})
+          unless (caller(2))[3] eq 'DBIx::Class::ResultSet::pager';
+        return 1;
+      },
+    )
+    : (
+      # the uvar magic
+      fetch => sub {
+        if ($_[2] eq $slot and !$_[1]{inactive}) {
+          my $cnt = $_[1]{total_rs}->count;
+          $_[0]->{$slot} = $cnt;
+
+          # attempting to dispell in a fetch handle (works in store), seems
+          # to invariable segfault on 5.10, 5.12, 5.13 :(
+          # so use an inactivator instead
+          #Variable::Magic::dispell (%{$_[0]}, $_[1]{magic_selfref});
+          $_[1]{inactive}++;
+        }
+        return 1;
+      },
+      store => sub {
+        if (! $_[1]{inactive} and $_[2] eq $slot) {
+          #Variable::Magic::dispell (%{$_[0]}, $_[1]{magic_selfref});
+          $_[1]{inactive}++
+            unless (caller(2))[3] eq 'DBIx::Class::ResultSet::pager';
+        }
+        return 1;
+      },
+    ),
+  );
+
+  $stash->{magic_selfref} = $magic;
+  weaken ($stash->{magic_selfref}); # this fails on 5.8.1
+
+  return $magic;
+};
+
+# the tie class for 5.8.1
+{
+  package DBIx::Class::__DBIC_LAZY_RS_COUNT__;
+  use base qw/Tie::Hash/;
+
+  sub FIRSTKEY { my $dummy = scalar keys %{$_[0]{data}}; each %{$_[0]{data}} }
+  sub NEXTKEY  { each %{$_[0]{data}} }
+  sub EXISTS   { exists $_[0]{data}{$_[1]} }
+  sub DELETE   { delete $_[0]{data}{$_[1]} }
+  sub CLEAR    { %{$_[0]{data}} = () }
+  sub SCALAR   { scalar %{$_[0]{data}} }
+
+  sub TIEHASH {
+    $_[1]{data} = {%{$_[1]{selfref}}};
+    %{$_[1]{selfref}} = ();
+    Scalar::Util::weaken ($_[1]{selfref});
+    return bless ($_[1], $_[0]);
+  };
+
+  sub FETCH {
+    if ($_[1] eq $_[0]{slot}) {
+      my $cnt = $_[0]{data}{$_[1]} = $_[0]{total_rs}->count;
+      untie %{$_[0]{selfref}};
+      %{$_[0]{selfref}} = %{$_[0]{data}};
+      return $cnt;
+    }
+    else {
+      $_[0]{data}{$_[1]};
+    }
+  }
+
+  sub STORE {
+    $_[0]{data}{$_[1]} = $_[2];
+    if ($_[1] eq $_[0]{slot}) {
+      untie %{$_[0]{selfref}};
+      %{$_[0]{selfref}} = %{$_[0]{data}};
+    }
+    $_[2];
+  }
+}
+
 sub pager {
   my ($self) = @_;
 
   return $self->{pager} if $self->{pager};
+
+  if ($self->get_cache) {
+    $self->throw_exception ('Pagers on cached resultsets are not supported');
+  }
 
   my $attrs = $self->{attrs};
   $self->throw_exception("Can't create pager for non-paged rs")
@@ -1818,13 +1895,69 @@ sub pager {
   # with a subselect) to get the real total count
   my $count_attrs = { %$attrs };
   delete $count_attrs->{$_} for qw/rows offset page pager/;
-  my $total_count = (ref $self)->new($self->result_source, $count_attrs)->count;
+  my $total_rs = (ref $self)->new($self->result_source, $count_attrs);
 
-  return $self->{pager} = Data::Page->new(
-    $total_count,
+
+### the following may seem awkward and dirty, but it's a thought-experiment
+### necessary for future development of DBIx::DS. Do *NOT* change this code
+### before talking to ribasushi/mst
+
+  my $pager = Data::Page->new(
+    0,  #start with an empty set
     $attrs->{rows},
-    $self->{attrs}{page}
+    $self->{attrs}{page},
   );
+
+  my $data_slot = 'total_entries';
+
+  # Since we are interested in a cached value (once it's set - it's set), every
+  # technique will detach from the magic-host once the time comes to fire the
+  # ->count (or in the segfaulting case of >= 5.10 it will deactivate itself)
+
+  if ($] < 5.008003) {
+    # 5.8.1 throws 'Modification of a read-only value attempted' when one tries
+    # to weakref the magic container :(
+    # tested on 5.8.1
+    tie (%$pager, 'DBIx::Class::__DBIC_LAZY_RS_COUNT__',
+      { slot => $data_slot, total_rs => $total_rs, selfref => $pager }
+    );
+  }
+  elsif ($] < 5.010) {
+    # We can use magic on the hash value slot. It's interesting that the magic is
+    # attached to the hash-slot, and does *not* stop working once I do the dummy
+    # assignments after the cast()
+    # tested on 5.8.3 and 5.8.9
+    my $magic = $mk_lazy_count_wizard->($total_rs);
+    Variable::Magic::cast ( $pager->{$data_slot}, $magic );
+
+    # this is for fun and giggles
+    $pager->{$data_slot} = -1;
+    $pager->{$data_slot} = 0;
+
+    # this does not work for scalars, but works with
+    # uvar magic below
+    #my %vals = %$pager;
+    #%$pager = ();
+    #%{$pager} = %vals;
+  }
+  else {
+    # And the uvar magic
+    # works on 5.10.1, 5.12.1 and 5.13.4 in its current form,
+    # however see the wizard maker for more notes
+    my $magic = $mk_lazy_count_wizard->($total_rs, $data_slot);
+    Variable::Magic::cast ( %$pager, $magic );
+
+    # still works
+    $pager->{$data_slot} = -1;
+    $pager->{$data_slot} = 0;
+
+    # this now works
+    my %vals = %$pager;
+    %$pager = ();
+    %{$pager} = %vals;
+  }
+
+  return $self->{pager} = $pager;
 }
 
 =head2 page
@@ -1872,7 +2005,7 @@ sub new_result {
   $self->throw_exception( "new_result needs a hash" )
     unless (ref $values eq 'HASH');
 
-  my ($merged_cond, $cols_from_relations) = $self->_merge_cond_with_data($values);
+  my ($merged_cond, $cols_from_relations) = $self->_merge_with_rscond($values);
 
   my %new = (
     %$merged_cond,
@@ -1886,13 +2019,13 @@ sub new_result {
   return $self->result_class->new(\%new);
 }
 
-# _merge_cond_with_data
+# _merge_with_rscond
 #
 # Takes a simple hash of K/V data and returns its copy merged with the
 # condition already present on the resultset. Additionally returns an
 # arrayref of value/condition names, which were inferred from related
 # objects (this is needed for in-memory related objects)
-sub _merge_cond_with_data {
+sub _merge_with_rscond {
   my ($self, $data) = @_;
 
   my (%new_data, @cols_from_relations);
@@ -1918,11 +2051,13 @@ sub _merge_cond_with_data {
     my %implied = %{$self->_remove_alias($collapsed_cond, $alias)};
 
     while ( my($col, $value) = each %implied ) {
-      if (ref($value) eq 'HASH' && keys(%$value) && (keys %$value)[0] eq '=') {
+      my $vref = ref $value;
+      if ($vref eq 'HASH' && keys(%$value) && (keys %$value)[0] eq '=') {
         $new_data{$col} = $value->{'='};
-        next;
       }
-      $new_data{$col} = $value if $self->_is_deterministic_value($value);
+      elsif( !$vref or $vref eq 'SCALAR' or blessed($value) ) {
+        $new_data{$col} = $value;
+      }
     }
   }
 
@@ -1932,20 +2067,6 @@ sub _merge_cond_with_data {
   );
 
   return (\%new_data, \@cols_from_relations);
-}
-
-# _is_deterministic_value
-#
-# Make an effor to strip non-deterministic values from the condition,
-# to make sure new_result chokes less
-
-sub _is_deterministic_value {
-  my $self = shift;
-  my $value = shift;
-  my $ref_type = ref $value;
-  return 1 if $ref_type eq '' || $ref_type eq 'SCALAR';
-  return 1 if blessed $value;
-  return 0;
 }
 
 # _has_resolved_attr
@@ -2105,17 +2226,18 @@ sub as_query {
   $cd->cd_to_producer->find_or_new({ producer => $producer },
                                    { key => 'primary });
 
-Find an existing record from this resultset, based on its primary
-key, or a unique constraint. If none exists, instantiate a new result
-object and return it. The object will not be saved into your storage
-until you call L<DBIx::Class::Row/insert> on it.
+Find an existing record from this resultset using L</find>. if none exists,
+instantiate a new result object and return it. The object will not be saved
+into your storage until you call L<DBIx::Class::Row/insert> on it.
 
-You most likely want this method when looking for existing rows using
-a unique constraint that is not the primary key, or looking for
-related rows.
+You most likely want this method when looking for existing rows using a unique
+constraint that is not the primary key, or looking for related rows.
 
-If you want objects to be saved immediately, use L</find_or_create>
-instead.
+If you want objects to be saved immediately, use L</find_or_create> instead.
+
+B<Note>: Make sure to read the documentation of L</find> and understand the
+significance of the C<key> attribute, as its lack may skew your search, and
+subsequently result in spurious new objects.
 
 B<Note>: Take care when using C<find_or_new> with a table having
 columns with default values that you intend to be automatically
@@ -2257,6 +2379,10 @@ constraint. For example:
     { key => 'cd_artist_title' }
   );
 
+B<Note>: Make sure to read the documentation of L</find> and understand the
+significance of the C<key> attribute, as its lack may skew your search, and
+subsequently result in spurious row creation.
+
 B<Note>: Because find_or_create() reads from the database and then
 possibly inserts based on the result, this method is subject to a race
 condition. Another process could create a record in the table after
@@ -2290,16 +2416,15 @@ sub find_or_create {
 
 =item Arguments: \%col_values, { key => $unique_constraint }?
 
-=item Return Value: $rowobject
+=item Return Value: $row_object
 
 =back
 
   $resultset->update_or_create({ col => $val, ... });
 
-First, searches for an existing row matching one of the unique constraints
-(including the primary key) on the source of this resultset. If a row is
-found, updates it with the other given column values. Otherwise, creates a new
-row.
+Like L</find_or_create>, but if a row is found it is immediately updated via
+C<< $found_row->update (\%col_values) >>.
+
 
 Takes an optional C<key> attribute to search on a specific unique constraint.
 For example:
@@ -2321,20 +2446,18 @@ For example:
     key => 'primary',
   });
 
-
-If no C<key> is specified, it searches on all unique constraints defined on the
-source, including the primary key.
-
-If the C<key> is specified as C<primary>, it searches only on the primary key.
-
-See also L</find> and L</find_or_create>. For information on how to declare
-unique constraints, see L<DBIx::Class::ResultSource/add_unique_constraint>.
+B<Note>: Make sure to read the documentation of L</find> and understand the
+significance of the C<key> attribute, as its lack may skew your search, and
+subsequently result in spurious row creation.
 
 B<Note>: Take care when using C<update_or_create> with a table having
 columns with default values that you intend to be automatically
 supplied by the database (e.g. an auto_increment primary key column).
 In normal usage, the value of such columns should NOT be included at
 all in the call to C<update_or_create>, even when set to C<undef>.
+
+See also L</find> and L</find_or_create>. For information on how to declare
+unique constraints, see L<DBIx::Class::ResultSource/add_unique_constraint>.
 
 =cut
 
@@ -2364,13 +2487,9 @@ sub update_or_create {
 
   $resultset->update_or_new({ col => $val, ... });
 
-First, searches for an existing row matching one of the unique constraints
-(including the primary key) on the source of this resultset. If a row is
-found, updates it with the other given column values. Otherwise, instantiate
-a new result object and return it. The object will not be saved into your storage
-until you call L<DBIx::Class::Row/insert> on it.
+Like L</find_or_new> but if a row is found it is immediately updated via
+C<< $found_row->update (\%col_values) >>.
 
-Takes an optional C<key> attribute to search on a specific unique constraint.
 For example:
 
   # In your application
@@ -2391,13 +2510,17 @@ For example:
       $cd->insert;
   }
 
+B<Note>: Make sure to read the documentation of L</find> and understand the
+significance of the C<key> attribute, as its lack may skew your search, and
+subsequently result in spurious new objects.
+
 B<Note>: Take care when using C<update_or_new> with a table having
 columns with default values that you intend to be automatically
 supplied by the database (e.g. an auto_increment primary key column).
 In normal usage, the value of such columns should NOT be included at
 all in the call to C<update_or_new>, even when set to C<undef>.
 
-See also L</find>, L</find_or_create> and L</find_or_new>.
+See also L</find>, L</find_or_create> and L</find_or_new>. 
 
 =cut
 
@@ -2421,7 +2544,7 @@ sub update_or_new {
 
 =item Arguments: none
 
-=item Return Value: \@cache_objects?
+=item Return Value: \@cache_objects | undef
 
 =back
 
@@ -2469,7 +2592,7 @@ sub set_cache {
 
 =item Arguments: none
 
-=item Return Value: []
+=item Return Value: undef
 
 =back
 
@@ -2512,7 +2635,7 @@ sub is_paged {
 
 sub is_ordered {
   my ($self) = @_;
-  return scalar $self->result_source->storage->_parse_order_by($self->{attrs}{order_by});
+  return scalar $self->result_source->storage->_extract_order_columns($self->{attrs}{order_by});
 }
 
 =head2 related_resultset
@@ -2555,7 +2678,7 @@ sub related_resultset {
     # (the select/as attrs were deleted in the beginning), we need to flip all
     # left joins to inner, so we get the expected results
     # read the comment on top of the actual function to see what this does
-    $attrs->{from} = $rsrc->schema->storage->_straight_join_to_node ($attrs->{from}, $alias);
+    $attrs->{from} = $rsrc->schema->storage->_inner_join_to_node ($attrs->{from}, $alias);
 
 
     #XXX - temp fix for result_class bug. There likely is a more elegant fix -groditi
@@ -2974,21 +3097,33 @@ sub _resolved_attrs {
       carp ("Useless use of distinct on a grouped resultset ('distinct' is ignored when a 'group_by' is present)");
     }
     else {
-      $attrs->{group_by} = [ grep { !ref($_) || (ref($_) ne 'HASH') } @{$attrs->{select}} ];
+      my $storage = $self->result_source->schema->storage;
+      my $rs_column_list = $storage->_resolve_column_info ($attrs->{from});
 
+      my $group_spec = $attrs->{group_by} = [];
+      my %group_index;
+
+      for (@{$attrs->{select}}) {
+        if (! ref($_) or ref ($_) ne 'HASH' ) {
+          push @$group_spec, $_;
+          $group_index{$_}++;
+          if ($rs_column_list->{$_} and $_ !~ /\./ ) {
+            # add a fully qualified version as well
+            $group_index{"$rs_column_list->{$_}{-source_alias}.$_"}++;
+          }
+        }
+      }
       # add any order_by parts that are not already present in the group_by
       # we need to be careful not to add any named functions/aggregates
       # i.e. select => [ ... { count => 'foo', -as 'foocount' } ... ]
-      my %already_grouped = map { $_ => 1 } (@{$attrs->{group_by}});
+      for my $chunk ($storage->_extract_order_columns($attrs->{order_by})) {
 
-      my $storage = $self->result_source->schema->storage;
+        # only consider real columns (for functions the user got to do an explicit group_by)
+        my $colinfo = $rs_column_list->{$chunk}
+          or next;
 
-      my $rs_column_list = $storage->_resolve_column_info ($attrs->{from});
-
-      for my $chunk ($storage->_parse_order_by($attrs->{order_by})) {
-        if ($rs_column_list->{$chunk} && not $already_grouped{$chunk}++) {
-          push @{$attrs->{group_by}}, $chunk;
-        }
+        $chunk = "$colinfo->{-source_alias}.$chunk" if $chunk !~ /\./;
+        push @$group_spec, $chunk unless $group_index{$chunk}++;
       }
     }
   }
@@ -3242,6 +3377,15 @@ expression). Adds C<me.> onto the start of any column without a C<.> in
 it and sets C<select> from that, then auto-populates C<as> from
 C<select> as normal. (You may also use the C<cols> attribute, as in
 earlier versions of DBIC.)
+
+Essentially C<columns> does the same as L</select> and L</as>.
+
+    columns => [ 'foo', { bar => 'baz' } ]
+
+is the same as
+
+    select => [qw/foo baz/],
+    as => [qw/foo bar/]
 
 =head2 +columns
 

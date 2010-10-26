@@ -1,6 +1,6 @@
 -- 
 -- Created by SQL::Translator::Producer::SQLite
--- Created on Thu Jun  3 11:52:50 2010
+-- Created on Sun Oct 17 01:51:06 2010
 -- 
 
 --
@@ -14,6 +14,10 @@ CREATE TABLE artist (
 );
 
 CREATE INDEX artist_name_hookidx ON artist (name);
+
+CREATE UNIQUE INDEX artist_name ON artist (name);
+
+CREATE UNIQUE INDEX u_nullable ON artist (charfield, rank);
 
 --
 -- Table: bindtype_test
@@ -383,6 +387,14 @@ CREATE TABLE tags (
 );
 
 CREATE INDEX tags_idx_cd ON tags (cd);
+
+CREATE UNIQUE INDEX tagid_cd ON tags (tagid, cd);
+
+CREATE UNIQUE INDEX tagid_cd_tag ON tags (tagid, cd, tag);
+
+CREATE UNIQUE INDEX tags_tagid_tag ON tags (tagid, tag);
+
+CREATE UNIQUE INDEX tags_tagid_tag_cd ON tags (tagid, tag, cd);
 
 --
 -- Table: cd_to_producer

@@ -96,10 +96,31 @@ this will attempt to upgrade the database from its current version to the curren
 schema version using a diff from your I<upgrade_directory>. If a suitable diff is
 not found then no upgrade is possible.
 
-NB: At the moment, only SQLite and MySQL are supported. This is due to
-spotty behaviour in the SQL::Translator producers, please help us by
-enhancing them. Ask on the mailing list or IRC channel for details (community details
-in L<DBIx::Class>).
+=head1 SEE ALSO
+
+L<DBIx::Class::DeploymentHandler> is a much more powerful alternative to this
+module.  Examples of things it can do that this module cannot do include
+
+=over
+
+=item *
+
+Downgrades in addition to upgrades
+
+=item *
+
+Multiple sql files files per upgrade/downgrade/install
+
+=item *
+
+Perl scripts allowed for upgrade/downgrade/install
+
+=item *
+
+Just one set of files needed for upgrade, unlike this module where one might
+need to generate C<factorial(scalar @versions)>
+
+=back
 
 =head1 GETTING STARTED
 
@@ -725,9 +746,12 @@ sub _source_exists
 {
     my ($self, $rs) = @_;
 
-    my $c = try { $rs->search({ 1, 0 })->count };
-
-    return (defined $c) ? 1 : 0;
+    return try {
+      $rs->search(\'1=0')->cursor->next;
+      1;
+    } catch {
+      0;
+    };
 }
 
 1;

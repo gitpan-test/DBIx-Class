@@ -3,18 +3,19 @@ use warnings;
 
 use Test::More;
 use Test::Exception;
+use Sub::Name;
 use lib qw(t/lib);
 use DBICTest;
 
 
 my ($dsn, $user, $pass) = @ENV{map { "DBICTEST_PG_${_}" } qw/DSN USER PASS/};
 
-plan skip_all => <<EOM unless $dsn && $user;
-Set \$ENV{DBICTEST_PG_DSN}, _USER and _PASS to run this test
+plan skip_all => <<'EOM' unless $dsn && $user;
+Set $ENV{DBICTEST_PG_DSN}, _USER and _PASS to run this test
 ( NOTE: This test drops and creates tables called 'artist', 'cd',
 'timestamp_primary_key_test', 'track', 'casecheck', 'array_test' and
 'sequence_test' as well as following sequences: 'pkid1_seq', 'pkid2_seq' and
-'nonpkid_seq''. as well as following schemas: 'dbic_t_schema',
+'nonpkid_seq'. as well as following schemas: 'dbic_t_schema',
 'dbic_t_schema_2', 'dbic_t_schema_3', 'dbic_t_schema_4', and 'dbic_t_schema_5')
 EOM
 
@@ -22,23 +23,6 @@ EOM
 
 our @test_classes; #< array that will be pushed into by test classes defined in this file
 DBICTest::Schema->load_classes( map {s/.+:://;$_} @test_classes ) if @test_classes;
-
-my $test_server_supports_insert_returning = do {
-  my $s = DBICTest::Schema->connect($dsn, $user, $pass);
-  $s->storage->_determine_driver;
-  $s->storage->_supports_insert_returning;
-};
-
-my $schema;
-
-for my $use_insert_returning ($test_server_supports_insert_returning
-  ? (0,1)
-  : (0)
-) {
-  no warnings qw/redefine once/;
-  local *DBIx::Class::Storage::DBI::Pg::_supports_insert_returning = sub {
-    $use_insert_returning
-  };
 
 ###  pre-connect tests (keep each test separate as to make sure rebless() runs)
   {
@@ -48,8 +32,10 @@ for my $use_insert_returning ($test_server_supports_insert_returning
 
     # Check that datetime_parser returns correctly before we explicitly connect.
     SKIP: {
-        eval { require DateTime::Format::Pg };
-        skip "DateTime::Format::Pg required", 2 if $@;
+        skip (
+          "Pg parser detection test needs " . DBIx::Class::Optional::Dependencies->req_missing_for ('test_dt_pg'),
+          2
+        ) unless DBIx::Class::Optional::Dependencies->req_ok_for ('test_dt_pg');
 
         my $store = ref $s->storage;
         is($store, 'DBIx::Class::Storage::DBI', 'Started with generic storage');
@@ -60,12 +46,87 @@ for my $use_insert_returning ($test_server_supports_insert_returning
 
     ok (!$s->storage->_dbh, 'still not connected');
   }
+
   {
     my $s = DBICTest::Schema->connect($dsn, $user, $pass);
     # make sure sqlt_type overrides work (::Storage::DBI::Pg does this)
     ok (!$s->storage->_dbh, 'definitely not connected');
     is ($s->storage->sqlt_type, 'PostgreSQL', 'sqlt_type correct pre-connection');
     ok (!$s->storage->_dbh, 'still not connected');
+  }
+
+# test LIMIT support
+{
+  my $schema = DBICTest::Schema->connect($dsn, $user, $pass);
+  drop_test_schema($schema);
+  create_test_schema($schema);
+  for (1..6) {
+    $schema->resultset('Artist')->create({ name => 'Artist ' . $_ });
+  }
+  my $it = $schema->resultset('Artist')->search( {},
+    { rows => 3,
+      offset => 2,
+      order_by => 'artistid' }
+  );
+  is( $it->count, 3, "LIMIT count ok" );  # ask for 3 rows out of 6 artists
+  is( $it->next->name, "Artist 3", "iterator->next ok" );
+  $it->next;
+  $it->next;
+  $it->next;
+  is( $it->next, undef, "next past end of resultset ok" );
+
+  # Limit with select-lock
+  lives_ok {
+    $schema->txn_do (sub {
+      isa_ok (
+        $schema->resultset('Artist')->find({artistid => 1}, {for => 'update', rows => 1}),
+        'DBICTest::Schema::Artist',
+      );
+    });
+  } 'Limited FOR UPDATE select works';
+}
+
+# check if we indeed do support stuff
+my $test_server_supports_insert_returning = do {
+  my $v = DBICTest::Schema->connect($dsn, $user, $pass)
+                   ->storage
+                    ->_get_dbh
+                     ->get_info(18);
+  $v =~ /^(\d+)\.(\d+)/
+    or die "Unparseable Pg server version: $v\n";
+
+  ( sprintf ('%d.%d', $1, $2) >= 8.2 ) ? 1 : 0;
+};
+is (
+  DBICTest::Schema->connect($dsn, $user, $pass)->storage->_use_insert_returning,
+  $test_server_supports_insert_returning,
+  'insert returning capability guessed correctly'
+);
+
+my $schema;
+for my $use_insert_returning ($test_server_supports_insert_returning
+  ? (0,1)
+  : (0)
+) {
+
+  no warnings qw/once/;
+  local *DBICTest::Schema::connection = subname 'DBICTest::Schema::connection' => sub {
+    my $s = shift->next::method (@_);
+    $s->storage->_use_insert_returning ($use_insert_returning);
+    $s;
+  };
+
+### test capability override
+  {
+    my $s = DBICTest::Schema->connect($dsn, $user, $pass);
+
+    ok (!$s->storage->_dbh, 'definitely not connected');
+
+    ok (
+      ! ($s->storage->_use_insert_returning xor $use_insert_returning),
+      'insert returning capability set correctly',
+    );
+    ok (!$s->storage->_dbh, 'still not connected (capability override works)');
   }
 
 ### connect, create postgres-specific test schema
@@ -164,13 +225,23 @@ for my $use_insert_returning ($test_server_supports_insert_returning
       arrayfield => [5, 6],
     });
 
+    my $afield_rs = $schema->resultset('ArrayTest')->search({
+      arrayfield => \[ '= ?' => [arrayfield => [3, 4]] ],   #Todo anything less ugly than this?
+    });
+
     my $count;
     lives_ok {
-      $count = $schema->resultset('ArrayTest')->search({
-        arrayfield => \[ '= ?' => [arrayfield => [3, 4]] ],   #Todo anything less ugly than this?
-      })->count;
+      $count = $afield_rs->count
     } 'comparing arrayref to pg array data does not blow up';
     is($count, 1, 'comparing arrayref to pg array data gives correct result');
+
+    TODO: {
+      local $TODO = 'No introspection of scalarref conditions :(';
+      my $row = $afield_rs->create({});
+      is_deeply ($row->arrayfield, [3,4], 'Array value taken from $rs condition');
+      $row->discard_changes;
+      is_deeply ($row->arrayfield, [3,4], 'Array value made it to storage');
+    }
   }
 
 
@@ -206,16 +277,12 @@ my $artist = $schema->resultset('Artist')->first;
 my $cds = $artist->cds_unordered->search({
     year => { '!=' => 2010 }
 }, { prefetch => 'liner_notes' });
-TODO: {
-    todo_skip 'update resultset with a prefetch over a might_have rel', 1;
-    $cds->update({ year => '2010' });
-}
-
+lives_ok { $cds->update({ year => '2010' }) } 'Update on prefetched rs';
 
 ## Test SELECT ... FOR UPDATE
 
   SKIP: {
-      if(eval "require Sys::SigAction" && !$@) {
+      if(eval { require Sys::SigAction }) {
           Sys::SigAction->import( 'set_sig_handler' );
       }
       else {
@@ -290,7 +357,7 @@ TODO: {
 
 ######## test non-serial auto-pk
 
-  if ($schema->storage->_supports_insert_returning) {
+  if ($schema->storage->_use_insert_returning) {
     $schema->source('TimestampPrimaryKey')->name('dbic_t_schema.timestamp_primary_key_test');
     my $row = $schema->resultset('TimestampPrimaryKey')->create({});
     ok $row->id;

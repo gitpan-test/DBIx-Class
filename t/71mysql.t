@@ -1,5 +1,5 @@
 use strict;
-use warnings;  
+use warnings;
 
 use Test::More;
 use Test::Exception;
@@ -74,6 +74,16 @@ is( $it->next->name, "Artist 2", "iterator->next ok" );
 $it->next;
 $it->next;
 is( $it->next, undef, "next past end of resultset ok" );
+
+# Limit with select-lock
+lives_ok {
+  $schema->txn_do (sub {
+    isa_ok (
+      $schema->resultset('Artist')->find({artistid => 1}, {for => 'update', rows => 1}),
+      'DBICTest::Schema::Artist',
+    );
+  });
+} 'Limited FOR UPDATE select works';
 
 my $test_type_info = {
     'artistid' => {
@@ -253,7 +263,6 @@ NULLINSEARCH: {
   my $ansi_schema = DBICTest::Schema->connect ($dsn, $user, $pass, {
     on_connect_call => 'set_strict_mode',
     quote_char => '`',
-    name_sep => '.'
   });
   my $rs = $ansi_schema->resultset('CD');
 
@@ -332,6 +341,6 @@ ZEROINSEARCH: {
 
 my $schema2 = DBICTest::Schema->connect($dsn, $user, $pass);
 $schema2->resultset("Artist")->find(4);
-isa_ok($schema2->storage->sql_maker, 'DBIx::Class::SQLAHacks::MySQL');
+isa_ok($schema2->storage->sql_maker, 'DBIx::Class::SQLMaker::MySQL');
 
 done_testing;

@@ -1,5 +1,5 @@
 use strict;
-use warnings;  
+use warnings;
 
 use Test::More;
 use lib qw(t/lib);
@@ -9,8 +9,6 @@ my ($dsn, $dbuser, $dbpass) = @ENV{map { "DBICTEST_PG_${_}" } qw/DSN USER PASS/}
 
 plan skip_all => 'Set $ENV{DBICTEST_PG_DSN}, _USER and _PASS to run this test'
   unless ($dsn && $dbuser);
-
-plan tests => 6;
 
 my $schema = DBICTest::Schema->connection($dsn, $dbuser, $dbpass, { AutoCommit => 1 });
 
@@ -31,6 +29,8 @@ my $dbh = $schema->storage->dbh;
         );
     ],{ RaiseError => 1, PrintError => 1 });
 }
+
+$schema->storage->debug(0); # these tests spew up way too much stuff, disable trace
 
 my $big_long_string = "\x00\x01\x02 abcd" x 125000;
 
@@ -80,6 +80,15 @@ my $new;
       $schema->txn_rollback;
     });
   }
+
+  # create with blob from $rs
+  $new = $rs->create({});
+  is($new->bytea, $big_long_string, 'Object has bytea value from $rs');
+  $new->discard_changes;
+  is($new->bytea, $big_long_string, 'bytea value made it to db');
 }
 
-$dbh->do("DROP TABLE bindtype_test");
+done_testing;
+
+eval { $dbh->do("DROP TABLE bindtype_test") };
+

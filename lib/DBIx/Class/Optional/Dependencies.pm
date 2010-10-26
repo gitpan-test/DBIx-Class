@@ -12,16 +12,26 @@ use Carp;
 # Makefile.PL in $AUTHOR mode
 
 my $moose_basic = {
-  'Moose'                      => '0.98',
-  'MooseX::Types'              => '0.21',
+  'Moose'                         => '0.98',
+  'MooseX::Types'                 => '0.21',
+};
+
+my $replicated = {
+  %$moose_basic,
+  'Hash::Merge'                   => '0.12',
 };
 
 my $admin_basic = {
   %$moose_basic,
-  'MooseX::Types::Path::Class' => '0.05',
-  'MooseX::Types::JSON'        => '0.02',
-  'JSON::Any'                  => '1.22',
-  'namespace::autoclean'       => '0.09',
+  'MooseX::Types::Path::Class'    => '0.05',
+  'MooseX::Types::JSON'           => '0.02',
+  'JSON::Any'                     => '1.22',
+  'namespace::autoclean'          => '0.09',
+};
+
+my $datetime_basic = {
+  'DateTime'                      => '0.55',
+  'DateTime::Format::Strptime'    => '1.2',
 };
 
 my $reqs = {
@@ -30,15 +40,20 @@ my $reqs = {
   },
 
   replicated => {
-    req => {
-      %$moose_basic,
-      'Hash::Merge'               => '0.12',
-    },
+    req => $replicated,
     pod => {
       title => 'Storage::Replicated',
       desc => 'Modules required for L<DBIx::Class::Storage::DBI::Replicated>',
     },
   },
+
+  test_replicated => {
+    req => {
+      %$replicated,
+      'Test::Moose'               => '0',
+    },
+  },
+
 
   admin => {
     req => {
@@ -99,33 +114,45 @@ my $reqs = {
     },
   },
 
-  test_cycle => {
+  test_leaks => {
     req => {
       'Test::Memory::Cycle'       => '0',
       'Devel::Cycle'              => '1.10',
     },
   },
 
-  test_dtrelated => {
+  test_dt => {
+    req => $datetime_basic,
+  },
+
+  test_dt_sqlite => {
     req => {
+      %$datetime_basic,
       # t/36datetime.t
       # t/60core.t
       'DateTime::Format::SQLite'  => '0',
-
-      # t/96_is_deteministic_value.t
-      'DateTime::Format::Strptime'=> '0',
-
-      # t/inflate/datetime_mysql.t
-      # (doesn't need Mysql itself)
-      'DateTime::Format::MySQL' => '0',
-
-      # t/inflate/datetime_pg.t
-      # (doesn't need PG itself)
-      'DateTime::Format::Pg'  => '0',
     },
   },
 
-  cdbicompat => {
+  test_dt_mysql => {
+    req => {
+      %$datetime_basic,
+      # t/inflate/datetime_mysql.t
+      # (doesn't need Mysql itself)
+      'DateTime::Format::MySQL'   => '0',
+    },
+  },
+
+  test_dt_pg => {
+    req => {
+      %$datetime_basic,
+      # t/inflate/datetime_pg.t
+      # (doesn't need PG itself)
+      'DateTime::Format::Pg'      => '0.16004',
+    },
+  },
+
+  test_cdbicompat => {
     req => {
       'DBIx::ContextualFetch'     => '0',
       'Class::DBI::Plugin::DeepAbstractSearch' => '0',
@@ -136,7 +163,7 @@ my $reqs = {
     },
   },
 
-  rdbms_pg => {
+  test_rdbms_pg => {
     req => {
       $ENV{DBICTEST_PG_DSN}
         ? (
@@ -146,7 +173,7 @@ my $reqs = {
     },
   },
 
-  rdbms_mysql => {
+  test_rdbms_mysql => {
     req => {
       $ENV{DBICTEST_MYSQL_DSN}
         ? (
@@ -155,16 +182,17 @@ my $reqs = {
     },
   },
 
-  rdbms_oracle => {
+  test_rdbms_oracle => {
     req => {
       $ENV{DBICTEST_ORA_DSN}
         ? (
           'DateTime::Format::Oracle' => '0',
+          'DBD::Oracle'              => '1.24',
         ) : ()
     },
   },
 
-  rdbms_ase => {
+  test_rdbms_ase => {
     req => {
       $ENV{DBICTEST_SYBASE_DSN}
         ? (
@@ -173,16 +201,7 @@ my $reqs = {
     },
   },
 
-  rdbms_asa => {
-    req => {
-      (scalar grep { $ENV{$_} } (qw/DBICTEST_SYBASE_ASA_DSN DBICTEST_SYBASE_ASA_ODBC_DSN/) )
-        ? (
-          'DateTime::Format::Strptime' => 0,
-        ) : ()
-    },
-  },
-
-  rdbms_db2 => {
+  test_rdbms_db2 => {
     req => {
       $ENV{DBICTEST_DB2_DSN}
         ? (
@@ -214,9 +233,7 @@ sub req_ok_for {
   croak "req_ok_for() expects a requirement group name"
     unless $group;
 
-  $class->_check_deps ($group) unless $req_availability_cache{$group};
-
-  return $req_availability_cache{$group}{status};
+  return $class->_check_deps($group)->{status};
 }
 
 sub req_missing_for {
@@ -225,9 +242,7 @@ sub req_missing_for {
   croak "req_missing_for() expects a requirement group name"
     unless $group;
 
-  $class->_check_deps ($group) unless $req_availability_cache{$group};
-
-  return $req_availability_cache{$group}{missing};
+  return $class->_check_deps($group)->{missing};
 }
 
 sub req_errorlist_for {
@@ -236,44 +251,49 @@ sub req_errorlist_for {
   croak "req_errorlist_for() expects a requirement group name"
     unless $group;
 
-  $class->_check_deps ($group) unless $req_availability_cache{$group};
-
-  return $req_availability_cache{$group}{errorlist};
+  return $class->_check_deps($group)->{errorlist};
 }
 
 sub _check_deps {
   my ($class, $group) = @_;
 
-  my $deps = $class->req_list_for ($group);
+  return $req_availability_cache{$group} ||= do {
 
-  my %errors;
-  for my $mod (keys %$deps) {
-    if (my $ver = $deps->{$mod}) {
-      eval "use $mod $ver ()";
+    my $deps = $class->req_list_for ($group);
+
+    my %errors;
+    for my $mod (keys %$deps) {
+      my $req_line = "require $mod;";
+      if (my $ver = $deps->{$mod}) {
+        $req_line .= "$mod->VERSION($ver);";
+      }
+
+      eval $req_line;
+
+      $errors{$mod} = $@ if $@;
+    }
+
+    my $res;
+
+    if (keys %errors) {
+      my $missing = join (', ', map { $deps->{$_} ? "$_ >= $deps->{$_}" : $_ } (sort keys %errors) );
+      $missing .= " (see $class for details)" if $reqs->{$group}{pod};
+      $res = {
+        status => 0,
+        errorlist => \%errors,
+        missing => $missing,
+      };
     }
     else {
-      eval "require $mod";
+      $res = {
+        status => 1,
+        errorlist => {},
+        missing => '',
+      };
     }
 
-    $errors{$mod} = $@ if $@;
-  }
-
-  if (keys %errors) {
-    my $missing = join (', ', map { $deps->{$_} ? "$_ >= $deps->{$_}" : $_ } (sort keys %errors) );
-    $missing .= " (see $class for details)" if $reqs->{$group}{pod};
-    $req_availability_cache{$group} = {
-      status => 0,
-      errorlist => { %errors },
-      missing => $missing,
-    };
-  }
-  else {
-    $req_availability_cache{$group} = {
-      status => 1,
-      errorlist => {},
-      missing => '',
-    };
-  }
+    $res;
+  };
 }
 
 sub req_group_list {
@@ -282,34 +302,30 @@ sub req_group_list {
 
 # This is to be called by the author only (automatically in Makefile.PL)
 sub _gen_pod {
+  my ($class, $distver) = @_;
 
-  my $class = shift;
   my $modfn = __PACKAGE__ . '.pm';
   $modfn =~ s/\:\:/\//g;
 
   my $podfn = __FILE__;
   $podfn =~ s/\.pm$/\.pod/;
 
-  my $distver =
+  $distver ||=
     eval { require DBIx::Class; DBIx::Class->VERSION; }
       ||
-    do {
-      warn
+    die
 "\n\n---------------------------------------------------------------------\n" .
 'Unable to load core DBIx::Class module to determine current version, '.
 'possibly due to missing dependencies. Author-mode autodocumentation ' .
 "halted\n\n" . $@ .
 "\n\n---------------------------------------------------------------------\n"
-      ;
-      '*UNKNOWN*';  # rv
-    }
   ;
 
   my $sqltver = $class->req_list_for ('deploy')->{'SQL::Translator'}
     or die "Hrmm? No sqlt dep?";
 
   my @chunks = (
-    <<"EOC",
+    <<'EOC',
 #########################################################################
 #####################  A U T O G E N E R A T E D ########################
 #########################################################################
@@ -322,7 +338,7 @@ EOC
     '=head1 NAME',
     "$class - Optional module dependency specifications (for module authors)",
     '=head1 SYNOPSIS',
-    <<EOS,
+    <<"EOS",
 Somewhere in your build-file (e.g. L<Module::Install>'s Makefile.PL):
 
   ...
@@ -384,10 +400,10 @@ EOD
     '=head1 METHODS',
     '=head2 req_group_list',
     '=over',
-    '=item Arguments: $none',
+    '=item Arguments: none',
     '=item Returns: \%list_of_requirement_groups',
     '=back',
-    <<EOD,
+    <<'EOD',
 This method should be used by DBIx::Class packagers, to get a hashref of all
 dependencies keyed by dependency group. Each key (group name) can be supplied
 to one of the group-specific methods below.
@@ -398,7 +414,7 @@ EOD
     '=item Arguments: $group_name',
     '=item Returns: \%list_of_module_version_pairs',
     '=back',
-    <<EOD,
+    <<'EOD',
 This method should be used by DBIx::Class extension authors, to determine the
 version of modules a specific feature requires in the B<current> version of
 DBIx::Class. See the L</SYNOPSIS> for a real-world
@@ -410,14 +426,17 @@ EOD
     '=item Arguments: $group_name',
     '=item Returns: 1|0',
     '=back',
-    'Returns true or false depending on whether all modules required by C<$group_name> are present on the system and loadable',
+    <<'EOD',
+Returns true or false depending on whether all modules required by
+C<$group_name> are present on the system and loadable.
+EOD
 
     '=head2 req_missing_for',
     '=over',
     '=item Arguments: $group_name',
     '=item Returns: $error_message_string',
     '=back',
-    <<EOD,
+    <<"EOD",
 Returns a single line string suitable for inclusion in larger error messages.
 This method would normally be used by DBIx::Class core-module author, to
 indicate to the user that he needs to install specific modules before he will
