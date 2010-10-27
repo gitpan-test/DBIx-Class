@@ -110,6 +110,12 @@ lib/DBIx/Class/Row.pm
 lib/DBIx/Class/Schema.pm
 lib/DBIx/Class/Schema/Versioned.pm
 lib/DBIx/Class/Serialize/Storable.pm
+lib/DBIx/Class/SQLAHacks.pm
+lib/DBIx/Class/SQLAHacks/MSSQL.pm
+lib/DBIx/Class/SQLAHacks/MySQL.pm
+lib/DBIx/Class/SQLAHacks/Oracle.pm
+lib/DBIx/Class/SQLAHacks/OracleJoins.pm
+lib/DBIx/Class/SQLAHacks/SQLite.pm
 lib/DBIx/Class/SQLMaker.pm
 lib/DBIx/Class/SQLMaker/LimitDialects.pm
 lib/DBIx/Class/SQLMaker/MSSQL.pm
@@ -490,6 +496,7 @@ t/prefetch/grouped.t
 t/prefetch/incomplete.t
 t/prefetch/join_type.t
 t/prefetch/multiple_hasmany.t
+t/prefetch/o2m_o2m_order_by_with_limit.t
 t/prefetch/one_to_many_to_one.t
 t/prefetch/standard.t
 t/prefetch/via_search_related.t

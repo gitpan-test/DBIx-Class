@@ -1,5 +1,11 @@
 Revision history for DBIx::Class
 
+0.08123_03 2010-10-27 23:23 (UTC)
+    * Fixes
+        - Add various missing things to Optional::Dependencies
+        - Skip a test that breaks due to serious bugs in current DBD::SQLite
+
+
 0.08123_02 2010-10-26 14:59 (UTC)
     * New Features / Changes
         - Add new -ident "function" indicating rhs is a column name
@@ -29,15 +35,17 @@ Revision history for DBIx::Class
           when the supplied data does not fully specify $constraint
         - find( col1 => $val1, col2 => $val2, ... ) is no longer supported
           (it has been in deprecated state for more than 4 years)
+        - Make sure exception_action does not allow exception-hiding
+          due to badly-written handlers (the mechanism was never meant
+          to be able to suppress exceptions)
 
     * Fixes
         - Fix memory leak during populate() on 5.8.x perls
         - Temporarily fixed 5.13.x failures (RT#58225)
           (perl-core fix still pending)
         - Fix result_soutrce_instance leaks on compose_namespace
-        - Make sure exception_action does not allow exception-hiding
-          due to badly-written handlers (the mechanism was never meant
-          to be able to suppress exceptions)
+        - Fix $_ volatility on load_namespaces (a class changing $_
+          at compile time no longer causes a massive fail)
         - Fix find() without a key attr. choosing constraints even if
           some of the supplied values are NULL (RT#59219)
         - Fixed rels ending with me breaking subqueried limit realiasing
@@ -45,6 +53,8 @@ Revision history for DBIx::Class
           -or condition
         - Remove rogue GROUP BY on non-multiplying prefetch-induced
           subqueries
+        - Fix incorrect order_by handling with prefetch on
+          $ordered_rs->search_related ('has_many_rel') resultsets
         - Oracle sequence detection now *really* works across schemas
           (fixed some ommissions from 0.08123)
         - dbicadmin now uses a /usr/bin/env shebang to work better with
@@ -78,8 +88,6 @@ Revision history for DBIx::Class
           (first trigger instead of trigger for column)
 
     * Misc
-        - Refactored capability handling in Storage::DBI, allows for
-          standardized capability handling wrt query/enable/disable
         - Entire test suite now passes under DBIC_TRACE=1
         - Makefile.PL no longer imports GetOptions() to interoperate
           better with Catalyst installers
