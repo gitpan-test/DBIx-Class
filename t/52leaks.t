@@ -12,17 +12,17 @@ BEGIN {
 }
 
 use Test::More;
+
+use lib qw(t/lib);
+use DBICTest::RunMode;
 BEGIN {
-  plan skip_all => '5.13.6 leaks like a sieve (fixed in blead/cefd5c7c)'
-    if $] == '5.013006';
+  plan skip_all => "Your perl version $] appears to leak like a sieve - skipping test"
+    if DBICTest::RunMode->peepeeness;
 }
 
 use Scalar::Util qw/refaddr reftype weaken/;
 use Carp qw/longmess/;
 use Try::Tiny;
-
-use lib qw(t/lib);
-use DBICTest::RunMode;
 
 my $have_test_cycle;
 BEGIN {
@@ -156,7 +156,11 @@ memory_cycle_ok($weak_registry, 'No cycles in the weakened object collection')
 # Naturally we have some exceptions
 my $cleared;
 for my $slot (keys %$weak_registry) {
-  if ($slot =~ /^\QSQL::Translator/) {
+  if ($slot =~ /^\QTest::Builder/) {
+    # T::B 2.0 has result objects and other fancyness
+    delete $weak_registry->{$slot};
+  }
+  elsif ($slot =~ /^\QSQL::Translator/) {
     # SQLT is a piece of shit, leaks all over
     delete $weak_registry->{$slot};
   }
