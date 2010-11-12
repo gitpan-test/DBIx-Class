@@ -84,9 +84,14 @@ $schema->class('Track')->load_components('PK::Auto::Oracle');
 
 # test primary key handling with multiple triggers
 my $new = $schema->resultset('Artist')->create({ name => 'foo' });
-is($new->artistid, 1, "Oracle Auto-PK worked");
+is($new->artistid, 1, "Oracle Auto-PK worked for sqlt-like trigger");
 
-like ($new->result_source->column_info('artistid')->{sequence}, qr/\.artist_pk_seq$/, 'Correct PK sequence selected');
+like ($new->result_source->column_info('artistid')->{sequence}, qr/\.artist_pk_seq$/, 'Correct PK sequence selected for sqlt-like trigger');
+
+$new = $schema->resultset('CD')->create({ artist => 1, title => 'foo', year => '2003' });
+is($new->cdid, 1, "Oracle Auto-PK worked for custom trigger");
+
+like ($new->result_source->column_info('cdid')->{sequence}, qr/\.cd_seq$/, 'Correct PK sequence selected for custom trigger');
 
 # test again with fully-qualified table name
 my $artistfqn_rs = $schema->resultset('ArtistFQN');
@@ -120,7 +125,7 @@ is( $it->next->name, "Artist 6", "iterator->next ok" );
 is( $it->next, undef, "next past end of resultset ok" );
 
 my $cd = $schema->resultset('CD')->create({ artist => 1, title => 'EP C', year => '2003' });
-is($cd->cdid, 1, "Oracle Auto-PK worked - using scalar ref as table name");
+is($cd->cdid, 2, "Oracle Auto-PK worked - using scalar ref as table name");
 
 # test rel names over the 30 char limit
 {
@@ -131,7 +136,7 @@ is($cd->cdid, 1, "Oracle Auto-PK worked - using scalar ref as table name");
   });
 
   lives_and {
-    is $query->first->cds_very_very_very_long_relationship_name->first->cdid, 1
+    is $query->first->cds_very_very_very_long_relationship_name->first->cdid, 2
   } 'query with rel name over 30 chars survived and worked';
 
   # rel name over 30 char limit with user condition
@@ -613,27 +618,27 @@ if ( $schema->storage->isa('DBIx::Class::Storage::DBI::Oracle::Generic') ) {
     # combine a connect_by with group_by and having
     {
       my $rs = $schema->resultset('Artist')->search({}, {
-        select => ['count(rank)'],
+        select => { count => 'rank', -as => 'cnt' },
         start_with => { name => 'root' },
         connect_by => { parentid => { -prior => { -ident => 'artistid' } } },
         group_by => ['rank'],
-        having => { 'count(rank)' => { '<', 2 } },
+        having => \[ 'count(rank) < ?', [ cnt => 2 ] ],
       });
 
       is_same_sql_bind (
         $rs->as_query,
         '(
-            SELECT count(rank)
+            SELECT COUNT(rank) AS cnt
             FROM artist me
             START WITH name = ?
             CONNECT BY parentid = PRIOR artistid
             GROUP BY rank HAVING count(rank) < ?
         )',
-        [ [ name => 'root' ], [ 'count(rank)' => 2 ] ],
+        [ [ name => 'root' ], [ cnt => 2 ] ],
       );
 
       is_deeply (
-        [ $rs->get_column ('count(rank)')->all ],
+        [ $rs->get_column ('cnt')->all ],
         [1, 1],
         'Group By a Connect By query - correct values'
       );
@@ -662,7 +667,8 @@ if ( $schema->storage->isa('DBIx::Class::Storage::DBI::Oracle::Generic') ) {
 
       my $rs = $schema->resultset('Artist')->search({}, {
         start_with => { name => 'cycle-root' },
-        '+select'  => [ \ 'CONNECT_BY_ISCYCLE' ],
+        '+select'  => \ 'CONNECT_BY_ISCYCLE',
+        '+as'      => [ 'connector' ],
         connect_by_nocycle => { parentid => { -prior => { -ident => 'artistid' } } },
       });
 
@@ -682,7 +688,7 @@ if ( $schema->storage->isa('DBIx::Class::Storage::DBI::Oracle::Generic') ) {
         'got artist tree with nocycle (name)',
       );
       is_deeply (
-        [ $rs->get_column ('CONNECT_BY_ISCYCLE')->all ],
+        [ $rs->get_column ('connector')->all ],
         [ qw/1 0 0 0/ ],
         'got artist tree with nocycle (CONNECT_BY_ISCYCLE)',
       );
@@ -831,23 +837,18 @@ sub do_creates {
     CREATE OR REPLACE TRIGGER cd_insert_trg
     BEFORE INSERT OR UPDATE ON cd
     FOR EACH ROW
+    DECLARE
+    tmpVar NUMBER;
+
     BEGIN
+      tmpVar := 0;
+
       IF :new.cdid IS NULL THEN
         SELECT cd_seq.nextval
-        INTO :new.cdid
-        FROM DUAL;
-      END IF;
-    END;
-  });
-  $dbh->do(qq{
-    CREATE OR REPLACE TRIGGER cd_insert_trg
-    BEFORE INSERT ON cd
-    FOR EACH ROW
-    BEGIN
-      IF :new.cdid IS NULL THEN
-        SELECT cd_seq.nextval
-        INTO :new.cdid
-        FROM DUAL;
+        INTO tmpVar
+        FROM dual;
+
+        :new.cdid := tmpVar;
       END IF;
     END;
   });

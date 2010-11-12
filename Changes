@@ -1,5 +1,31 @@
 Revision history for DBIx::Class
 
+    * New Features / Changes
+        - New method ResultSource columns_info method, returning multiple
+          pairs of column name/info at once
+        - $rs->search now throws when called in void context, as it makes
+          no sense (and is nearly always a sign of a bug/misdesign)
+        - Deprecate legacy $rs->search( %condition ) syntax
+        - NULL is now supplied unquoted to all debug-objects, in order to
+          differentiate between a real NULL and the string 'NULL'
+
+    * Fixes
+        - Fixed read-only attribute set attempt in ::Storage::Replicated
+          (RT#62642)
+        - Fix incomplete logic while detecting correct Oracle sequence
+          on insert
+        - Fixed incorrect composition of select/as/columns attributes diring
+          chaining (RT#61235)
+        - Refactor handling of RDBMS-side values during insert() - fix
+          regression of inserts into a Postgres / ::Replicated combination
+        - Missing dependency check in t/60core.t (RT#62635)
+        - Fix regressions in IC::DT registration logic
+        - Switch all serialization to use Storable::nfreeze for portable
+          architecture independent ice
+
+    * Fixes
+        - Proper serialization of resultsets with open cursors
+
 0.08124 2010-10-28 14:23 (UTC)
     * New Features / Changes
         - Add new -ident "function" indicating rhs is a column name

@@ -244,7 +244,7 @@ t/87ordered.t
 t/88result_set_column.t
 t/90ensure_class_loaded.t
 t/90join_torture.t
-t/91merge_attr.t
+t/91merge_joinpref_attr.t
 t/93autocast.t
 t/93nobindvars.t
 t/93single_accessor_object.t
@@ -528,6 +528,7 @@ t/search/related_has_many.t
 t/search/related_strip_prefetch.t
 t/search/select_chains.t
 t/search/subquery.t
+t/search/void.t
 t/sqlmaker/core.t
 t/sqlmaker/core_quoted.t
 t/sqlmaker/limit_dialects/custom.t
