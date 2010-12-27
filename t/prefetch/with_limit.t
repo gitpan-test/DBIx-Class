@@ -84,6 +84,15 @@ throws_ok (
   'single() with multiprefetch is illegal',
 );
 
+throws_ok (
+  sub {
+    $use_prefetch->search(
+      {'tracks.title' => { '!=' => 'foo' }},
+      { order_by => \ 'some oddball literal sql', join => { cds => 'tracks' } }
+    )->next
+  }, qr/A required group_by clause could not be constructed automatically/,
+);
+
 my $artist = $use_prefetch->search({'cds.title' => $artist_many_cds->cds->first->title })->next;
 is($artist->cds->count, 1, "count on search limiting prefetched has_many");
 
@@ -102,7 +111,7 @@ is_same_sql_bind (
   '(
     SELECT
         me.cdid, me.artist, me.title, me.year, me.genreid, me.single_track,
-        tracks.trackid, tracks.cd, tracks.position, tracks.title, tracks.last_updated_on, tracks.last_updated_at, tracks.small_dt,
+        tracks.trackid, tracks.cd, tracks.position, tracks.title, tracks.last_updated_on, tracks.last_updated_at,
         artist.artistid, artist.name, artist.rank, artist.charfield
       FROM (
         SELECT

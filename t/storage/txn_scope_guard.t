@@ -24,7 +24,7 @@ use DBICTest;
     });
 
    $guard->commit;
-  } qr/No such column made_up_column .*? at .*?$fn line \d+/s, "Error propogated okay";
+  } qr/No such column made_up_column .*? at .*?\Q$fn\E line \d+/s, "Error propogated okay";
 
   ok(!$artist_rs->find({name => 'Death Cab for Cutie'}), "Artist not created");
 
@@ -104,7 +104,10 @@ use DBICTest;
     #$schema->storage->_dbh( $schema->storage->_dbh->clone );
 
     die 'Deliberate exception';
-  }, qr/Deliberate exception.+Rollback failed/s);
+  }, ($] >= 5.013008 )
+    ? qr/Deliberate exception/s # temporary until we get the generic exception wrapper rolling
+    : qr/Deliberate exception.+Rollback failed/s
+  );
 
   # just to mask off warning since we could not disconnect above
   $schema->storage->_dbh->disconnect;

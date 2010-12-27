@@ -27,7 +27,7 @@ sub component_base_class { 'DBIx::Class' }
 # Always remember to do all digits for the version even if they're 0
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
-$VERSION = '0.08124_001';
+$VERSION = '0.08125';
 
 $VERSION = eval $VERSION if $VERSION =~ /_/; # numify for warning-free dev releases
 
@@ -60,6 +60,8 @@ DBIx::Class - Extensible and flexible object <-> relational mapper.
 The community can be found via:
 
 =over
+
+=item * Web Site: L<http://www.dbix-class.org/>
 
 =item * IRC: irc.perl.org#dbix-class
 
@@ -114,7 +116,7 @@ MyDB/Schema/Result/CD.pm:
   __PACKAGE__->table('cd');
   __PACKAGE__->add_columns(qw/ cdid artistid title year /);
   __PACKAGE__->set_primary_key('cdid');
-  __PACKAGE__->belongs_to(artist => 'MyDB::Schema::Artist', 'artistid');
+  __PACKAGE__->belongs_to(artist => 'MyDB::Schema::Result::Artist', 'artistid');
 
   1;
 
@@ -195,7 +197,8 @@ resultset is used as an iterator it only fetches rows off the statement
 handle as requested in order to minimise memory usage. It has auto-increment
 support for SQLite, MySQL, PostgreSQL, Oracle, SQL Server and DB2 and is
 known to be used in production on at least the first four, and is fork-
-and thread-safe out of the box (although your DBD may not be).
+and thread-safe out of the box (although
+L<your DBD may not be|DBI/Threads_and_Thread_Safety>).
 
 This project is still under rapid development, so large new features may be
 marked EXPERIMENTAL - such APIs are still usable but may have edge bugs.
@@ -230,6 +233,8 @@ abraxxa: Alexander Hartmaier <abraxxa@cpan.org>
 aherzog: Adam Herzog <adam@herzogdesigns.com>
 
 Alexander Keusch <cpan@keusch.at>
+
+alnewkirk: Al Newkirk <we@ana.im>
 
 amiri: Amiri Barksdale <amiri@metalabel.com>
 
@@ -295,6 +300,8 @@ hobbs: Andrew Rodland <arodland@cpan.org>
 
 ilmari: Dagfinn Ilmari MannsE<aring>ker <ilmari@ilmari.org>
 
+initself: Mike Baas <mike@initselftech.com>
+
 jasonmay: Jason May <jason.a.may@gmail.com>
 
 jesper: Jesper Krogh
@@ -310,6 +317,8 @@ jnapiorkowski: John Napiorkowski <jjn1056@yahoo.com>
 jon: Jon Schutz <jjschutz@cpan.org>
 
 jshirley: J. Shirley <jshirley@gmail.com>
+
+kaare: Kaare Rasmussen
 
 konobi: Scott McWhirter
 
@@ -382,6 +391,8 @@ semifor: Marc Mims <marc@questright.com>
 solomon: Jared Johnson <jaredj@nmgi.com>
 
 spb: Stephen Bennett <stephen@freenode.net>
+
+Squeeks <squeek@cpan.org>
 
 sszabo: Stephan Szabo <sszabo@bigpanda.com>
 

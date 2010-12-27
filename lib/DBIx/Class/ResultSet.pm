@@ -9,15 +9,20 @@ use Data::Page;
 use Storable;
 use DBIx::Class::ResultSetColumn;
 use DBIx::Class::ResultSourceHandle;
-use List::Util ();
 use Hash::Merge ();
 use Scalar::Util qw/blessed weaken/;
 use Try::Tiny;
 use Storable qw/nfreeze thaw/;
+
+# not importing first() as it will clash with our own method
+use List::Util ();
+
 use namespace::clean;
+
 
 BEGIN {
   # De-duplication in _merge_attr() is disabled, but left in for reference
+  # (the merger is used for other things that ought not to be de-duped)
   *__HM_DEDUP = sub () { 0 };
 }
 
@@ -202,6 +207,10 @@ sub new {
 
   $attrs->{alias} ||= 'me';
 
+  # default selection list
+  $attrs->{columns} = [ $source->resolve->columns ]
+    unless List::Util::first { exists $attrs->{$_} } qw/columns cols select as _trailing_select/;
+
   # Creation of {} and bless separated to mitigate RH perl bug
   # see https://bugzilla.redhat.com/show_bug.cgi?id=196836
   my $self = {
@@ -267,15 +276,22 @@ sub search {
   my $self = shift;
   my $rs = $self->search_rs( @_ );
 
-  my $want = wantarray;
-  if ($want) {
+  if (wantarray) {
     return $rs->all;
   }
-  elsif (defined $want) {
+  elsif (defined wantarray) {
     return $rs;
   }
   else {
-    $self->throw_exception ('->search is *not* a mutator, calling it in void context makes no sense');
+    # we can be called by a relationship helper, which in
+    # turn may be called in void context due to some braindead
+    # overload or whatever else the user decided to be clever
+    # at this particular day. Thus limit the exception to
+    # external code calls only
+    $self->throw_exception ('->search is *not* a mutator, calling it in void context makes no sense')
+      if (caller)[0] !~ /^\QDBIx::Class::/;
+
+    return ();
   }
 }
 
@@ -294,6 +310,7 @@ always return a resultset, even in list context.
 
 =cut
 
+my $callsites_warned;
 sub search_rs {
   my $self = shift;
 
@@ -320,26 +337,62 @@ sub search_rs {
     $cache = $self->get_cache;
   }
 
+  my $rsrc = $self->result_source;
+
   my $old_attrs = { %{$self->{attrs}} };
   my $old_having = delete $old_attrs->{having};
   my $old_where = delete $old_attrs->{where};
 
-  # reset the selector list
-  if (List::Util::first { exists $call_attrs->{$_} } qw{columns select as}) {
-     delete @{$old_attrs}{qw{select as columns +select +as +columns include_columns}};
-  }
 
+  # start with blind overwriting merge
   my $new_attrs = { %{$old_attrs}, %{$call_attrs} };
 
-  # merge new attrs into inherited
+  # join/prefetch use their own crazy merging heuristics
   foreach my $key (qw/join prefetch/) {
-    next unless exists $call_attrs->{$key};
-    $new_attrs->{$key} = $self->_merge_joinpref_attr($old_attrs->{$key}, $call_attrs->{$key});
+    $new_attrs->{$key} = $self->_merge_joinpref_attr($old_attrs->{$key}, $call_attrs->{$key})
+      if exists $call_attrs->{$key};
   }
-  foreach my $key (qw/+select +as +columns include_columns bind/) {
-    next unless exists $call_attrs->{$key};
-    $new_attrs->{$key} = $self->_merge_attr($old_attrs->{$key}, $call_attrs->{$key});
+
+  # stack binds together
+  $new_attrs->{bind} = [ @{ $old_attrs->{bind} || [] }, @{ $call_attrs->{bind} || [] } ];
+
+  # take care of selects (only if anything changed)
+  if (keys %$call_attrs) {
+
+    $self->throw_exception ('_trailing_select is not a public attribute - do not use it in search()')
+      if exists $call_attrs->{_trailing_select};
+
+    my @selector_attrs = qw/select as columns cols +select +as +columns include_columns/;
+
+    # reset the current selector list if new selectors are supplied
+    if (List::Util::first { exists $call_attrs->{$_} } qw/columns cols select as/) {
+      # the new/old acrobatics is because of the merger in the next loop
+      for ($new_attrs, $old_attrs) {
+        delete @{$_}{@selector_attrs, '_trailing_select'};
+      }
+    }
+
+    for (@selector_attrs) {
+      $new_attrs->{$_} = $self->_merge_attr($old_attrs->{$_}, $call_attrs->{$_})
+        if ( exists $old_attrs->{$_} or exists $call_attrs->{$_} );
+    }
+
+    # older deprecated name, use only if {columns} is not there
+    if (my $c = delete $new_attrs->{cols}) {
+      if ($new_attrs->{columns}) {
+        carp "Resultset specifies both the 'columns' and the legacy 'cols' attributes - ignoring 'cols'";
+      }
+      else {
+        $new_attrs->{columns} = $c;
+      }
+    }
+
+    # Normalize the selector list (operates on the passed-in attr structure)
+    # Need to do it on every chain instead of only once on _resolved_attrs, in
+    # order to separate 'as'-ed from blind 'select's
+    $self->_normalize_selection ($new_attrs);
   }
+
 
   # rip apart the rest of @_, parse a condition
   my $call_cond = do {
@@ -359,8 +412,17 @@ sub search_rs {
 
   } if @_;
 
-  carp 'search( %condition ) is deprecated, use search( \%condition ) instead'
-    if (@_ > 1 and ! $self->result_source->result_class->isa('DBIx::Class::CDBICompat') );
+  if( @_ > 1 and ! $rsrc->result_class->isa('DBIx::Class::CDBICompat') ) {
+    # determine callsite obeying Carp::Clan rules (fucking ugly but don't have better ideas)
+    my $callsite = do {
+      my $w;
+      local $SIG{__WARN__} = sub { $w = shift };
+      carp;
+      $w
+    };
+    carp 'search( %condition ) is deprecated, use search( \%condition ) instead'
+      unless $callsites_warned->{$callsite}++;
+  }
 
   for ($old_where, $call_cond) {
     if (defined $_) {
@@ -376,11 +438,102 @@ sub search_rs {
     )
   }
 
-  my $rs = (ref $self)->new($self->result_source, $new_attrs);
+  my $rs = (ref $self)->new($rsrc, $new_attrs);
 
   $rs->set_cache($cache) if ($cache);
 
   return $rs;
+}
+
+sub _normalize_selection {
+  my ($self, $attrs) = @_;
+
+  # merge all balanced selectors into the 'columns' stack, deleting the rest
+  foreach my $key (qw/+columns include_columns/) {
+    $attrs->{columns} = $self->_merge_attr($attrs->{columns}, delete $attrs->{$key})
+      if exists $attrs->{$key};
+  }
+
+  # select/as +select/+as pairs need special handling - the amount of select/as
+  # elements in each pair does *not* have to be equal (think multicolumn
+  # selectors like distinct(foo, bar) ). If the selector is bare (no 'as'
+  # supplied at all) - try to infer the alias, either from the -as parameter
+  # of the selector spec, or use the parameter whole if it looks like a column
+  # name (ugly legacy heuristic). If all fails - leave the selector bare (which
+  # is ok as well), but transport it over a separate attribute to make sure it is
+  # the last thing in the select list, thus unable to throw off the corresponding
+  # 'as' chain
+  for my $pref ('', '+') {
+
+    my ($sel, $as) = map {
+      my $key = "${pref}${_}";
+
+      my $val = [ ref $attrs->{$key} eq 'ARRAY'
+        ? @{$attrs->{$key}}
+        : $attrs->{$key} || ()
+      ];
+      delete $attrs->{$key};
+      $val;
+    } qw/select as/;
+
+    if (! @$as and ! @$sel ) {
+      next;
+    }
+    elsif (@$as and ! @$sel) {
+      $self->throw_exception(
+        "Unable to handle ${pref}as specification (@$as) without a corresponding ${pref}select"
+      );
+    }
+    elsif( ! @$as ) {
+      # no as part supplied at all - try to deduce
+      # if any @$as has been supplied we assume the user knows what (s)he is doing
+      # and blindly keep stacking up pieces
+      my (@new_sel, @new_trailing);
+      for (@$sel) {
+        if ( ref $_ eq 'HASH' and exists $_->{-as} ) {
+          push @$as, $_->{-as};
+          push @new_sel, $_;
+        }
+        # assume any plain no-space, no-parenthesis string to be a column spec
+        # FIXME - this is retarded but is necessary to support shit like 'count(foo)'
+        elsif ( ! ref $_ and $_ =~ /^ [^\s\(\)]+ $/x) {
+          push @$as, $_;
+          push @new_sel, $_;
+        }
+        # if all else fails - shove the selection to the trailing stack and move on
+        else {
+          push @new_trailing, $_;
+        }
+      }
+
+      @$sel = @new_sel;
+      $attrs->{'_trailing_select'} = $self->_merge_attr($attrs->{'_trailing_select'}, \@new_trailing)
+        if @new_trailing;
+    }
+    elsif (@$as < @$sel) {
+      $self->throw_exception(
+        "Unable to handle an ${pref}as specification (@$as) with less elements than the corresponding ${pref}select"
+      );
+    }
+
+    # now see what the result for this pair looks like:
+
+    if (@$as == @$sel) {
+      # if balanced - treat as a columns entry
+      $attrs->{columns} = $self->_merge_attr(
+        $attrs->{columns},
+        { map { $as->[$_] => $sel->[$_] } ( 0 .. $#$as ) }
+      );
+    }
+    else {
+      # unbalanced - shove in select/as, not subject to deduplication in _resolved_attrs
+      $attrs->{select} = $self->_merge_attr($attrs->{select}, $sel);
+      $attrs->{as} = $self->_merge_attr($attrs->{as}, $as);
+    }
+  }
+
+  # simplify
+  delete $attrs->{$_} for grep { $attrs->{$_} and ! @{$attrs->{$_}} } qw/select as columns/;
 }
 
 sub _stack_cond {
@@ -1265,6 +1418,7 @@ sub _count_rs {
   # overwrite the selector (supplied by the storage)
   $tmp_attrs->{select} = $rsrc->storage->_count_select ($rsrc, $attrs);
   $tmp_attrs->{as} = 'count';
+  delete @{$tmp_attrs}{qw/columns _trailing_select/};
 
   my $tmp_rs = $rsrc->resultset_class->new($rsrc, $tmp_attrs)->get_column ('count');
 
@@ -1282,7 +1436,7 @@ sub _count_subq_rs {
 
   my $sub_attrs = { %$attrs };
   # extra selectors do not go in the subquery and there is no point of ordering it, nor locking it
-  delete @{$sub_attrs}{qw/collapse select _prefetch_select as order_by for/};
+  delete @{$sub_attrs}{qw/collapse columns as select _prefetch_select _trailing_select order_by for/};
 
   # if we multi-prefetch we group_by primary keys only as this is what we would
   # get out of the rs via ->next/->all. We *DO WANT* to clobber old group_by regardless
@@ -1302,10 +1456,42 @@ sub _count_subq_rs {
         if (ref $sel eq 'HASH' and $sel->{-as});
     }
 
-    for my $g_part (@$g) {
-      my $colpiece = $sel_index->{$g_part} || $g_part;
+    # anything from the original select mentioned on the group-by needs to make it to the inner selector
+    # also look for named aggregates referred in the having clause
+    # having often contains scalarrefs - thus parse it out entirely
+    my @parts = @$g;
+    if ($attrs->{having}) {
+      local $sql_maker->{having_bind};
+      local $sql_maker->{quote_char} = $sql_maker->{quote_char};
+      local $sql_maker->{name_sep} = $sql_maker->{name_sep};
+      unless (defined $sql_maker->{quote_char} and length $sql_maker->{quote_char}) {
+        $sql_maker->{quote_char} = [ "\x00", "\xFF" ];
+        # if we don't unset it we screw up retarded but unfortunately working
+        # 'MAX(foo.bar)' => { '>', 3 }
+        $sql_maker->{name_sep} = '';
+      }
 
-      # disqualify join-based group_by's. Arcane but possible query
+      my ($lquote, $rquote, $sep) = map { quotemeta $_ } ($sql_maker->_quote_chars, $sql_maker->name_sep);
+
+      my $sql = $sql_maker->_parse_rs_attrs ({ having => $attrs->{having} });
+
+      # search for both a proper quoted qualified string, for a naive unquoted scalarref
+      # and if all fails for an utterly naive quoted scalar-with-function
+      while ($sql =~ /
+        $rquote $sep $lquote (.+?) $rquote
+          |
+        [\s,] \w+ \. (\w+) [\s,]
+          |
+        [\s,] $lquote (.+?) $rquote [\s,]
+      /gx) {
+        push @parts, ($1 || $2 || $3);  # one of them matched if we got here
+      }
+    }
+
+    for (@parts) {
+      my $colpiece = $sel_index->{$_} || $_;
+
+      # unqualify join-based group_by's. Arcane but possible query
       # also horrible horrible hack to alias a column (not a func.)
       # (probably need to introduce SQLA syntax)
       if ($colpiece =~ /\./ && $colpiece !~ /^$attrs->{alias}\./) {
@@ -1957,8 +2143,12 @@ sub pager {
   }
 
   my $attrs = $self->{attrs};
-  $self->throw_exception("Can't create pager for non-paged rs")
-    unless $self->{attrs}{page};
+  if (!defined $attrs->{page}) {
+    $self->throw_exception("Can't create pager for non-paged rs");
+  }
+  elsif ($attrs->{page} <= 0) {
+    $self->throw_exception('Invalid page number (page-numbers are 1-based)');
+  }
   $attrs->{rows} ||= 10;
 
   # throw away the paging flags and re-run the count (possibly
@@ -2705,7 +2895,7 @@ sub is_paged {
 
 sub is_ordered {
   my ($self) = @_;
-  return scalar $self->result_source->storage->_extract_order_columns($self->{attrs}{order_by});
+  return scalar $self->result_source->storage->_extract_order_criteria($self->{attrs}{order_by});
 }
 
 =head2 related_resultset
@@ -3024,134 +3214,46 @@ sub _resolved_attrs {
   my $source = $self->result_source;
   my $alias  = $attrs->{alias};
 
-########
-# resolve selectors, this one is quite hairy
+  # take care of any selector merging
+  $self->_normalize_selection ($attrs);
 
-  my $selection_pieces;
-
-  $attrs->{columns} ||= delete $attrs->{cols}
-    if exists $attrs->{cols};
-
-  # disassemble columns / +columns
-  (
-    $selection_pieces->{columns}{select},
-    $selection_pieces->{columns}{as},
-    $selection_pieces->{'+columns'}{select},
-    $selection_pieces->{'+columns'}{as},
-  ) = map
-    {
-      my (@sel, @as);
-
-      for my $colbit (@$_) {
-
-        if (ref $colbit eq 'HASH') {
-          for my $as (keys %$colbit) {
-            push @sel, $colbit->{$as};
-            push @as, $as;
-          }
-        }
-        elsif ($colbit) {
-          push @sel, $colbit;
-          push @as, $colbit;
-        }
+  # disassemble columns
+  my (@sel, @as);
+  for my $c (@{
+    ref $attrs->{columns} eq 'ARRAY' ? $attrs->{columns} : [ $attrs->{columns} || () ]
+  }) {
+    if (ref $c eq 'HASH') {
+      for my $as (keys %$c) {
+        push @sel, $c->{$as};
+        push @as, $as;
       }
-
-      (\@sel, \@as)
-    }
-    (
-      (ref $attrs->{columns} eq 'ARRAY' ? delete $attrs->{columns} : [ delete $attrs->{columns} ]),
-      # include_columns is a legacy add-on to +columns
-      [ map { ref $_ eq 'ARRAY' ? @$_ : ($_ || () ) } delete @{$attrs}{qw/+columns include_columns/} ] )
-  ;
-
-  # make copies of select/as and +select/+as
-  (
-    $selection_pieces->{'select/as'}{select},
-    $selection_pieces->{'select/as'}{as},
-    $selection_pieces->{'+select/+as'}{select},
-    $selection_pieces->{'+select/+as'}{as},
-  ) = map
-    { $_ ? [ ref $_ eq 'ARRAY' ? @$_ : $_ ] : [] }
-    ( delete @{$attrs}{qw/select as +select +as/} )
-  ;
-
-  # default to * only when neither no non-plus selectors are available
-  if (
-    ! @{$selection_pieces->{'select/as'}{select}}
-      and
-    ! @{$selection_pieces->{'columns'}{select}}
-  ) {
-    for ($source->columns) {
-      push @{$selection_pieces->{'select/as'}{select}}, $_;
-      push @{$selection_pieces->{'select/as'}{as}}, $_;
-    }
-  }
-
-  # final composition order (important)
-  my @sel_pairs = grep {
-    $selection_pieces->{$_}
-      &&
-    (
-      ( $selection_pieces->{$_}{select} && @{$selection_pieces->{$_}{select}} )
-        ||
-      ( $selection_pieces->{$_}{as} && @{$selection_pieces->{$_}{as}} )
-    )
-  } qw|columns select/as +columns +select/+as|;
-
-  # fill in missing as bits for each pair
-  # if it's the last pair we can let things slide ( bare +select is sadly popular)
-  my $out_of_sync;
-
-  for my $i (0 .. $#sel_pairs) {
-
-    my $pairname = $sel_pairs[$i];
-
-    my ($sel, $as) = @{$selection_pieces->{$pairname}}{qw/select as/};
-
-    $self->throw_exception(
-      "Unable to assemble final selection list: $pairname specified in addition to unbalanced $sel_pairs[$i-1]"
-    ) if ($out_of_sync);
-
-    if (@$sel == @$as) {
-      next;
-    }
-    elsif (@$sel < @$as) {
-      $self->throw_exception(
-        "More 'as' elements than 'select' elements for $pairname, unable to continue"
-      );
     }
     else {
-      # try to deduce the 'as' part, will work only if all the selectors are "plain", or contain an explicit -as
-      # if we can not deduce something - stop right there and leave the rest of the selector un-as'ed
-      # if there is an extra selection pair coming after that - it will die due to out_of_sync being set
-      for my $j ($#$as+1 .. $#$sel) {
-        if (my $ref = ref $sel->[$j]) {
-          if ($ref eq 'HASH' and exists $sel->[$j]{-as}) {
-            push @$as, $sel->[$j]{-as};
-          }
-          else {
-            $out_of_sync++;
-            last;
-          }
-        }
-        else {
-          push @$as, $sel->[$j];
-        }
-      }
+      push @sel, $c;
+      push @as, $c;
     }
   }
 
+  # when trying to weed off duplicates later do not go past this point -
+  # everything added from here on is unbalanced "anyone's guess" stuff
+  my $dedup_stop_idx = $#as;
+
+  push @as, @{ ref $attrs->{as} eq 'ARRAY' ? $attrs->{as} : [ $attrs->{as} ] }
+    if $attrs->{as};
+  push @sel, @{ ref $attrs->{select} eq 'ARRAY' ? $attrs->{select} : [ $attrs->{select} ] }
+    if $attrs->{select};
+
+  push @sel, @{$attrs->{_trailing_select}}
+    if $attrs->{_trailing_select};
+
   # assume all unqualified selectors to apply to the current alias (legacy stuff)
-  # disqualify all $alias.col as-bits (collapser mandated)
-  for (values %$selection_pieces) {
-    $_->{select} = [ map { (ref $_ or $_ =~ /\./) ? $_ : "$alias.$_" } @{$_->{select}} ];
-    $_->{as} = [  map { $_ =~ /^\Q$alias.\E(.+)$/ ? $1 : $_ } @{$_->{as}} ];
+  for (@sel) {
+    $_ = (ref $_ or $_ =~ /\./) ? $_ : "$alias.$_";
   }
 
-  # merge everything
-  for (@sel_pairs) {
-    $attrs->{select} = $self->_merge_attr ($attrs->{select}, $selection_pieces->{$_}{select});
-    $attrs->{as} = $self->_merge_attr ($attrs->{as}, $selection_pieces->{$_}{as});
+  # disqualify all $alias.col as-bits (collapser mandated)
+  for (@as) {
+    $_ = ($_ =~ /^\Q$alias.\E(.+)$/) ? $1 : $_;
   }
 
   # de-duplicate the result (remove *identical* select/as pairs)
@@ -3159,16 +3261,15 @@ sub _resolved_attrs {
   # not using a c-style for as the condition is prone to shrinkage
   my $seen;
   my $i = 0;
-  while ($i <= $#{$attrs->{as}} ) {
-    my ($sel, $as) = map { $attrs->{$_}[$i] } (qw/select as/);
-
-    if ($seen->{"$sel \x00\x00 $as"}++) {
-      splice @$_, $i, 1
-        for @{$attrs}{qw/select as/};
+  while ($i <= $dedup_stop_idx) {
+    if ($seen->{"$sel[$i] \x00\x00 $as[$i]"}++) {
+      splice @sel, $i, 1;
+      splice @as, $i, 1;
+      $dedup_stop_idx--;
     }
-    elsif ($seen->{$as}++) {
+    elsif ($seen->{$as[$i]}++) {
       $self->throw_exception(
-        "inflate_result() alias '$as' specified twice with different SQL-side {select}-ors"
+        "inflate_result() alias '$as[$i]' specified twice with different SQL-side {select}-ors"
       );
     }
     else {
@@ -3176,9 +3277,8 @@ sub _resolved_attrs {
     }
   }
 
-## selector resolution done
-########
-
+  $attrs->{select} = \@sel;
+  $attrs->{as} = \@as;
 
   $attrs->{from} ||= [{
     -source_handle => $source->handle,
@@ -3191,7 +3291,7 @@ sub _resolved_attrs {
     $self->throw_exception ('join/prefetch can not be used with a custom {from}')
       if ref $attrs->{from} ne 'ARRAY';
 
-    my $join = delete $attrs->{join} || {};
+    my $join = (delete $attrs->{join}) || {};
 
     if ( defined $attrs->{prefetch} ) {
       $join = $self->_merge_joinpref_attr( $join, $attrs->{prefetch} );
@@ -3238,8 +3338,8 @@ sub _resolved_attrs {
   }
 
   $attrs->{collapse} ||= {};
-  if ( my $prefetch = delete $attrs->{prefetch} ) {
-    $prefetch = $self->_merge_joinpref_attr( {}, $prefetch );
+  if ($attrs->{prefetch}) {
+    my $prefetch = $self->_merge_joinpref_attr( {}, delete $attrs->{prefetch} );
 
     my $prefetch_ordering = [];
 
@@ -3416,13 +3516,13 @@ sub _merge_joinpref_attr {
             my ($defl, $defr) = map { defined $_ } (@_[0,1]);
 
             if ($defl xor $defr) {
-              return $defl ? $_[0] : $_[1];
+              return [ $defl ? $_[0] : $_[1] ];
             }
             elsif (! $defl) {
-              return ();
+              return [];
             }
             elsif (__HM_DEDUP and $_[0] eq $_[1]) {
-              return $_[0];
+              return [ $_[0] ];
             }
             else {
               return [$_[0], $_[1]];
@@ -3434,8 +3534,8 @@ sub _merge_joinpref_attr {
             return [$_[0], @{$_[1]}]
           },
           HASH  => sub {
-            return $_[1] if !defined $_[0];
-            return $_[0] if !keys %{$_[1]};
+            return [ $_[1] ] if !defined $_[0];
+            return [ $_[0] ] if !keys %{$_[1]};
             return [$_[0], $_[1]]
           },
         },
@@ -3461,20 +3561,20 @@ sub _merge_joinpref_attr {
         },
         HASH => {
           SCALAR => sub {
-            return $_[0] if !defined $_[1];
-            return $_[1] if !keys %{$_[0]};
+            return [ $_[0] ] if !defined $_[1];
+            return [ $_[1] ] if !keys %{$_[0]};
             return [$_[0], $_[1]]
           },
           ARRAY => sub {
-            return $_[0] if !@{$_[1]};
+            return [ $_[0] ] if !@{$_[1]};
             return $_[1] if !keys %{$_[0]};
             return $_[1] if __HM_DEDUP and List::Util::first { $_ eq $_[0] } @{$_[1]};
             return [ $_[0], @{$_[1]} ];
           },
           HASH => sub {
-            return $_[0] if !keys %{$_[1]};
-            return $_[1] if !keys %{$_[0]};
-            return $_[0] if $_[0] eq $_[1];
+            return [ $_[0] ] if !keys %{$_[1]};
+            return [ $_[1] ] if !keys %{$_[0]};
+            return [ $_[0] ] if $_[0] eq $_[1];
             return [ $_[0], $_[1] ];
           },
         }
@@ -3947,7 +4047,11 @@ HAVING is a select statement attribute that is applied between GROUP BY and
 ORDER BY. It is applied to the after the grouping calculations have been
 done.
 
-  having => { 'count(employee)' => { '>=', 100 } }
+  having => { 'count_employee' => { '>=', 100 } }
+
+or with an in-place function in which case literal SQL is required:
+
+  having => \[ 'count(employee) >= ?', [ count => 100 ] ]
 
 =head2 distinct
 

@@ -233,12 +233,6 @@ sub connect_call_blob_setup {
     if exists $args{log_on_update};
 }
 
-sub _is_lob_type {
-  my $self = shift;
-  my $type = shift;
-  $type && $type =~ /(?:text|image|lob|bytea|binary|memo)/i;
-}
-
 sub _is_lob_column {
   my ($self, $source, $column) = @_;
 
@@ -260,9 +254,13 @@ sub _prep_for_execute {
     first { $bind_info->{$_}{is_auto_increment} }
     keys %$bind_info
   ;
+
+  my $columns_info = blessed $ident && $ident->columns_info;
+
   my $identity_col =
-    blessed $ident &&
-    first { $_->{is_auto_increment} } values %{ $ident->columns_info }
+    $columns_info &&
+    first { $columns_info->{$_}{is_auto_increment} }
+      keys %$columns_info
   ;
 
   if (($op eq 'insert' && $bound_identity_col) ||
@@ -350,8 +348,11 @@ sub insert {
   my $self = shift;
   my ($source, $to_insert) = @_;
 
+  my $columns_info = $source->columns_info;
+
   my $identity_col =
-    (first { $_->{is_auto_increment} } values %{ $source->columns_info } )
+    (first { $columns_info->{$_}{is_auto_increment} }
+      keys %$columns_info )
     || '';
 
   # check for empty insert
@@ -429,14 +430,15 @@ sub update {
   my $self = shift;
   my ($source, $fields, $where, @rest) = @_;
 
-  my $wantarray = wantarray;
-
   my $blob_cols = $self->_remove_blob_cols($source, $fields);
 
   my $table = $source->name;
 
+  my $columns_info = $source->columns_info;
+
   my $identity_col =
-    first { $_->{is_auto_increment} } values %{ $source->columns_info };
+    first { $columns_info->{$_}{is_auto_increment} }
+      keys %$columns_info;
 
   my $is_identity_update = $identity_col && defined $fields->{$identity_col};
 
@@ -465,10 +467,10 @@ sub update {
 
   my @res;
   if (%$fields) {
-    if ($wantarray) {
+    if (wantarray) {
       @res    = $self->next::method(@_);
     }
-    elsif (defined $wantarray) {
+    elsif (defined wantarray) {
       $res[0] = $self->next::method(@_);
     }
     else {
@@ -478,15 +480,18 @@ sub update {
 
   $guard->commit;
 
-  return $wantarray ? @res : $res[0];
+  return wantarray ? @res : $res[0];
 }
 
 sub insert_bulk {
   my $self = shift;
   my ($source, $cols, $data) = @_;
 
+  my $columns_info = $source->columns_info;
+
   my $identity_col =
-    first { $_->{is_auto_increment} } values %{ $source->columns_info };
+    first { $columns_info->{$_}{is_auto_increment} }
+      keys %$columns_info;
 
   my $is_identity_insert = (first { $_ eq $identity_col } @{$cols}) ? 1 : 0;
 
@@ -646,15 +651,12 @@ EOF
   DBD::Sybase::set_cslib_cb($orig_cslib_cb);
 
   if ($exception =~ /-Y option/) {
-    carp <<"EOF";
+    my $w = 'Sybase bulk API operation failed due to character set incompatibility, '
+          . 'reverting to regular array inserts. Try unsetting the LANG environment variable'
+    ;
+    $w .= "\n$exception" if $self->debug;
+    carp $w;
 
-Sybase bulk API operation failed due to character set incompatibility, reverting
-to regular array inserts:
-
-*** Try unsetting the LANG environment variable.
-
-$exception
-EOF
     $self->_bulk_storage(undef);
     unshift @_, $self;
     goto \&insert_bulk;

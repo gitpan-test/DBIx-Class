@@ -19,6 +19,8 @@ plan skip_all => 'Test needs ' . DBIx::Class::Optional::Dependencies->req_missin
 $ENV{NLS_DATE_FORMAT} = 'DD-MON-YY';
 $ENV{NLS_TIMESTAMP_FORMAT} = 'YYYY-MM-DD HH24:MI:SSXFF';
 $ENV{NLS_LANG} = 'AMERICAN_AMERICA.WE8ISO8859P1';
+$ENV{NLS_SORT} = "BINARY";
+$ENV{NLS_COMP} = "BINARY";
 
 my $schema = DBICTest::Schema->connect($dsn, $user, $pass);
 
@@ -36,7 +38,7 @@ my $dbh = $schema->storage->dbh;
 eval {
   $dbh->do("DROP TABLE track");
 };
-$dbh->do("CREATE TABLE track (trackid NUMBER(12), cd NUMBER(12), position NUMBER(12), title VARCHAR(255), last_updated_on DATE, last_updated_at TIMESTAMP, small_dt DATE)");
+$dbh->do("CREATE TABLE track (trackid NUMBER(12), cd NUMBER(12), position NUMBER(12), title VARCHAR(255), last_updated_on DATE, last_updated_at TIMESTAMP)");
 
 # insert a row to play with
 my $new = $schema->resultset('Track')->create({ trackid => 1, cd => 1, position => 1, title => 'Track1', last_updated_on => '06-MAY-07', last_updated_at => '2009-05-03 21:17:18.5' });

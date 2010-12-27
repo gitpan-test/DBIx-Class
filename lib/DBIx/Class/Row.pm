@@ -516,12 +516,12 @@ this method.
 sub update {
   my ($self, $upd) = @_;
 
-  my $ident_cond = $self->{_orig_ident} || $self->ident_condition;
-
   $self->set_inflated_columns($upd) if $upd;
-  my %to_update = $self->get_dirty_columns;
-  return $self unless keys %to_update;
 
+  my %to_update = $self->get_dirty_columns
+    or return $self;
+
+  my $ident_cond = $self->{_orig_ident} || $self->ident_condition;
   $self->throw_exception( "Not in database" ) unless $self->in_storage;
 
   $self->throw_exception($self->{_orig_ident_failreason})
@@ -880,11 +880,31 @@ sub set_column {
       : 1
   ;
 
-  # FIXME sadly the update code just checks for keys, not for their value
-  $self->{_dirty_columns}{$column} = 1 if $dirty;
+  if ($dirty) {
+    # FIXME sadly the update code just checks for keys, not for their value
+    $self->{_dirty_columns}{$column} = 1;
 
-  # XXX clear out the relation cache for this column
-  delete $self->{related_resultsets}{$column};
+    # Clear out the relation/inflation cache related to this column
+    #
+    # FIXME - this is a quick *largely incorrect* hack, pending a more
+    # serious rework during the merge of single and filter rels
+    my $rels = $self->result_source->{_relationships};
+    for my $rel (keys %$rels) {
+
+      my $acc = $rels->{$rel}{attrs}{accessor} || '';
+
+      if ( $acc eq 'single' and $rels->{$rel}{attrs}{fk_columns}{$column} ) {
+        delete $self->{related_resultsets}{$rel};
+        delete $self->{_relationship_data}{$rel};
+        #delete $self->{_inflated_column}{$rel};
+      }
+      elsif ( $acc eq 'filter' and $rel eq $column) {
+        delete $self->{related_resultsets}{$rel};
+        #delete $self->{_relationship_data}{$rel};
+        delete $self->{_inflated_column}{$rel};
+      }
+    }
+  }
 
   return $new_value;
 }

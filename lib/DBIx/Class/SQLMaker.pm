@@ -26,6 +26,8 @@ Currently the enhancements to L<SQL::Abstract> are:
 
 =item * The -ident operator
 
+=item * The -value operator
+
 =back
 
 =cut
@@ -84,13 +86,14 @@ sub __max_int { 0xFFFFFFFF };
 sub new {
   my $self = shift->next::method(@_);
 
-  # use the same coderef, it is prepared to handle both cases
-  push @{$self->{special_ops}}, {
-    regex => qr/^ ident $/xi, handler => '_where_op_IDENT',
-  };
-  push @{$self->{unary_ops}}, {
-    regex => qr/^ ident $/xi, handler => '_where_op_IDENT',
-  };
+  # use the same coderefs, they are prepared to handle both cases
+  my @extra_dbic_syntax = (
+    { regex => qr/^ ident $/xi, handler => '_where_op_IDENT' },
+    { regex => qr/^ value $/xi, handler => '_where_op_VALUE' },
+  );
+
+  push @{$self->{special_ops}}, @extra_dbic_syntax;
+  push @{$self->{unary_ops}}, @extra_dbic_syntax;
 
   $self;
 }
@@ -102,7 +105,7 @@ sub _where_op_IDENT {
     croak "-$op takes a single scalar argument (a quotable identifier)";
   }
 
-  # in case we are called as a top level special op
+  # in case we are called as a top level special op (no '=')
   my $lhs = shift;
 
   $_ = $self->_convert($self->_quote($_)) for ($lhs, $rhs);
@@ -111,6 +114,47 @@ sub _where_op_IDENT {
     ? "$lhs = $rhs"
     : $rhs
   ;
+}
+
+sub _where_op_VALUE {
+  my $self = shift;
+  my ($op, $rhs) = splice @_, -2;
+
+  # in case we are called as a top level special op (no '=')
+  my $lhs = shift;
+
+  my @bind = [
+    ($lhs || $self->{_nested_func_lhs} || croak "Unable to find bindtype for -value $rhs"),
+    $rhs
+  ];
+
+  return $lhs
+    ? (
+      $self->_convert($self->_quote($lhs)) . ' = ' . $self->_convert('?'),
+      @bind
+    )
+    : (
+      $self->_convert('?'),
+      @bind,
+    )
+  ;
+}
+
+my $callsites_warned;
+sub _where_op_NEST {
+  # determine callsite obeying Carp::Clan rules (fucking ugly but don't have better ideas)
+  my $callsite = do {
+    my $w;
+    local $SIG{__WARN__} = sub { $w = shift };
+    carp;
+    $w
+  };
+
+  carp ("-nest in search conditions is deprecated, you most probably wanted:\n"
+      .q|{..., -and => [ \%cond0, \@cond1, \'cond2', \[ 'cond3', [ col => bind ] ], etc. ], ... }|
+  ) unless $callsites_warned->{$callsite}++;
+
+  shift->next::method(@_);
 }
 
 # Handle limit-dialect selection
@@ -171,7 +215,7 @@ sub select {
 
 sub _assemble_binds {
   my $self = shift;
-  return map { @{ (delete $self->{"${_}_bind"}) || [] } } (qw/from where having order/);
+  return map { @{ (delete $self->{"${_}_bind"}) || [] } } (qw/select from where having order/);
 }
 
 my $for_syntax = {
@@ -193,13 +237,18 @@ sub insert {
   # which is sadly understood only by MySQL. Change default behavior here,
   # until SQLA2 comes with proper dialect support
   if (! $_[2] or (ref $_[2] eq 'HASH' and !keys %{$_[2]} ) ) {
-    my $sql = "INSERT INTO $_[1] DEFAULT VALUES";
+    my @bind;
+    my $sql = sprintf(
+      'INSERT INTO %s DEFAULT VALUES', $_[0]->_quote($_[1])
+    );
 
-    if (my $ret = ($_[3]||{})->{returning} ) {
-      $sql .= $_[0]->_insert_returning ($ret);
+    if ( ($_[3]||{})->{returning} ) {
+      my $s;
+      ($s, @bind) = $_[0]->_insert_returning ($_[3]);
+      $sql .= $s;
     }
 
-    return $sql;
+    return ($sql, @bind);
   }
 
   next::method(@_);
@@ -246,7 +295,8 @@ sub _recurse_fields {
   }
   # Is the second check absolutely necessary?
   elsif ( $ref eq 'REF' and ref($$fields) eq 'ARRAY' ) {
-    return $self->_fold_sqlbind( $fields );
+    push @{$self->{select_bind}}, @{$$fields}[1..$#$$fields];
+    return $$fields->[0];
   }
   else {
     croak($ref . qq{ unexpected in _recurse_fields()})
@@ -306,7 +356,7 @@ sub _table {
       return $_[0]->_recurse_from(@{$_[1]});
     }
     elsif ($ref eq 'HASH') {
-      return $_[0]->_make_as($_[1]);
+      return $_[0]->_recurse_from($_[1]);
     }
   }
 
@@ -317,17 +367,17 @@ sub _generate_join_clause {
     my ($self, $join_type) = @_;
 
     return sprintf ('%s JOIN ',
-      $join_type ?  ' ' . uc($join_type) : ''
+      $join_type ?  ' ' . $self->_sqlcase($join_type) : ''
     );
 }
 
 sub _recurse_from {
   my ($self, $from, @join) = @_;
   my @sqlf;
-  push(@sqlf, $self->_make_as($from));
-  foreach my $j (@join) {
-    my ($to, $on) = @$j;
+  push @sqlf, $self->_from_chunk_to_sql($from);
 
+  for (@join) {
+    my ($to, $on) = @$_;
 
     # check whether a join type exists
     my $to_jt = ref($to) eq 'ARRAY' ? $to->[0] : $to;
@@ -344,41 +394,44 @@ sub _recurse_from {
     if (ref $to eq 'ARRAY') {
       push(@sqlf, '(', $self->_recurse_from(@$to), ')');
     } else {
-      push(@sqlf, $self->_make_as($to));
+      push(@sqlf, $self->_from_chunk_to_sql($to));
     }
     push(@sqlf, ' ON ', $self->_join_condition($on));
   }
   return join('', @sqlf);
 }
 
-sub _fold_sqlbind {
-  my ($self, $sqlbind) = @_;
+sub _from_chunk_to_sql {
+  my ($self, $fromspec) = @_;
 
-  my @sqlbind = @$$sqlbind; # copy
-  my $sql = shift @sqlbind;
-  push @{$self->{from_bind}}, @sqlbind;
+  return join (' ', $self->_SWITCH_refkind($fromspec, {
+    SCALARREF => sub {
+      $$fromspec;
+    },
+    ARRAYREFREF => sub {
+      push @{$self->{from_bind}}, @{$$fromspec}[1..$#$$fromspec];
+      $$fromspec->[0];
+    },
+    HASHREF => sub {
+      my ($as, $table, $toomuch) = ( map
+        { $_ => $fromspec->{$_} }
+        ( grep { $_ !~ /^\-/ } keys %$fromspec )
+      );
 
-  return $sql;
-}
+      croak "Only one table/as pair expected in from-spec but an exra '$toomuch' key present"
+        if defined $toomuch;
 
-sub _make_as {
-  my ($self, $from) = @_;
-  return join(' ', map { (ref $_ eq 'SCALAR' ? $$_
-                        : ref $_ eq 'REF'    ? $self->_fold_sqlbind($_)
-                        : $self->_quote($_))
-                       } reverse each %{$self->_skip_options($from)});
-}
-
-sub _skip_options {
-  my ($self, $hash) = @_;
-  my $clean_hash = {};
-  $clean_hash->{$_} = $hash->{$_}
-    for grep {!/^-/} keys %$hash;
-  return $clean_hash;
+      ($self->_from_chunk_to_sql($table), $self->_quote($as) );
+    },
+    SCALAR => sub {
+      $self->_quote($fromspec);
+    },
+  }));
 }
 
 sub _join_condition {
   my ($self, $cond) = @_;
+
   if (ref $cond eq 'HASH') {
     my %j;
     for (keys %$cond) {

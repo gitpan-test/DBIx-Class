@@ -80,6 +80,20 @@ use mro 'c3';
 
 __PACKAGE__->sql_maker_class('DBIx::Class::SQLMaker::Oracle');
 
+sub _determine_supports_insert_returning {
+  my $self = shift;
+
+# TODO find out which version supports the RETURNING syntax
+# 8i has it and earlier docs are a 404 on oracle.com
+
+  return 1
+    if $self->_server_info->{normalized_dbms_version} >= 8.001;
+
+  return 0;
+}
+
+__PACKAGE__->_use_insert_returning_bound (1);
+
 sub deployment_statements {
   my $self = shift;;
   my ($schema, $type, $version, $dir, $sqltargs, @rest) = @_;
@@ -105,7 +119,7 @@ sub _dbh_last_insert_id {
   my @ids = ();
   foreach my $col (@columns) {
     my $seq = ($source->column_info($col)->{sequence} ||= $self->get_autoinc_seq($source,$col));
-    my $id = $self->_sequence_fetch( 'currval', $seq );
+    my $id = $self->_sequence_fetch( 'CURRVAL', $seq );
     push @ids, $id;
   }
   return @ids;
@@ -115,15 +129,20 @@ sub _dbh_get_autoinc_seq {
   my ($self, $dbh, $source, $col) = @_;
 
   my $sql_maker = $self->sql_maker;
+  my ($ql, $qr) = map { $_ ? (quotemeta $_) : '' } $sql_maker->_quote_chars;
 
   my $source_name;
   if ( ref $source->name eq 'SCALAR' ) {
     $source_name = ${$source->name};
+
+    # the ALL_TRIGGERS match further on is case sensitive - thus uppercase
+    # stuff unless it is already quoted
+    $source_name = uc ($source_name) if $source_name !~ /\"/;
   }
   else {
     $source_name = $source->name;
+    $source_name = uc($source_name) unless $ql;
   }
-  $source_name = uc($source_name) unless $sql_maker->quote_char;
 
   # trigger_body is a LONG
   local $dbh->{LongReadLen} = 64 * 1024 if ($dbh->{LongReadLen} < 64 * 1024);
@@ -132,16 +151,20 @@ sub _dbh_get_autoinc_seq {
   local $sql_maker->{bindtype} = 'normal';
 
   # look up the correct sequence automatically
-  my ( $schema, $table ) = $source_name =~ /(\w+)\.(\w+)/;
+  my ( $schema, $table ) = $source_name =~ /( (?:${ql})? \w+ (?:${qr})? ) \. ( (?:${ql})? \w+ (?:${qr})? )/x;
+
+  # if no explicit schema was requested - use the default schema (which in the case of Oracle is the db user)
+  $schema ||= uc( ($self->_dbi_connect_info||[])->[1] || '');
+
   my ($sql, @bind) = $sql_maker->select (
     'ALL_TRIGGERS',
-    [qw/ trigger_body table_owner trigger_name /],
+    [qw/TRIGGER_BODY TABLE_OWNER TRIGGER_NAME/],
     {
-      $schema ? (owner => $schema) : (),
-      table_name => $table || $source_name,
-      triggering_event => { -like => '%INSERT%' },  # this will also catch insert_or_update
-      trigger_type => { -like => '%BEFORE%' },      # we care only about 'before' triggers
-      status => 'ENABLED',
+      $schema ? (OWNER => $schema) : (),
+      TABLE_NAME => $table || $source_name,
+      TRIGGERING_EVENT => { -like => '%INSERT%' },  # this will also catch insert_or_update
+      TRIGGER_TYPE => { -like => '%BEFORE%' },      # we care only about 'before' triggers
+      STATUS => 'ENABLED',
      },
   );
 
@@ -150,7 +173,7 @@ sub _dbh_get_autoinc_seq {
   my @triggers = ( map
     { my %inf; @inf{qw/body schema name/} = @$_; \%inf }
     ( grep
-      { $_->[0] =~ /\:new\.$col/i }
+      { $_->[0] =~ /\:new\.${ql}${col}${qr} | \:new\.$col/xi }
       @{ $dbh->selectall_arrayref( $sql, {}, @bind ) }
     )
   );
@@ -208,6 +231,7 @@ sub _dbh_get_autoinc_seq {
     $seq_name = "$chosen_trigger->{schema}.$seq_name"
       unless $seq_name =~ /\./;
 
+    return \$seq_name if $seq_name =~ /\"/; # may already be quoted in-trigger
     return $seq_name;
   }
 
@@ -222,7 +246,10 @@ sub _dbh_get_autoinc_seq {
 
 sub _sequence_fetch {
   my ( $self, $type, $seq ) = @_;
-  my ($id) = $self->_get_dbh->selectrow_array("SELECT ${seq}.${type} FROM DUAL");
+
+  # use the maker to leverage quoting settings
+  my $sql_maker = $self->sql_maker;
+  my ($id) = $self->_get_dbh->selectrow_array ($sql_maker->select('DUAL', [ ref $seq ? \"$$seq.$type" : "$seq.$type" ] ) );
   return $id;
 }
 
@@ -247,16 +274,16 @@ sub _dbh_execute {
   my ($dbh, $op, $extra_bind, $ident, $bind_attributes, @args) = @_;
 
   my (@res, $tried);
-  my $wantarray = wantarray();
+  my $want = wantarray;
   my $next = $self->next::can;
   do {
     try {
       my $exec = sub { $self->$next($dbh, $op, $extra_bind, $ident, $bind_attributes, @args) };
 
-      if (!defined $wantarray) {
+      if (!defined $want) {
         $exec->();
       }
-      elsif (! $wantarray) {
+      elsif (! $want) {
         $res[0] = $exec->();
       }
       else {
@@ -278,7 +305,7 @@ sub _dbh_execute {
     };
   } while (! $tried++);
 
-  return $wantarray ? @res : $res[0];
+  return wantarray ? @res : $res[0];
 }
 
 =head2 get_autoinc_seq
@@ -376,8 +403,8 @@ sub source_bind_attributes
   my %bind_attributes;
 
   foreach my $column ($source->columns) {
-    my $data_type = $source->column_info($column)->{data_type} || '';
-    next unless $data_type;
+    my $data_type = $source->column_info($column)->{data_type}
+      or next;
 
     my %column_bind_attrs = $self->bind_attribute_by_data_type($data_type);
 

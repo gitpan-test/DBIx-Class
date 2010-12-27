@@ -15,7 +15,7 @@ if ( DBICTest::RunMode->is_plain ) {
 require DBIx::Class;
 unless ( DBIx::Class::Optional::Dependencies->req_ok_for ('test_podcoverage') ) {
   my $missing = DBIx::Class::Optional::Dependencies->req_missing_for ('test_podcoverage');
-  $ENV{RELEASE_TESTING} || DBICTest::AuthorCheck->is_author
+  $ENV{RELEASE_TESTING} || DBICTest::RunMode->is_author
     ? die ("Failed to load release-testing module requirements: $missing")
     : plan skip_all => "Test needs: $missing"
 }
@@ -119,6 +119,7 @@ my $exceptions = {
     'DBIx::Class::Relationship::*'                  => { skip => 1 },
     'DBIx::Class::ResultSetProxy'                   => { skip => 1 },
     'DBIx::Class::ResultSourceProxy'                => { skip => 1 },
+    'DBIx::Class::ResultSource::*'                  => { skip => 1 },
     'DBIx::Class::Storage::Statistics'              => { skip => 1 },
     'DBIx::Class::Storage::DBI::Replicated::Types'  => { skip => 1 },
 
@@ -133,6 +134,7 @@ my $exceptions = {
     'SQL::Translator::*'                            => { skip => 1 },
 
 # deprecated / backcompat stuff
+    'DBIx::Class::Serialize::Storable'              => { skip => 1 },
     'DBIx::Class::CDBICompat*'                      => { skip => 1 },
     'DBIx::Class::ResultSetManager'                 => { skip => 1 },
     'DBIx::Class::DB'                               => { skip => 1 },

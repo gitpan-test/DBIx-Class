@@ -26,7 +26,7 @@ is_same_sql_bind(
   $filtered_cd_rs->as_query,
   q{(
     SELECT  cds_unordered.cdid, cds_unordered.artist, cds_unordered.title, cds_unordered.year, cds_unordered.genreid, cds_unordered.single_track,
-            tracks.trackid, tracks.cd, tracks.position, tracks.title, tracks.last_updated_on, tracks.last_updated_at, tracks.small_dt
+            tracks.trackid, tracks.cd, tracks.position, tracks.title, tracks.last_updated_on, tracks.last_updated_at
       FROM artist me
       JOIN (
         SELECT cds_unordered.cdid, cds_unordered.artist, cds_unordered.title, cds_unordered.year, cds_unordered.genreid, cds_unordered.single_track
@@ -34,7 +34,6 @@ is_same_sql_bind(
           JOIN cd cds_unordered
             ON cds_unordered.artist = me.artistid
         WHERE ( me.rank = ? )
-        GROUP BY cds_unordered.cdid, cds_unordered.artist, cds_unordered.title, cds_unordered.year, cds_unordered.genreid, cds_unordered.single_track, me.name, me.artistid
         ORDER BY me.name ASC, me.artistid DESC
         LIMIT 3
         OFFSET 3
@@ -71,7 +70,6 @@ is_deeply (
           'last_updated_at' => undef,
           'last_updated_on' => undef,
           'position' => '1',
-          'small_dt' => undef,
           'title' => 'Boring Name',
           'trackid' => '10'
         },
@@ -80,7 +78,6 @@ is_deeply (
           'last_updated_at' => undef,
           'last_updated_on' => undef,
           'position' => '2',
-          'small_dt' => undef,
           'title' => 'Boring Song',
           'trackid' => '11'
         },
@@ -89,7 +86,6 @@ is_deeply (
           'last_updated_at' => undef,
           'last_updated_on' => undef,
           'position' => '3',
-          'small_dt' => undef,
           'title' => 'No More Ideas',
           'trackid' => '12'
         }
@@ -108,7 +104,6 @@ is_deeply (
           'last_updated_at' => undef,
           'last_updated_on' => undef,
           'position' => '1',
-          'small_dt' => undef,
           'title' => 'Sad',
           'trackid' => '13'
         },
@@ -117,7 +112,6 @@ is_deeply (
           'last_updated_at' => undef,
           'last_updated_on' => undef,
           'position' => '3',
-          'small_dt' => undef,
           'title' => 'Suicidal',
           'trackid' => '15'
         },
@@ -126,7 +120,6 @@ is_deeply (
           'last_updated_at' => undef,
           'last_updated_on' => undef,
           'position' => '2',
-          'small_dt' => undef,
           'title' => 'Under The Weather',
           'trackid' => '14'
         }

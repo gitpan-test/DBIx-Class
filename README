@@ -4,6 +4,8 @@ NAME
 GETTING HELP/SUPPORT
     The community can be found via:
 
+    *   Web Site: <http://www.dbix-class.org/>
+
     *   IRC: irc.perl.org#dbix-class
 
     *   Mailing list: <http://lists.scsys.co.uk/mailman/listinfo/dbix-class>
@@ -54,7 +56,7 @@ SYNOPSIS
       __PACKAGE__->table('cd');
       __PACKAGE__->add_columns(qw/ cdid artistid title year /);
       __PACKAGE__->set_primary_key('cdid');
-      __PACKAGE__->belongs_to(artist => 'MyDB::Schema::Artist', 'artistid');
+      __PACKAGE__->belongs_to(artist => 'MyDB::Schema::Result::Artist', 'artistid');
 
       1;
 
@@ -169,6 +171,8 @@ CONTRIBUTORS
 
     Alexander Keusch <cpan@keusch.at>
 
+    alnewkirk: Al Newkirk <we@ana.im>
+
     amiri: Amiri Barksdale <amiri@metalabel.com>
 
     amoore: Andrew Moore <amoore@cpan.org>
@@ -233,6 +237,8 @@ CONTRIBUTORS
 
     ilmari: Dagfinn Ilmari Mannsåker <ilmari@ilmari.org>
 
+    initself: Mike Baas <mike@initselftech.com>
+
     jasonmay: Jason May <jason.a.may@gmail.com>
 
     jesper: Jesper Krogh
@@ -248,6 +254,8 @@ CONTRIBUTORS
     jon: Jon Schutz <jjschutz@cpan.org>
 
     jshirley: J. Shirley <jshirley@gmail.com>
+
+    kaare: Kaare Rasmussen
 
     konobi: Scott McWhirter
 
@@ -320,6 +328,8 @@ CONTRIBUTORS
     solomon: Jared Johnson <jaredj@nmgi.com>
 
     spb: Stephen Bennett <stephen@freenode.net>
+
+    Squeeks <squeek@cpan.org>
 
     sszabo: Stephan Szabo <sszabo@bigpanda.com>
 

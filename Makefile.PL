@@ -6,6 +6,7 @@ use 5.008001;
 
 use FindBin;
 use lib "$FindBin::Bin/lib";
+use DBIx::Class::Optional::Dependencies;
 
 # adjust ENV for $AUTHOR system() calls
 use Config;
@@ -42,6 +43,7 @@ perl_version '5.008001';
 all_from 'lib/DBIx/Class.pm';
 
 my $build_requires = {
+  # needed for testing only, not for operation
   'DBD::SQLite'              => '1.29',
 };
 
@@ -55,26 +57,28 @@ my $test_requires = {
 
 my $runtime_requires = {
   'Carp::Clan'               => '6.0',
-  'Class::Accessor::Grouped' => '0.09008',
+  'Class::Accessor::Grouped' => '0.10000',
   'Class::C3::Componentised' => '1.0005',
   'Class::Inspector'         => '1.24',
+  'Config::Any'              => '0.20',
+  'Context::Preserve'        => '0.01',
+  'Data::Dumper::Concise'    => '1.000',
   'Data::Page'               => '2.00',
-  'DBI'                      => '1.609',
-  'File::Path'               => '2.07',
   'MRO::Compat'              => '0.09',
   'Module::Find'             => '0.06',
   'Path::Class'              => '0.18',
-  'SQL::Abstract'            => '1.71',
+  'Scope::Guard'             => '0.03',
+  'SQL::Abstract'            => '1.72',
+  'Try::Tiny'                => '0.04',
+
+  # XS (or XS-dependent) libs
+  'DBI'                      => '1.609',
+  'namespace::clean'         => '0.14',
   'Sub::Name'                => '0.04',
   'Variable::Magic'          => '0.44',
-  'Data::Dumper::Concise'    => '1.000',
-  'Scope::Guard'             => '0.03',
-  'Context::Preserve'        => '0.01',
-  'Try::Tiny'                => '0.04',
-  'namespace::clean'         => '0.14',
-  'Math::BigInt'             => '1.89',
-  'Math::Base36'             => '0.07',
-  'Config::Any'              => '0.20',
+
+  # dual-life corelibs needing a specific bugfixed version
+  'File::Path'               => '2.07',
 };
 
 # this is so we can order requires alphabetically
@@ -85,6 +89,12 @@ my $reqs = {
   test_requires => { %$test_requires },
 };
 
+my %reqs_for_group = %{DBIx::Class::Optional::Dependencies->req_group_list};
+
+# exclude the rdbms_* groups which are for DBIC users
+my $opt_testdeps = {
+  map { %{$reqs_for_group{$_}} } grep { !/^rdbms_/ } keys %reqs_for_group
+};
 
 # require extra modules for testing if we're in a checkout
 my $optdep_msg;
@@ -120,10 +130,9 @@ EOW
 
 EOW
 
-    require DBIx::Class::Optional::Dependencies;
     $reqs->{test_requires} = {
       %{$reqs->{test_requires}},
-      map { %$_ } (values %{DBIx::Class::Optional::Dependencies->req_group_list}),
+      %$opt_testdeps
     };
   }
 }
@@ -240,41 +249,47 @@ no_index package => $_ for (qw/
 
 WriteAll();
 
-# Re-write META.yml to _exclude_ all forced requires (we do not want to ship this)
-# We are also not using M::I::AuthorRequires as this will be an extra dep, and
-# deps in Makefile.PL suck (no autoinstall)
-if ($Module::Install::AUTHOR && ! $args->{skip_author_deps} ) {
+# Re-write META.yml to _exclude_ all forced build-requires (we do not want to ship
+# this) We are also not using M::I::AuthorRequires as this will be an extra dep,
+# and deps in Makefile.PL still suck
+# Also always test the result so we stop shipping borked dependency lists to CPAN
 
-  # FIXME test_requires is not yet part of META
-  my %original_build_requires = ( %$build_requires, %$test_requires );
-  my @all_build_requires = @{delete Meta->{values}{build_requires}};
-  my %removed_build_requires;
+# FIXME test_requires is not yet part of META
+my %original_build_requires = ( %$build_requires, %$test_requires );
+my @all_build_requires = @{delete Meta->{values}{build_requires}};
+my %removed_build_requires;
 
-  for (@all_build_requires) {
-    if ($original_build_requires{$_->[0]}) {
-      push @{Meta->{values}{build_requires}}, $_;
-    }
-    else {
-      $removed_build_requires{$_->[0]} = $_->[1]
-        unless $_->[0] eq 'ExtUtils::MakeMaker';
-    }
+for (@all_build_requires) {
+  if ($original_build_requires{$_->[0]}) {
+    push @{Meta->{values}{build_requires}}, $_;
   }
+  else {
+    $removed_build_requires{$_->[0]} = $_->[1]
+      unless $_->[0] eq 'ExtUtils::MakeMaker';
+  }
+}
 
+# Rewrite only in author mode, the original META should not contain anything anyway
+# if we executed as non-author
+if ($Module::Install::AUTHOR && keys %removed_build_requires) {
   print "Regenerating META with author requires excluded\n";
   Meta->write;
+}
 
-  # test that we really took things away (just in case)
-  my $meta = do { local @ARGV = 'META.yml'; local $/; <> };
-  for (keys %removed_build_requires) {
-    delete $removed_build_requires{$_}
-      unless $meta =~ /^ \s+ $_: \s+ $removed_build_requires{$_} \s* $/mx
-  }
+# test that we really took things away (just in case, happened twice somehow)
+exit 0 unless -f 'META.yml';  # in case bizarro comes around
+my $meta = do { local @ARGV = 'META.yml'; local $/; <> };
 
-  if (keys %removed_build_requires) {
-    die join ("\n",
-      "\n\nFATAL FAIL! It looks like some author dependencies made it to the META.yml:",
-      "(most likely a broken Module::Install)\n",
-      map { "\t$_" } (keys %removed_build_requires)
-    ) . "\n\n";
-  }
+# this is safe as there is a fatal check earlier to make sure $opt_testdeps does
+# not contain any real dependencies
+my @illegal_leftovers = grep
+  { $meta =~ /^ \s+ \Q$_\E \: \s+ /mx }
+  ( sort keys %$opt_testdeps )
+;
+
+if (@illegal_leftovers) {
+  die join ("\n",
+    "\n\nFATAL FAIL! It looks like some author dependencies made it to the META.yml:\n",
+    map { "\t$_" } @illegal_leftovers
+  ) . "\n\n";
 }

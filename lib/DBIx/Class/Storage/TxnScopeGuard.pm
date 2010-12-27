@@ -12,14 +12,11 @@ use namespace::clean;
 # we also need a real appendable, stackable exception object
 # (coming soon)
 BEGIN {
-  if ($] < 5.013001) {
-    *IS_BROKEN_PERL = sub () { 0 };
-  }
-  elsif ($] < 5.013008) {
+  if ($] >= 5.013001 and $] <= 5.013007) {
     *IS_BROKEN_PERL = sub () { 1 };
   }
   else {
-    die 'The $@ debacle should have been resolved by now, adjust DBIC';
+    *IS_BROKEN_PERL = sub () { 0 };
   }
 }
 
@@ -107,7 +104,7 @@ sub DESTROY {
   return if $dismiss;
 
   # if our dbh is not ours anymore, the weakref will go undef
-  $storage->_preserve_foreign_dbh;
+  $storage->_verify_pid;
   return unless $_[0]->[2];
 
   my $exception = $@;

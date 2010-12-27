@@ -115,16 +115,30 @@ sub _adjust_select_args_for_complex_prefetch {
       group_by => ['dummy'], %$inner_attrs,
     });
 
-    # if a multi-type join was needed in the subquery - add a group_by to simulate the
-    # collapse in the subq
+    my $inner_aliastypes =
+      $self->_resolve_aliastypes_from_select_args( $inner_from, $inner_select, $where, $inner_attrs );
+
+    # if a multi-type non-selecting (only restricting) join was needed in the subquery
+    # add a group_by to simulate the collapse in the subq
     if (
       ! $inner_attrs->{group_by}
         and
-      first { ! $_->[0]{-is_single} } (@{$inner_from}[1 .. $#$inner_from])
+      first {
+        $inner_aliastypes->{restricting}{$_}
+          and
+        ! $inner_aliastypes->{selecting}{$_}
+      } ( keys %{$inner_aliastypes->{multiplying}||{}} )
     ) {
-      $inner_attrs->{group_by} = $self->_group_over_selection (
+      my $unprocessed_order_chunks;
+      ($inner_attrs->{group_by}, $unprocessed_order_chunks) = $self->_group_over_selection (
         $inner_from, $inner_select, $inner_attrs->{order_by}
       );
+
+      $self->throw_exception (
+        'A required group_by clause could not be constructed automatically due to a complex '
+      . 'order_by criteria. Either order_by columns only (no functions) or construct a suitable '
+      . 'group_by by hand'
+      )  if $unprocessed_order_chunks;
     }
 
     # we already optimized $inner_from above
@@ -247,7 +261,9 @@ sub _resolve_aliastypes_from_select_args {
   # set up a botched SQLA
   my $sql_maker = $self->sql_maker;
 
-  local $sql_maker->{having_bind};  # these are throw away results
+  # these are throw away results, do not pollute the bind stack
+  local $sql_maker->{having_bind};
+  local $sql_maker->{select_bind};
 
   # we can't scan properly without any quoting (\b doesn't cut it
   # everywhere), so unless there is proper quoting set - use our
@@ -259,7 +275,9 @@ sub _resolve_aliastypes_from_select_args {
   local $sql_maker->{name_sep} = $sql_maker->{name_sep};
 
   unless (defined $sql_maker->{quote_char} and length $sql_maker->{quote_char}) {
-    $sql_maker->{quote_char} = "\x00";
+    $sql_maker->{quote_char} = ["\x00", "\xFF"];
+    # if we don't unset it we screw up retarded but unfortunately working
+    # 'MAX(foo.bar)' => { '>', 3 }
     $sql_maker->{name_sep} = '';
   }
 
@@ -274,8 +292,8 @@ sub _resolve_aliastypes_from_select_args {
       }),
     ],
     selecting => [
-      $self->_extract_order_columns ($attrs->{order_by}, $sql_maker),
       $sql_maker->_recurse_fields ($select),
+      ( map { $_->[0] } $self->_extract_order_criteria ($attrs->{order_by}, $sql_maker) ),
     ],
   };
 
@@ -334,6 +352,7 @@ sub _resolve_aliastypes_from_select_args {
   return $aliases_by_type;
 }
 
+# This is the engine behind { distinct => 1 }
 sub _group_over_selection {
   my ($self, $from, $select, $order_by) = @_;
 
@@ -354,17 +373,28 @@ sub _group_over_selection {
 
   # add any order_by parts that are not already present in the group_by
   # we need to be careful not to add any named functions/aggregates
-  # i.e. select => [ ... { count => 'foo', -as 'foocount' } ... ]
-  for my $chunk ($self->_extract_order_columns($order_by)) {
+  # i.e. order_by => [ ... { count => 'foo' } ... ]
+  my @leftovers;
+  for ($self->_extract_order_criteria($order_by)) {
     # only consider real columns (for functions the user got to do an explicit group_by)
-    my $colinfo = $rs_column_list->{$chunk}
-      or next;
+    if (@$_ != 1) {
+      push @leftovers, $_;
+      next;
+    }
+    my $chunk = $_->[0];
+    my $colinfo = $rs_column_list->{$chunk} or do {
+      push @leftovers, $_;
+      next;
+    };
 
     $chunk = "$colinfo->{-source_alias}.$chunk" if $chunk !~ /\./;
     push @group_by, $chunk unless $group_index{$chunk}++;
   }
 
-  return \@group_by;
+  return wantarray
+    ? (\@group_by, (@leftovers ? \@leftovers : undef) )
+    : \@group_by
+  ;
 }
 
 sub _resolve_ident_sources {
@@ -586,7 +616,7 @@ sub _strip_cond_qualifiers {
   return $cond;
 }
 
-sub _extract_order_columns {
+sub _extract_order_criteria {
   my ($self, $order_by, $sql_maker) = @_;
 
   my $parser = sub {
@@ -596,8 +626,9 @@ sub _extract_order_columns {
       unless wantarray;
 
     my @chunks;
-    for my $chunk (map { ref $_ ? @$_ : $_ } ($sql_maker->_order_by_chunks ($order_by) ) ) {
-      $chunk =~ s/\s+ (?: ASC|DESC ) \s* $//ix;
+    for ($sql_maker->_order_by_chunks ($order_by) ) {
+      my $chunk = ref $_ ? $_ : [ $_ ];
+      $chunk->[0] =~ s/\s+ (?: ASC|DESC ) \s* $//ix;
       push @chunks, $chunk;
     }
 

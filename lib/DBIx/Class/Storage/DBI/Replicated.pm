@@ -345,7 +345,6 @@ has 'write_handler' => (
     _sqlt_minimum_version
     _sql_maker_opts
     _conn_pid
-    _conn_tid
     _dbh_autocommit
     _native_data_type
     _get_dbh
@@ -356,7 +355,6 @@ has 'write_handler' => (
     _resolve_column_info
     _prune_unused_joins
     _strip_cond_qualifiers
-    _extract_order_columns
     _resolve_aliastypes_from_select_args
     _execute
     _do_query
@@ -367,9 +365,7 @@ has 'write_handler' => (
 
 my @unimplemented = qw(
   _arm_global_destructor
-  _preserve_foreign_dbh
   _verify_pid
-  _verify_tid
 
   get_use_dbms_capability
   set_use_dbms_capability
@@ -381,6 +377,10 @@ my @unimplemented = qw(
 
   _inner_join_to_node
   _group_over_selection
+  _prefetch_autovalues
+  _extract_order_criteria
+  _max_column_bytesize
+  _is_lob_type
 );
 
 # the capability framework
@@ -409,8 +409,6 @@ C<pool_type>, C<pool_args>, C<balancer_type> and C<balancer_args>.
 
 around connect_info => sub {
   my ($next, $self, $info, @extra) = @_;
-
-  my $wantarray = wantarray;
 
   my $merge = Hash::Merge->new('LEFT_PRECEDENT');
 
@@ -448,11 +446,11 @@ around connect_info => sub {
 
   $self->_master_connect_info_opts(\%opts);
 
-  my (@res, $res);
-  if ($wantarray) {
+  my @res;
+  if (wantarray) {
     @res = $self->$next($info, @extra);
   } else {
-    $res = $self->$next($info, @extra);
+    $res[0] = $self->$next($info, @extra);
   }
 
   # Make sure master is blessed into the correct class and apply role to it.
@@ -465,7 +463,7 @@ around connect_info => sub {
   # link pool back to master
   $self->pool->master($master);
 
-  $wantarray ? @res : $res;
+  wantarray ? @res : $res[0];
 };
 
 =head1 METHODS
@@ -680,7 +678,7 @@ sub execute_reliably {
     $self->read_handler($current);
   };
 
-  return $want_array ? @result : $result[0];
+  return wantarray ? @result : $result[0];
 }
 
 =head2 set_reliable_storage

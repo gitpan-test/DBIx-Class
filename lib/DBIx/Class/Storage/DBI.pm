@@ -10,12 +10,13 @@ use mro 'c3';
 use Carp::Clan qw/^DBIx::Class|^Try::Tiny/;
 use DBI;
 use DBIx::Class::Storage::DBI::Cursor;
-use DBIx::Class::Storage::Statistics;
 use Scalar::Util qw/refaddr weaken reftype blessed/;
+use List::Util qw/first/;
 use Data::Dumper::Concise 'Dumper';
 use Sub::Name 'subname';
 use Try::Tiny;
 use File::Path 'make_path';
+use overload ();
 use namespace::clean;
 
 
@@ -27,7 +28,7 @@ __PACKAGE__->sql_maker_class('DBIx::Class::SQLMaker');
 
 __PACKAGE__->mk_group_accessors('simple' => qw/
   _connect_info _dbi_connect_info _dbic_connect_attributes _driver_determined
-  _dbh _dbh_details _conn_pid _conn_tid _sql_maker _sql_maker_opts
+  _dbh _dbh_details _conn_pid _sql_maker _sql_maker_opts
   transaction_depth _dbh_autocommit  savepoints
 /);
 
@@ -54,7 +55,13 @@ __PACKAGE__->mk_group_accessors('simple' => @storage_options);
 # will get the same rdbms version). _determine_supports_X does not need to
 # exist on a driver, as we ->can for it before calling.
 
-my @capabilities = (qw/insert_returning placeholders typeless_placeholders join_optimizer/);
+my @capabilities = (qw/
+  insert_returning
+  insert_returning_bound
+  placeholders
+  typeless_placeholders
+  join_optimizer
+/);
 __PACKAGE__->mk_group_accessors( dbms_capability => map { "_supports_$_" } @capabilities );
 __PACKAGE__->mk_group_accessors( use_dbms_capability => map { "_use_$_" } (@capabilities ) );
 
@@ -166,24 +173,37 @@ sub new {
 # of a fork()ed child to kill the parent's shared DBI handle,
 # *before perl reaches the DESTROY in this package*
 # Yes, it is ugly and effective.
+# Additionally this registry is used by the CLONE method to
+# make sure no handles are shared between threads
 {
   my %seek_and_destroy;
 
   sub _arm_global_destructor {
     my $self = shift;
-    my $key = Scalar::Util::refaddr ($self);
+    my $key = refaddr ($self);
     $seek_and_destroy{$key} = $self;
-    Scalar::Util::weaken ($seek_and_destroy{$key});
+    weaken ($seek_and_destroy{$key});
   }
 
   END {
     local $?; # just in case the DBI destructor changes it somehow
 
     # destroy just the object if not native to this process/thread
-    $_->_preserve_foreign_dbh for (grep
+    $_->_verify_pid for (grep
       { defined $_ }
       values %seek_and_destroy
     );
+  }
+
+  sub CLONE {
+    # As per DBI's recommendation, DBIC disconnects all handles as
+    # soon as possible (DBIC will reconnect only on demand from within
+    # the thread)
+    for (values %seek_and_destroy) {
+      next unless $_;
+      $_->{_dbh_gen}++;  # so that existing cursors will drop as well
+      $_->_dbh(undef);
+    }
   }
 }
 
@@ -193,52 +213,27 @@ sub DESTROY {
   # some databases spew warnings on implicit disconnect
   local $SIG{__WARN__} = sub {};
   $self->_dbh(undef);
-}
 
-sub _preserve_foreign_dbh {
-  my $self = shift;
-
-  return unless $self->_dbh;
-
-  $self->_verify_tid;
-
-  return unless $self->_dbh;
-
-  $self->_verify_pid;
-
+  # this op is necessary, since the very last perl runtime statement
+  # triggers a global destruction shootout, and the $SIG localization
+  # may very well be destroyed before perl actually gets to do the
+  # $dbh undef
+  1;
 }
 
 # handle pid changes correctly - do not destroy parent's connection
 sub _verify_pid {
   my $self = shift;
 
-  return if ( defined $self->_conn_pid and $self->_conn_pid == $$ );
-
-  $self->_dbh->{InactiveDestroy} = 1;
-  $self->_dbh(undef);
-  $self->{_dbh_gen}++;
+  my $pid = $self->_conn_pid;
+  if( defined $pid and $pid != $$ and my $dbh = $self->_dbh ) {
+    $dbh->{InactiveDestroy} = 1;
+    $self->{_dbh_gen}++;
+    $self->_dbh(undef);
+  }
 
   return;
 }
-
-# very similar to above, but seems to FAIL if I set InactiveDestroy
-sub _verify_tid {
-  my $self = shift;
-
-  if ( ! defined $self->_conn_tid ) {
-    return; # no threads
-  }
-  elsif ( $self->_conn_tid == threads->tid ) {
-    return; # same thread
-  }
-
-  #$self->_dbh->{InactiveDestroy} = 1;  # why does t/51threads.t fail...?
-  $self->_dbh(undef);
-  $self->{_dbh_gen}++;
-
-  return;
-}
-
 
 =head2 connect_info
 
@@ -784,7 +779,7 @@ sub txn_do {
   local $self->{_in_dbh_do} = 1;
 
   my @result;
-  my $want_array = wantarray;
+  my $want = wantarray;
 
   my $tried = 0;
   while(1) {
@@ -796,10 +791,10 @@ sub txn_do {
     try {
       $self->txn_begin;
       my $txn_start_depth = $self->transaction_depth;
-      if($want_array) {
+      if($want) {
           @result = $coderef->(@$args);
       }
-      elsif(defined $want_array) {
+      elsif(defined $want) {
           $result[0] = $coderef->(@$args);
       }
       else {
@@ -818,7 +813,7 @@ sub txn_do {
       $exception = $_;
     };
 
-    if(! defined $exception) { return $want_array ? @result : $result[0] }
+    if(! defined $exception) { return wantarray ? @result : $result[0] }
 
     if($self->transaction_depth > 1 || $tried++ || $self->connected) {
       my $rollback_exception;
@@ -921,7 +916,7 @@ sub connected {
 sub _seems_connected {
   my $self = shift;
 
-  $self->_preserve_foreign_dbh;
+  $self->_verify_pid;
 
   my $dbh = $self->_dbh
     or return 0;
@@ -969,7 +964,7 @@ sub dbh {
 # this is the internal "get dbh or connect (don't check)" method
 sub _get_dbh {
   my $self = shift;
-  $self->_preserve_foreign_dbh;
+  $self->_verify_pid;
   $self->_populate_dbh unless $self->_dbh;
   return $self->_dbh;
 }
@@ -1023,8 +1018,7 @@ sub _populate_dbh {
 
   $self->_dbh($self->_connect(@info));
 
-  $self->_conn_pid($$);
-  $self->_conn_tid(threads->tid) if $INC{'threads.pm'};
+  $self->_conn_pid($$) if $^O ne 'MSWin32'; # on win32 these are in fact threads
 
   $self->_determine_driver;
 
@@ -1567,10 +1561,21 @@ sub _dbh_execute {
 
     foreach my $data (@data) {
       my $ref = ref $data;
-      $data = $ref && $ref ne 'ARRAY' ? ''.$data : $data; # stringify args (except arrayrefs)
 
-      $sth->bind_param($placeholder_index, $data, $attributes);
-      $placeholder_index++;
+      if ($ref and overload::Method($data, '""') ) {
+        $data = "$data";
+      }
+      elsif ($ref eq 'SCALAR') {  # any scalarrefs are assumed to be bind_inouts
+        $sth->bind_param_inout(
+          $placeholder_index++,
+          $data,
+          $self->_max_column_bytesize($ident, $column_name),
+          $attributes
+        );
+        next;
+      }
+
+      $sth->bind_param($placeholder_index++, $data, $attributes);
     }
   }
 
@@ -1590,14 +1595,12 @@ sub _execute {
     $self->dbh_do('_dbh_execute', @_);  # retry over disconnects
 }
 
-sub insert {
+sub _prefetch_autovalues {
   my ($self, $source, $to_insert) = @_;
 
   my $colinfo = $source->columns_info;
 
-  # mix with auto-nextval marked values (a bit of a speed hit, but
-  # no saner way to handle this yet)
-  my $auto_nextvals = {} ;
+  my %values;
   for my $col (keys %$colinfo) {
     if (
       $colinfo->{$col}{auto_nextval}
@@ -1608,8 +1611,8 @@ sub insert {
         ref $to_insert->{$col} eq 'SCALAR'
       )
     ) {
-      $auto_nextvals->{$col} = $self->_sequence_fetch(
-        'nextval',
+      $values{$col} = $self->_sequence_fetch(
+        'NEXTVAL',
         ( $colinfo->{$col}{sequence} ||=
             $self->_dbh_get_autoinc_seq($self->_get_dbh, $source, $col)
         ),
@@ -1617,25 +1620,33 @@ sub insert {
     }
   }
 
+  \%values;
+}
+
+sub insert {
+  my ($self, $source, $to_insert) = @_;
+
+  my $prefetched_values = $self->_prefetch_autovalues($source, $to_insert);
+
   # fuse the values
-  $to_insert = { %$to_insert, %$auto_nextvals };
+  $to_insert = { %$to_insert, %$prefetched_values };
 
   # list of primary keys we try to fetch from the database
   # both not-exsists and scalarrefs are considered
   my %fetch_pks;
-  %fetch_pks = ( map
-    { $_ => scalar keys %fetch_pks }  # so we can preserve order for prettyness
-    grep
-      { ! exists $to_insert->{$_} or ref $to_insert->{$_} eq 'SCALAR' }
-      $source->primary_columns
-  );
+  for ($source->primary_columns) {
+    $fetch_pks{$_} = scalar keys %fetch_pks  # so we can preserve order for prettyness
+      if ! exists $to_insert->{$_} or ref $to_insert->{$_} eq 'SCALAR';
+  }
 
-  my $sqla_opts;
+  my ($sqla_opts, @ir_container);
   if ($self->_use_insert_returning) {
 
     # retain order as declared in the resultsource
     for (sort { $fetch_pks{$a} <=> $fetch_pks{$b} } keys %fetch_pks ) {
       push @{$sqla_opts->{returning}}, $_;
+      $sqla_opts->{returning_container} = \@ir_container
+        if $self->_use_insert_returning_bound;
     }
   }
 
@@ -1643,20 +1654,20 @@ sub insert {
 
   my ($rv, $sth) = $self->_execute('insert' => [], $source, $bind_attributes, $to_insert, $sqla_opts);
 
-  my %returned_cols = %$auto_nextvals;
+  my %returned_cols;
 
   if (my $retlist = $sqla_opts->{returning}) {
-    my @ret_vals = try {
+    @ir_container = try {
       local $SIG{__WARN__} = sub {};
       my @r = $sth->fetchrow_array;
       $sth->finish;
       @r;
-    };
+    } unless @ir_container;
 
-    @returned_cols{@$retlist} = @ret_vals if @ret_vals;
+    @returned_cols{@$retlist} = @ir_container if @ir_container;
   }
 
-  return \%returned_cols;
+  return { %$prefetched_values, %returned_cols };
 }
 
 
@@ -1728,15 +1739,15 @@ sub insert_bulk {
   my ($sql, $bind) = $self->_prep_for_execute (
     'insert', undef, $source, [\%colvalues]
   );
-  my @bind = @$bind;
 
-  my $empty_bind = 1 if (not @bind) &&
-    (grep { ref $_ eq 'SCALAR' } values %colvalues) == @$cols;
+  if (! @$bind) {
+    # if the bindlist is empty - make sure all "values" are in fact
+    # literal scalarrefs. If not the case this means the storage ate
+    # them away (e.g. the NoBindVars component) and interpolated them
+    # directly into the SQL. This obviosly can't be good for multi-inserts
 
-  if ((not @bind) && (not $empty_bind)) {
-    $self->throw_exception(
-      'Cannot insert_bulk without support for placeholders'
-    );
+    $self->throw_exception('Cannot insert_bulk without support for placeholders')
+      if first { ref $_ ne 'SCALAR' } values %colvalues;
   }
 
   # neither _execute_array, nor _execute_inserts_with_no_binds are
@@ -1744,24 +1755,24 @@ sub insert_bulk {
   # scope guard
   my $guard = $self->txn_scope_guard;
 
-  $self->_query_start( $sql, [ dummy => '__BULK_INSERT__' ] );
+  $self->_query_start( $sql, @$bind ? [ dummy => '__BULK_INSERT__' ] : () );
   my $sth = $self->sth($sql);
   my $rv = do {
-    if ($empty_bind) {
+    if (@$bind) {
+      #@bind = map { ref $_ ? ''.$_ : $_ } @bind; # stringify args
+      $self->_execute_array( $source, $sth, $bind, $cols, $data );
+    }
+    else {
       # bind_param_array doesn't work if there are no binds
       $self->_dbh_execute_inserts_with_no_binds( $sth, scalar @$data );
     }
-    else {
-#      @bind = map { ref $_ ? ''.$_ : $_ } @bind; # stringify args
-      $self->_execute_array( $source, $sth, \@bind, $cols, $data );
-    }
   };
 
-  $self->_query_end( $sql, [ dummy => '__BULK_INSERT__' ] );
+  $self->_query_end( $sql, @$bind ? [ dummy => '__BULK_INSERT__' ] : () );
 
   $guard->commit;
 
-  return (wantarray ? ($rv, $sth, @bind) : $rv);
+  return (wantarray ? ($rv, $sth, @$bind) : $rv);
 }
 
 sub _execute_array {
@@ -1850,15 +1861,14 @@ sub _dbh_execute_inserts_with_no_binds {
   }
   catch {
     $err = shift;
+  };
+
+  # Make sure statement is finished even if there was an exception.
+  try {
+    $sth->finish
   }
-  finally {
-    # Make sure statement is finished even if there was an exception.
-    try {
-      $sth->finish
-    }
-    catch {
-      $err = shift unless defined $err;
-    };
+  catch {
+    $err = shift unless defined $err;
   };
 
   $self->throw_exception($err) if defined $err;
@@ -2649,8 +2659,7 @@ sub deployment_statements {
   );
 
   my @ret;
-  my $wa = wantarray;
-  if ($wa) {
+  if (wantarray) {
     @ret = $tr->translate;
   }
   else {
@@ -2660,7 +2669,7 @@ sub deployment_statements {
   $self->throw_exception( 'Unable to produce deployment statements: ' . $tr->error)
     unless (@ret && defined $ret[0]);
 
-  return $wa ? @ret : $ret[0];
+  return wantarray ? @ret : $ret[0];
 }
 
 sub deploy {
@@ -2783,6 +2792,55 @@ sub relname_to_table_alias {
     join('_', $relname, $join_count) : $relname);
 
   return $alias;
+}
+
+# The size in bytes to use for DBI's ->bind_param_inout, this is the generic
+# version and it may be necessary to amend or override it for a specific storage
+# if such binds are necessary.
+sub _max_column_bytesize {
+  my ($self, $source, $col) = @_;
+
+  my $inf = $source->column_info($col);
+  return $inf->{_max_bytesize} ||= do {
+
+    my $max_size;
+
+    if (my $data_type = $inf->{data_type}) {
+      $data_type = lc($data_type);
+
+      # String/sized-binary types
+      if ($data_type =~ /^(?:l?(?:var)?char(?:acter)?(?:\s*varying)?
+                             |(?:var)?binary(?:\s*varying)?|raw)\b/x
+      ) {
+        $max_size = $inf->{size};
+      }
+      # Other charset/unicode types, assume scale of 4
+      elsif ($data_type =~ /^(?:national\s*character(?:\s*varying)?|nchar
+                              |univarchar
+                              |nvarchar)\b/x
+      ) {
+        $max_size = $inf->{size} * 4 if $inf->{size};
+      }
+      # Blob types
+      elsif ($self->_is_lob_type($data_type)) {
+        # default to longreadlen
+      }
+      else {
+        $max_size = 100;  # for all other (numeric?) datatypes
+      }
+    }
+
+    $max_size ||= $self->_get_dbh->{LongReadLen} || 8000;
+  };
+}
+
+# Determine if a data_type is some type of BLOB
+sub _is_lob_type {
+  my ($self, $data_type) = @_;
+  $data_type && ($data_type =~ /(?:lob|bfile|text|image|bytea|memo)/i
+    || $data_type =~ /^long(?:\s*(?:raw|bit\s*varying|varbit|binary
+                                  |varchar|character\s*varying|nvarchar
+                                  |national\s*character\s*varying))?$/xi);
 }
 
 1;
