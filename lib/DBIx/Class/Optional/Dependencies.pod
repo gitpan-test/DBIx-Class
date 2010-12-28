@@ -18,7 +18,7 @@ Somewhere in your build-file (e.g. L<Module::Install>'s Makefile.PL):
 
   ...
 
-  configure_requires 'DBIx::Class' => '0.08125_01';
+  configure_requires 'DBIx::Class' => '0.08126';
 
   require DBIx::Class::Optional::Dependencies;
 
@@ -218,8 +218,6 @@ Requirement group: B<rdbms_sqlite>
 Modules required for L<DBIx::Class::Storage::DBI::Replicated>
 
 =over
-
-=item * Hash::Merge >= 0.12
 
 =item * Moose >= 0.98
 

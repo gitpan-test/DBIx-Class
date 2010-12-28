@@ -40,6 +40,7 @@ requires:
   Data::Dumper::Concise: 1.000
   Data::Page: 2.00
   File::Path: 2.07
+  Hash::Merge: 0.12
   MRO::Compat: 0.09
   Module::Find: 0.06
   Path::Class: 0.18
@@ -57,4 +58,4 @@ resources:
   homepage: http://www.dbix-class.org/
   license: http://dev.perl.org/licenses/
   repository: git://git.shadowcat.co.uk/dbsrgits/DBIx-Class.git
-version: 0.08125_01
+version: 0.08126
