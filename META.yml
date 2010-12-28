@@ -31,7 +31,7 @@ no_index:
     - DBIx::Class::Storage::DBIHacks
 requires:
   Carp::Clan: 6.0
-  Class::Accessor::Grouped: 0.10000
+  Class::Accessor::Grouped: 0.10002
   Class::C3::Componentised: 1.0005
   Class::Inspector: 1.24
   Config::Any: 0.20
@@ -57,4 +57,4 @@ resources:
   homepage: http://www.dbix-class.org/
   license: http://dev.perl.org/licenses/
   repository: git://git.shadowcat.co.uk/dbsrgits/DBIx-Class.git
-version: 0.08125
+version: 0.08125_01

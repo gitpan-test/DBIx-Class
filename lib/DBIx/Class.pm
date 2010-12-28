@@ -27,7 +27,7 @@ sub component_base_class { 'DBIx::Class' }
 # Always remember to do all digits for the version even if they're 0
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
-$VERSION = '0.08125';
+$VERSION = '0.08125_01';
 
 $VERSION = eval $VERSION if $VERSION =~ /_/; # numify for warning-free dev releases
 
@@ -285,6 +285,8 @@ dpetrov: Dimitar Petrov <mitakaa@gmail.com>
 dwc: Daniel Westermann-Clark <danieltwc@cpan.org>
 
 dyfrgi: Michael Leuchtenburg <michael@slashhome.org>
+
+freetime: Bill Moseley <moseley@hank.org>
 
 frew: Arthur Axel "fREW" Schmidt <frioux@gmail.com>
 
