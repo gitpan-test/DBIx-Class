@@ -6,7 +6,6 @@ use base qw/DBIx::Class/;
 use Carp::Clan qw/^DBIx::Class/;
 use DBIx::Class::Exception;
 use Data::Page;
-use Storable;
 use DBIx::Class::ResultSetColumn;
 use DBIx::Class::ResultSourceHandle;
 use Hash::Merge ();
@@ -31,7 +30,7 @@ use overload
         'bool'   => "_bool",
         fallback => 1;
 
-__PACKAGE__->mk_group_accessors('simple' => qw/_result_class _source_handle/);
+__PACKAGE__->mk_group_accessors('simple' => qw/_result_class result_source/);
 
 =head1 NAME
 
@@ -197,8 +196,8 @@ sub new {
   return $class->new_result(@_) if ref $class;
 
   my ($source, $attrs) = @_;
-  $source = $source->handle
-    unless $source->isa('DBIx::Class::ResultSourceHandle');
+  $source = $source->resolve
+    if $source->isa('DBIx::Class::ResultSourceHandle');
   $attrs = { %{$attrs||{}} };
 
   if ($attrs->{page}) {
@@ -207,26 +206,18 @@ sub new {
 
   $attrs->{alias} ||= 'me';
 
-  # default selection list
-  $attrs->{columns} = [ $source->resolve->columns ]
-    unless List::Util::first { exists $attrs->{$_} } qw/columns cols select as _trailing_select/;
-
-  # Creation of {} and bless separated to mitigate RH perl bug
-  # see https://bugzilla.redhat.com/show_bug.cgi?id=196836
-  my $self = {
-    _source_handle => $source,
+  my $self = bless {
+    result_source => $source,
     cond => $attrs->{where},
     pager => undef,
-    attrs => $attrs
-  };
-
-  bless $self, $class;
+    attrs => $attrs,
+  }, $class;
 
   $self->result_class(
-    $attrs->{result_class} || $source->resolve->result_class
+    $attrs->{result_class} || $source->result_class
   );
 
-  return $self;
+  $self;
 }
 
 =head2 search
@@ -320,9 +311,15 @@ sub search_rs {
   }
 
   my $call_attrs = {};
-  $call_attrs = pop(@_) if (
-   @_ > 1 and ( ! defined $_[-1] or ref $_[-1] eq 'HASH' )
-  );
+  if (@_ > 1) {
+    if (ref $_[-1] eq 'HASH') {
+      # copy for _normalize_selection
+      $call_attrs = { %{ pop @_ } };
+    }
+    elsif (! defined $_[-1] ) {
+      pop @_;   # search({}, undef)
+    }
+  }
 
   # see if we can keep the cache (no $rs changes)
   my $cache;
@@ -343,33 +340,28 @@ sub search_rs {
   my $old_having = delete $old_attrs->{having};
   my $old_where = delete $old_attrs->{where};
 
+  my $new_attrs = { %$old_attrs };
 
-  # start with blind overwriting merge
-  my $new_attrs = { %{$old_attrs}, %{$call_attrs} };
-
-  # join/prefetch use their own crazy merging heuristics
-  foreach my $key (qw/join prefetch/) {
-    $new_attrs->{$key} = $self->_merge_joinpref_attr($old_attrs->{$key}, $call_attrs->{$key})
-      if exists $call_attrs->{$key};
-  }
-
-  # stack binds together
-  $new_attrs->{bind} = [ @{ $old_attrs->{bind} || [] }, @{ $call_attrs->{bind} || [] } ];
-
-  # take care of selects (only if anything changed)
+  # take care of call attrs (only if anything is changing)
   if (keys %$call_attrs) {
 
     $self->throw_exception ('_trailing_select is not a public attribute - do not use it in search()')
-      if exists $call_attrs->{_trailing_select};
+      if ( exists $call_attrs->{_trailing_select} or exists $call_attrs->{'+_trailing_select'} );
 
-    my @selector_attrs = qw/select as columns cols +select +as +columns include_columns/;
+    my @selector_attrs = qw/select as columns cols +select +as +columns include_columns _trailing_select +_trailing_select/;
+
+    # Normalize the selector list (operates on the passed-in attr structure)
+    # Need to do it on every chain instead of only once on _resolved_attrs, in
+    # order to separate 'as'-ed from blind 'select's
+    $self->_normalize_selection ($call_attrs);
+
+    # start with blind overwriting merge, exclude selector attrs
+    $new_attrs = { %{$old_attrs}, %{$call_attrs} };
+    delete @{$new_attrs}{@selector_attrs};
 
     # reset the current selector list if new selectors are supplied
     if (List::Util::first { exists $call_attrs->{$_} } qw/columns cols select as/) {
-      # the new/old acrobatics is because of the merger in the next loop
-      for ($new_attrs, $old_attrs) {
-        delete @{$_}{@selector_attrs, '_trailing_select'};
-      }
+      delete @{$old_attrs}{@selector_attrs};
     }
 
     for (@selector_attrs) {
@@ -387,10 +379,15 @@ sub search_rs {
       }
     }
 
-    # Normalize the selector list (operates on the passed-in attr structure)
-    # Need to do it on every chain instead of only once on _resolved_attrs, in
-    # order to separate 'as'-ed from blind 'select's
-    $self->_normalize_selection ($new_attrs);
+
+    # join/prefetch use their own crazy merging heuristics
+    foreach my $key (qw/join prefetch/) {
+      $new_attrs->{$key} = $self->_merge_joinpref_attr($old_attrs->{$key}, $call_attrs->{$key})
+        if exists $call_attrs->{$key};
+    }
+
+    # stack binds together
+    $new_attrs->{bind} = [ @{ $old_attrs->{bind} || [] }, @{ $call_attrs->{bind} || [] } ];
   }
 
 
@@ -448,12 +445,14 @@ sub search_rs {
 sub _normalize_selection {
   my ($self, $attrs) = @_;
 
-  # merge all balanced selectors into the 'columns' stack, deleting the rest
-  foreach my $key (qw/+columns include_columns/) {
-    $attrs->{columns} = $self->_merge_attr($attrs->{columns}, delete $attrs->{$key})
-      if exists $attrs->{$key};
-  }
+  # legacy syntax
+  $attrs->{'+columns'} = $self->_merge_attr($attrs->{'+columns'}, delete $attrs->{include_columns})
+    if exists $attrs->{include_columns};
 
+  # Keep the X vs +X separation until _resolved_attrs time - this allows to
+  # delay the decision on whether to use a default select list ($rsrc->columns)
+  # allowing stuff like the remove_columns helper to work
+  #
   # select/as +select/+as pairs need special handling - the amount of select/as
   # elements in each pair does *not* have to be equal (think multicolumn
   # selectors like distinct(foo, bar) ). If the selector is bare (no 'as'
@@ -507,7 +506,7 @@ sub _normalize_selection {
       }
 
       @$sel = @new_sel;
-      $attrs->{'_trailing_select'} = $self->_merge_attr($attrs->{'_trailing_select'}, \@new_trailing)
+      $attrs->{"${pref}_trailing_select"} = $self->_merge_attr($attrs->{"${pref}_trailing_select"}, \@new_trailing)
         if @new_trailing;
     }
     elsif (@$as < @$sel) {
@@ -517,23 +516,21 @@ sub _normalize_selection {
     }
 
     # now see what the result for this pair looks like:
-
     if (@$as == @$sel) {
+
       # if balanced - treat as a columns entry
-      $attrs->{columns} = $self->_merge_attr(
-        $attrs->{columns},
-        { map { $as->[$_] => $sel->[$_] } ( 0 .. $#$as ) }
+      $attrs->{"${pref}columns"} = $self->_merge_attr(
+        $attrs->{"${pref}columns"},
+        [ map { +{ $as->[$_] => $sel->[$_] } } ( 0 .. $#$as ) ]
       );
     }
     else {
       # unbalanced - shove in select/as, not subject to deduplication in _resolved_attrs
-      $attrs->{select} = $self->_merge_attr($attrs->{select}, $sel);
-      $attrs->{as} = $self->_merge_attr($attrs->{as}, $as);
+      $attrs->{"${pref}select"} = $self->_merge_attr($attrs->{"${pref}select"}, $sel);
+      $attrs->{"${pref}as"} = $self->_merge_attr($attrs->{"${pref}as"}, $as);
     }
   }
 
-  # simplify
-  delete $attrs->{$_} for grep { $attrs->{$_} and ! @{$attrs->{$_}} } qw/select as columns/;
 }
 
 sub _stack_cond {
@@ -742,7 +739,7 @@ sub find {
       }++;
 
       push @unique_queries, try {
-        $self->_build_unique_cond ($c_name, $call_cond)
+        $self->_build_unique_cond ($c_name, $call_cond, 'croak_on_nulls')
       } || ();
     }
 
@@ -800,8 +797,9 @@ sub _qualify_cond_columns {
   return \%aliased;
 }
 
+my $callsites_warned_ucond;
 sub _build_unique_cond {
-  my ($self, $constraint_name, $extra_cond) = @_;
+  my ($self, $constraint_name, $extra_cond, $croak_on_null) = @_;
 
   my @c_cols = $self->result_source->unique_constraint_columns($constraint_name);
 
@@ -813,13 +811,43 @@ sub _build_unique_cond {
   };
 
   # trim out everything not in $columns
-  $final_cond = { map { $_ => $final_cond->{$_} } @c_cols };
+  $final_cond = { map {
+    exists $final_cond->{$_}
+      ? ( $_ => $final_cond->{$_} )
+      : ()
+  } @c_cols };
 
-  if (my @missing = grep { ! defined $final_cond->{$_} } (@c_cols) ) {
+  if (my @missing = grep
+    { ! ($croak_on_null ? defined $final_cond->{$_} : exists $final_cond->{$_}) }
+    (@c_cols)
+  ) {
     $self->throw_exception( sprintf ( "Unable to satisfy requested constraint '%s', no values for column(s): %s",
       $constraint_name,
       join (', ', map { "'$_'" } @missing),
     ) );
+  }
+
+  if (
+    !$croak_on_null
+      and
+    !$ENV{DBIC_NULLABLE_KEY_NOWARN}
+      and
+    my @undefs = grep { ! defined $final_cond->{$_} } (keys %$final_cond)
+  ) {
+    my $callsite = do {
+      my $w;
+      local $SIG{__WARN__} = sub { $w = shift };
+      carp;
+      $w
+    };
+
+    carp ( sprintf (
+      "NULL/undef values supplied for requested unique constraint '%s' (NULL "
+    . 'values in column(s): %s). This is almost certainly not what you wanted, '
+    . 'though you can set DBIC_NULLABLE_KEY_NOWARN to disable this warning.',
+      $constraint_name,
+      join (', ', map { "'$_'" } @undefs),
+    )) unless $callsites_warned_ucond->{$callsite}++;
   }
 
   return $final_cond;
@@ -1436,7 +1464,7 @@ sub _count_subq_rs {
 
   my $sub_attrs = { %$attrs };
   # extra selectors do not go in the subquery and there is no point of ordering it, nor locking it
-  delete @{$sub_attrs}{qw/collapse columns as select _prefetch_select _trailing_select order_by for/};
+  delete @{$sub_attrs}{qw/collapse columns as select _prefetch_selector_range _trailing_select order_by for/};
 
   # if we multi-prefetch we group_by primary keys only as this is what we would
   # get out of the rs via ->next/->all. We *DO WANT* to clobber old group_by regardless
@@ -1650,7 +1678,7 @@ sub _rs_update_delete {
     my $attrs = $self->_resolved_attrs_copy;
 
 
-    delete $attrs->{$_} for qw/collapse _collapse_order_by select _prefetch_select as/;
+    delete $attrs->{$_} for qw/collapse _collapse_order_by select _prefetch_selector_range as/;
     $attrs->{columns} = [ map { "$attrs->{alias}.$_" } ($self->result_source->_pri_cols) ];
 
     if ($needs_group_by_subq) {
@@ -1906,21 +1934,24 @@ sub populate {
       push(@created, $self->create($item));
     }
     return wantarray ? @created : \@created;
-  } else {
+  } 
+  else {
     my $first = $data->[0];
 
     # if a column is a registered relationship, and is a non-blessed hash/array, consider
     # it relationship data
     my (@rels, @columns);
+    my $rsrc = $self->result_source;
+    my $rels = { map { $_ => $rsrc->relationship_info($_) } $rsrc->relationships };
     for (keys %$first) {
       my $ref = ref $first->{$_};
-      $self->result_source->has_relationship($_) && ($ref eq 'ARRAY' or $ref eq 'HASH')
+      $rels->{$_} && ($ref eq 'ARRAY' or $ref eq 'HASH')
         ? push @rels, $_
         : push @columns, $_
       ;
     }
 
-    my @pks = $self->result_source->primary_columns;
+    my @pks = $rsrc->primary_columns;
 
     ## do the belongs_to relationships
     foreach my $index (0..$#$data) {
@@ -1938,9 +1969,9 @@ sub populate {
       foreach my $rel (@rels) {
         next unless ref $data->[$index]->{$rel} eq "HASH";
         my $result = $self->related_resultset($rel)->create($data->[$index]->{$rel});
-        my ($reverse) = keys %{$self->result_source->reverse_relationship_info($rel)};
+        my ($reverse_relname, $reverse_relinfo) = %{$rsrc->reverse_relationship_info($rel)};
         my $related = $result->result_source->_resolve_condition(
-          $result->result_source->relationship_info($reverse)->{cond},
+          $reverse_relinfo->{cond},
           $self,
           $result,
         );
@@ -1959,8 +1990,8 @@ sub populate {
     my @inherit_data = values %$rs_data;
 
     ## do bulk insert on current row
-    $self->result_source->storage->insert_bulk(
-      $self->result_source,
+    $rsrc->storage->insert_bulk(
+      $rsrc,
       [@columns, @inherit_cols],
       [ map { [ @$_{@columns}, @inherit_data ] } @$data ],
     );
@@ -1968,18 +1999,19 @@ sub populate {
     ## do the has_many relationships
     foreach my $item (@$data) {
 
+      my $main_row;
+
       foreach my $rel (@rels) {
-        next unless $item->{$rel} && ref $item->{$rel} eq "ARRAY";
+        next unless ref $item->{$rel} eq "ARRAY" && @{ $item->{$rel} };
 
-        my $parent = $self->find({map { $_ => $item->{$_} } @pks})
-     || $self->throw_exception('Cannot find the relating object.');
+        $main_row ||= $self->new_result({map { $_ => $item->{$_} } @pks});
 
-        my $child = $parent->$rel;
+        my $child = $main_row->$rel;
 
         my $related = $child->result_source->_resolve_condition(
-          $parent->result_source->relationship_info($rel)->{cond},
+          $rels->{$rel}{cond},
           $child,
-          $parent,
+          $main_row,
         );
 
         my @rows_to_add = ref $item->{$rel} eq 'ARRAY' ? @{$item->{$rel}} : ($item->{$rel});
@@ -2272,7 +2304,6 @@ sub new_result {
     @$cols_from_relations
       ? (-cols_from_relations => $cols_from_relations)
       : (),
-    -source_handle => $self->_source_handle,
     -result_source => $self->result_source, # DO NOT REMOVE THIS, REQUIRED
   );
 
@@ -3086,8 +3117,8 @@ sub as_subselect_rs {
   return $fresh_rs->search( {}, {
     from => [{
       $attrs->{alias} => $self->as_query,
-      -alias         => $attrs->{alias},
-      -source_handle => $self->result_source->handle,
+      -alias  => $attrs->{alias},
+      -rsrc   => $self->result_source,
     }],
     alias => $attrs->{alias},
   });
@@ -3137,8 +3168,8 @@ sub _chain_relationship {
     );
 
     $from = [{
-      -source_handle => $source->handle,
-      -alias => $attrs->{alias},
+      -rsrc   => $source,
+      -alias  => $attrs->{alias},
       $attrs->{alias} => $rs_copy->as_query,
     }];
     delete @{$attrs}{@force_subq_attrs, qw/where bind/};
@@ -3149,7 +3180,7 @@ sub _chain_relationship {
   }
   else {
     $from = [{
-      -source_handle => $source->handle,
+      -rsrc  => $source,
       -alias => $attrs->{alias},
       $attrs->{alias} => $source->from,
     }];
@@ -3214,23 +3245,33 @@ sub _resolved_attrs {
   my $source = $self->result_source;
   my $alias  = $attrs->{alias};
 
-  # take care of any selector merging
-  $self->_normalize_selection ($attrs);
+  # one last pass of normalization
+  $self->_normalize_selection($attrs);
+
+  # default selection list
+  $attrs->{columns} = [ $source->columns ]
+    unless List::Util::first { exists $attrs->{$_} } qw/columns cols select as _trailing_select/;
+
+  # merge selectors together
+  for (qw/columns select as _trailing_select/) {
+    $attrs->{$_} = $self->_merge_attr($attrs->{$_}, $attrs->{"+$_"})
+      if $attrs->{$_} or $attrs->{"+$_"};
+  }
 
   # disassemble columns
   my (@sel, @as);
-  for my $c (@{
-    ref $attrs->{columns} eq 'ARRAY' ? $attrs->{columns} : [ $attrs->{columns} || () ]
-  }) {
-    if (ref $c eq 'HASH') {
-      for my $as (keys %$c) {
-        push @sel, $c->{$as};
-        push @as, $as;
+  if (my $cols = delete $attrs->{columns}) {
+    for my $c (ref $cols eq 'ARRAY' ? @$cols : $cols) {
+      if (ref $c eq 'HASH') {
+        for my $as (keys %$c) {
+          push @sel, $c->{$as};
+          push @as, $as;
+        }
       }
-    }
-    else {
-      push @sel, $c;
-      push @as, $c;
+      else {
+        push @sel, $c;
+        push @as, $c;
+      }
     }
   }
 
@@ -3242,9 +3283,6 @@ sub _resolved_attrs {
     if $attrs->{as};
   push @sel, @{ ref $attrs->{select} eq 'ARRAY' ? $attrs->{select} : [ $attrs->{select} ] }
     if $attrs->{select};
-
-  push @sel, @{$attrs->{_trailing_select}}
-    if $attrs->{_trailing_select};
 
   # assume all unqualified selectors to apply to the current alias (legacy stuff)
   for (@sel) {
@@ -3281,8 +3319,8 @@ sub _resolved_attrs {
   $attrs->{as} = \@as;
 
   $attrs->{from} ||= [{
-    -source_handle => $source->handle,
-    -alias => $self->{attrs}{alias},
+    -rsrc   => $source,
+    -alias  => $self->{attrs}{alias},
     $self->{attrs}{alias} => $source->from,
   }];
 
@@ -3331,8 +3369,13 @@ sub _resolved_attrs {
       carp ("Useless use of distinct on a grouped resultset ('distinct' is ignored when a 'group_by' is present)");
     }
     else {
+      # distinct affects only the main selection part, not what prefetch may
+      # add below. However trailing is not yet a part of the selection as
+      # prefetch must insert before it
       $attrs->{group_by} = $source->storage->_group_over_selection (
-        @{$attrs}{qw/from select order_by/}
+        $attrs->{from},
+        [ @{$attrs->{select}||[]}, @{$attrs->{_trailing_select}||[]} ],
+        $attrs->{order_by},
       );
     }
   }
@@ -3368,14 +3411,21 @@ sub _resolved_attrs {
       $source->_resolve_prefetch( $prefetch, $alias, $join_map, $prefetch_ordering, $attrs->{collapse} );
 
     # we need to somehow mark which columns came from prefetch
-    $attrs->{_prefetch_select} = [ map { $_->[0] } @prefetch ];
+    if (@prefetch) {
+      my $sel_end = $#{$attrs->{select}};
+      $attrs->{_prefetch_selector_range} = [ $sel_end + 1, $sel_end + @prefetch ];
+    }
 
-    push @{ $attrs->{select} }, @{$attrs->{_prefetch_select}};
+    push @{ $attrs->{select} }, (map { $_->[0] } @prefetch);
     push @{ $attrs->{as} }, (map { $_->[1] } @prefetch);
 
     push( @{$attrs->{order_by}}, @$prefetch_ordering );
     $attrs->{_collapse_order_by} = \@$prefetch_ordering;
   }
+
+
+  push @{ $attrs->{select} }, @{$attrs->{_trailing_select}}
+    if $attrs->{_trailing_select};
 
   # if both page and offset are specified, produce a combined offset
   # even though it doesn't make much sense, this is what pre 081xx has
@@ -3534,6 +3584,7 @@ sub _merge_joinpref_attr {
             return [$_[0], @{$_[1]}]
           },
           HASH  => sub {
+            return [] if !defined $_[0] and !keys %{$_[1]};
             return [ $_[1] ] if !defined $_[0];
             return [ $_[0] ] if !keys %{$_[1]};
             return [$_[0], $_[1]]
@@ -3561,17 +3612,20 @@ sub _merge_joinpref_attr {
         },
         HASH => {
           SCALAR => sub {
+            return [] if !keys %{$_[0]} and !defined $_[1];
             return [ $_[0] ] if !defined $_[1];
             return [ $_[1] ] if !keys %{$_[0]};
             return [$_[0], $_[1]]
           },
           ARRAY => sub {
+            return [] if !keys %{$_[0]} and !@{$_[1]};
             return [ $_[0] ] if !@{$_[1]};
             return $_[1] if !keys %{$_[0]};
             return $_[1] if __HM_DEDUP and List::Util::first { $_ eq $_[0] } @{$_[1]};
             return [ $_[0], @{$_[1]} ];
           },
           HASH => sub {
+            return [] if !keys %{$_[0]} and !keys %{$_[1]};
             return [ $_[0] ] if !keys %{$_[1]};
             return [ $_[1] ] if !keys %{$_[0]};
             return [ $_[0] ] if $_[0] eq $_[1];
@@ -3586,17 +3640,6 @@ sub _merge_joinpref_attr {
   }
 }
 
-sub result_source {
-    my $self = shift;
-
-    if (@_) {
-        $self->_source_handle($_[0]->handle);
-    } else {
-        $self->_source_handle->resolve;
-    }
-}
-
-
 sub STORABLE_freeze {
   my ($self, $cloning) = @_;
   my $to_serialize = { %$self };
@@ -3604,7 +3647,7 @@ sub STORABLE_freeze {
   # A cursor in progress can't be serialized (and would make little sense anyway)
   delete $to_serialize->{cursor};
 
-  return nfreeze($to_serialize);
+  nfreeze($to_serialize);
 }
 
 # need this hook for symmetry
@@ -3613,7 +3656,7 @@ sub STORABLE_thaw {
 
   %$self = %{ thaw($serialized) };
 
-  return $self;
+  $self;
 }
 
 
@@ -3626,8 +3669,8 @@ See L<DBIx::Class::Schema/throw_exception> for details.
 sub throw_exception {
   my $self=shift;
 
-  if (ref $self && $self->_source_handle->schema) {
-    $self->_source_handle->schema->throw_exception(@_)
+  if (ref $self and my $rsrc = $self->result_source) {
+    $rsrc->throw_exception(@_)
   }
   else {
     DBIx::Class::Exception->throw(@_);

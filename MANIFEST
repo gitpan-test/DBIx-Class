@@ -534,6 +534,7 @@ t/search/select_chains.t
 t/search/select_chains_unbalanced.t
 t/search/subquery.t
 t/search/void.t
+t/sqlmaker/bind_transport.t
 t/sqlmaker/core.t
 t/sqlmaker/core_quoted.t
 t/sqlmaker/limit_dialects/custom.t

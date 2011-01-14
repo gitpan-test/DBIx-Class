@@ -1,6 +1,3 @@
-use strict;
-use warnings;
-
 # Do the override as early as possible so that CORE::bless doesn't get compiled away
 # We will replace $bless_override only if we are in author mode
 my $bless_override;
@@ -11,6 +8,8 @@ BEGIN {
   *CORE::GLOBAL::bless = sub { goto $bless_override };
 }
 
+use strict;
+use warnings;
 use Test::More;
 
 use lib qw(t/lib);
@@ -45,6 +44,7 @@ unless (DBICTest::RunMode->is_plain) {
   require Class::Struct;
   require FileHandle;
   require Hash::Merge;
+  require Storable;
 
   no warnings qw/redefine once/;
   no strict qw/refs/;
@@ -143,9 +143,6 @@ unless (DBICTest::RunMode->is_plain) {
   }
 
   my $base_collection = {
-    schema => $schema,
-    storage => $storage,
-
     resultset => $rs,
 
     # twice so that we make sure only one H::M object spawned
@@ -156,13 +153,23 @@ unless (DBICTest::RunMode->is_plain) {
 
     result_source => $rs->result_source,
 
+    result_source_handle => $rs->result_source->handle,
+
     fresh_pager => $rs->page(5)->pager,
     pager => $pager,
     pager_explicit_count => $pager_explicit_count,
 
-    sql_maker => $storage->sql_maker,
-    dbh => $storage->_dbh
   };
+
+  %$base_collection = (
+    %$base_collection,
+    refrozen => Storable::dclone( $base_collection ),
+    rerefrozen => Storable::dclone( Storable::dclone( $base_collection ) ),
+    schema => $schema,
+    storage => $storage,
+    sql_maker => $storage->sql_maker,
+    dbh => $storage->_dbh,
+  );
 
   memory_cycle_ok ($base_collection, 'No cycles in the object collection')
     if $have_test_cycle;
@@ -171,11 +178,47 @@ unless (DBICTest::RunMode->is_plain) {
     $weak_registry->{"basic $_"} = { weakref => $base_collection->{$_} };
     weaken $weak_registry->{"basic $_"}{weakref};
   }
-
 }
 
-memory_cycle_ok($weak_registry, 'No cycles in the weakened object collection')
-  if $have_test_cycle;
+# check that "phantom-chaining" works - we never lose track of the original $schema
+# and have access to the entire tree without leaking anything
+{
+  my $phantom;
+  for (
+    sub { DBICTest->init_schema },
+    sub { shift->source('Artist') },
+    sub { shift->resultset },
+    sub { shift->result_source },
+    sub { shift->schema },
+    sub { shift->resultset('Artist') },
+    sub { shift->find_or_create({ name => 'detachable' }) },
+    sub { shift->result_source },
+    sub { shift->schema },
+    sub { shift->clone },
+    sub { shift->resultset('Artist') },
+    sub { shift->next },
+    sub { shift->result_source },
+    sub { shift->resultset },
+    sub { shift->create({ name => 'detached' }) },
+    sub { shift->update({ name => 'reattached' }) },
+    sub { shift->discard_changes },
+    sub { shift->delete },
+    sub { shift->insert },
+  ) {
+    $phantom = $_->($phantom);
+
+    my $slot = (sprintf 'phantom %s=%s(0x%x)', # so we don't trigger stringification
+      ref $phantom,
+      reftype $phantom,
+      refaddr $phantom,
+    );
+    $weak_registry->{$slot} = $phantom;
+    weaken $weak_registry->{$slot};
+  }
+
+  ok( $phantom->in_storage, 'Properly deleted/reinserted' );
+  is( $phantom->name, 'reattached', 'Still correct name' );
+}
 
 # Naturally we have some exceptions
 my $cleared;
@@ -194,8 +237,8 @@ for my $slot (keys %$weak_registry) {
       unless $cleared->{hash_merge_singleton}{$weak_registry->{$slot}{weakref}{behavior}}++;
   }
   elsif ($slot =~ /^__TxnScopeGuard__FIXUP__/) {
-    die 'The $@ debacle should have been fixed by now!!!' if $] >= 5.013008;
-    delete $weak_registry->{$slot};
+    delete $weak_registry->{$slot}
+      if $] > 5.013001 and $] < 5.013008;
   }
 }
 
@@ -217,7 +260,7 @@ $_->result_source_instance(undef) for (
 DBICTest::Schema->source_registrations(undef);
 
 my $tb = Test::More->builder;
-for my $slot (keys %$weak_registry) {
+for my $slot (sort keys %$weak_registry) {
 
   ok (! defined $weak_registry->{$slot}{weakref}, "No leaks of $slot") or do {
     my $diag = '';

@@ -27,7 +27,7 @@ sub component_base_class { 'DBIx::Class' }
 # Always remember to do all digits for the version even if they're 0
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
-$VERSION = '0.08126';
+$VERSION = '0.08126_01';
 
 $VERSION = eval $VERSION if $VERSION =~ /_/; # numify for warning-free dev releases
 
@@ -256,6 +256,8 @@ blblack: Brandon L. Black <blblack@gmail.com>
 
 bluefeet: Aran Deltac <bluefeet@cpan.org>
 
+bphillips: Brian Phillips <bphillips@cpan.org>
+
 boghead: Bryan Beeley <cpan@beeley.org>
 
 bricas: Brian Cassidy <bricas@cpan.org>
@@ -324,6 +326,8 @@ kaare: Kaare Rasmussen
 
 konobi: Scott McWhirter
 
+littlesavage: Alexey Illarionov <littlesavage@orionet.ru>
+
 lukes: Luke Saunders <luke.saunders@gmail.com>
 
 marcus: Marcus Ramberg <mramberg@cpan.org>
@@ -384,6 +388,8 @@ robkinyon: Rob Kinyon <rkinyon@cpan.org>
 
 Roman: Roman Filippov <romanf@cpan.org>
 
+Sadrak: Felix Antonius Wilhelm Ostmann <sadrak@cpan.org>
+
 sc_: Just Another Perl Hacker
 
 scotty: Scotty Allen <scotty@scottyallen.com>
@@ -397,6 +403,8 @@ spb: Stephen Bennett <stephen@freenode.net>
 Squeeks <squeek@cpan.org>
 
 sszabo: Stephan Szabo <sszabo@bigpanda.com>
+
+talexb: Alex Beamish <talexb@gmail.com>
 
 teejay : Aaron Trevena <teejay@cpan.org>
 

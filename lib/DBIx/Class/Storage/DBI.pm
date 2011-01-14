@@ -1420,7 +1420,10 @@ sub _dbh_begin_work {
 
 sub txn_commit {
   my $self = shift;
-  if ($self->{transaction_depth} == 1) {
+  if (! $self->_dbh) {
+    $self->throw_exception('cannot COMMIT on a disconnected handle');
+  }
+  elsif ($self->{transaction_depth} == 1) {
     $self->debugobj->txn_commit()
       if ($self->debug);
     $self->_dbh_commit;
@@ -1431,6 +1434,17 @@ sub txn_commit {
     $self->{transaction_depth}--;
     $self->svp_release
       if $self->auto_savepoint;
+  }
+  elsif (! $self->_dbh->FETCH('AutoCommit') ) {
+
+    carp "Storage transaction_depth $self->{transaction_depth} does not match "
+        ."false AutoCommit of $self->{_dbh}, attempting COMMIT anyway";
+
+    $self->debugobj->txn_commit()
+      if ($self->debug);
+    $self->_dbh_commit;
+    $self->{transaction_depth} = 0
+      if $self->_dbh_autocommit;
   }
   else {
     $self->throw_exception( 'Refusing to commit without a started transaction' );
@@ -2025,7 +2039,7 @@ sub _select_args {
     from => $ident,
     where => $where,
     $rs_alias && $alias2source->{$rs_alias}
-      ? ( _rsroot_source_handle => $alias2source->{$rs_alias}->handle )
+      ? ( _rsroot_rsrc => $alias2source->{$rs_alias} )
       : ()
     ,
   };
@@ -2087,9 +2101,7 @@ sub _select_args {
         &&
       @{$attrs->{group_by}}
         &&
-      $attrs->{_prefetch_select}
-        &&
-      @{$attrs->{_prefetch_select}}
+      $attrs->{_prefetch_selector_range}
     )
   ) {
     ($ident, $select, $where, $attrs)

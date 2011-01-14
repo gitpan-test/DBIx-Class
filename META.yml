@@ -49,7 +49,7 @@ requires:
   Sub::Name: 0.04
   Try::Tiny: 0.04
   Variable::Magic: 0.44
-  namespace::clean: 0.14
+  namespace::clean: 0.20
   perl: 5.8.1
 resources:
   IRC: irc://irc.perl.org/#dbix-class
@@ -58,4 +58,4 @@ resources:
   homepage: http://www.dbix-class.org/
   license: http://dev.perl.org/licenses/
   repository: git://git.shadowcat.co.uk/dbsrgits/DBIx-Class.git
-version: 0.08126
+version: 0.08126_01

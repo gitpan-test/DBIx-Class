@@ -1,5 +1,37 @@
 Revision history for DBIx::Class
 
+0.08126_01 2011-01-14 14:00 (UTC)
+    * New Features / Changes
+        - Schema/resultsource instances are now crossreferenced via a new
+          system guaranteeing leak-free mutually assured destruction
+        - Switch to a warning when find() is invoked with both a 'key'
+          argument and a NULL-containing condition to satisfy the named
+          constraint. Previously (starting with 0.08124) an exception was
+          thrown
+        - Switch to a warning when a commit is attempted with an out-of-sync
+          transaction_depth (someone issued a begin externally to DBIC).
+          Previously (starting with 0.08124) an exception was thrown
+
+    * Fixes
+        - Revert default selection to being lazy again (eagerness introduced
+          in 0.08125) - fixes DBIx::Class::Helper::ResultSet::RemoveColumns
+        - Fix losing order of columns provided in select/as (regression from
+          0.08125)
+        - Unaliased "dark" selectors no longer throw off prefetch
+        - Fix proper composition of bind values across all possible
+          SQL areas ( group_by => \[ ... ] now works properly )
+        - Allow populate to skip empty has_many relationships which makes
+          it easier to pass HashRefInflator data directly to ->populate
+        - Improve freeze/thaw semantics and error messages (RT#62546)
+        - Fix inconsistency in Manual::Features (RT#64500)
+        - Fix incorrect SQL when using for => 'shared' with MySQL (RT#64590)
+
+    * Misc
+        - Fix test warning on win32 - at this point the test suite is
+          warning-free on all known OSes
+        - Require newest namespace::clean which in turn depends on new
+          installable Package::Stash
+
 0.08126 2010-12-28 18:10 (UTC)
     * Fixes
         - Bump forgotten Class::Accessor::Grouped core dependency
