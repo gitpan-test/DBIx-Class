@@ -1,6 +1,11 @@
 Revision history for DBIx::Class
 
-0.08126_01 2011-01-14 14:00 (UTC)
+0.08189_01 2011-01-17 11:55 (UTC)
+    * New Features / Changes
+        - Support for completely arbitrary SQL::Abstract-based conditions
+          in all types of relationships
+
+0.08127 (tentative release)
     * New Features / Changes
         - Schema/resultsource instances are now crossreferenced via a new
           system guaranteeing leak-free mutually assured destruction
@@ -25,6 +30,8 @@ Revision history for DBIx::Class
         - Improve freeze/thaw semantics and error messages (RT#62546)
         - Fix inconsistency in Manual::Features (RT#64500)
         - Fix incorrect SQL when using for => 'shared' with MySQL (RT#64590)
+        - Fix sloppy refactor of RSrc::sequence back from 89170201
+          (RT#64839)
 
     * Misc
         - Fix test warning on win32 - at this point the test suite is
