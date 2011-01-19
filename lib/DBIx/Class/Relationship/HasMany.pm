@@ -49,13 +49,11 @@ sub has_many {
     $cond = { "foreign.${f_key}" => "self.${pri}" };
   }
 
-  my $default_cascade = ref $cond eq 'CODE' ? 0 : 1;
-
   $class->add_relationship($rel, $f_class, $cond, {
     accessor => 'multi',
     join_type => 'LEFT',
-    cascade_delete => $default_cascade,
-    cascade_copy => $default_cascade,
+    cascade_delete => 1,
+    cascade_copy => 1,
     %{$attrs||{}}
   });
 }

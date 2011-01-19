@@ -181,6 +181,7 @@ t/05components.t
 t/100extra_source.t
 t/100populate.t
 t/101populate_rs.t
+t/101source.t
 t/102load_classes.t
 t/103many_to_many_warning.t
 t/104view.t
@@ -506,7 +507,6 @@ t/prefetch/via_search_related.t
 t/prefetch/with_limit.t
 t/relationship/after_update.t
 t/relationship/core.t
-t/relationship/custom.t
 t/relationship/doesnt_exist.t
 t/relationship/proxy.t
 t/relationship/set_column_on_fk.t

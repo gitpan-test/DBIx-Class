@@ -697,7 +697,7 @@ sub find {
       next if $keyref eq 'ARRAY'; # has_many for multi_create
 
       my $rel_q = $rsrc->_resolve_condition(
-        $relinfo->{cond}, $val, $key, $key
+        $relinfo->{cond}, $val, $key
       );
       die "Can't handle complex relationship conditions in find" if ref($rel_q) ne 'HASH';
       @related{keys %$rel_q} = values %$rel_q;
@@ -1974,7 +1974,6 @@ sub populate {
           $reverse_relinfo->{cond},
           $self,
           $result,
-          $rel,
         );
 
         delete $data->[$index]->{$rel};
@@ -2013,7 +2012,6 @@ sub populate {
           $rels->{$rel}{cond},
           $child,
           $main_row,
-          $rel,
         );
 
         my @rows_to_add = ref $item->{$rel} eq 'ARRAY' ? @{$item->{$rel}} : ($item->{$rel});
@@ -2345,13 +2343,7 @@ sub _merge_with_rscond {
 
     while ( my($col, $value) = each %implied ) {
       my $vref = ref $value;
-      if (
-        $vref eq 'HASH'
-          and
-        keys(%$value) == 1
-          and
-        (keys %$value)[0] eq '='
-      ) {
+      if ($vref eq 'HASH' && keys(%$value) && (keys %$value)[0] eq '=') {
         $new_data{$col} = $value->{'='};
       }
       elsif( !$vref or $vref eq 'SCALAR' or blessed($value) ) {

@@ -10,7 +10,7 @@ use DBIx::Class::Exception;
 use Carp::Clan qw/^DBIx::Class/;
 use Try::Tiny;
 use List::Util 'first';
-use Scalar::Util qw/blessed weaken isweak/;
+use Scalar::Util qw/weaken isweak/;
 use Storable qw/nfreeze thaw/;
 use namespace::clean;
 
@@ -1345,11 +1345,14 @@ sub reverse_relationship_info {
   my @otherrels = $othertable->relationships();
   my $otherrelationship;
   foreach my $otherrel (@otherrels) {
-    my $otherrel_info = $othertable->relationship_info($otherrel);
+    # this may be a partial schema with the related source not being
+    # available at all
+    my $back = try { $othertable->related_source($otherrel) } or next;
 
-    my $back = $othertable->related_source($otherrel);
+    # did we get back to ourselves?
     next unless $back->source_name eq $self->source_name;
 
+    my $otherrel_info = $othertable->relationship_info($otherrel);
     my @othertestconds;
 
     if (ref $otherrel_info->{cond} eq 'HASH') {
@@ -1490,8 +1493,7 @@ sub _resolve_join {
                -alias => $as,
                -relation_chain_depth => $seen->{-relation_chain_depth} || 0,
              },
-             $self->_resolve_condition($rel_info->{cond}, $as, $alias, $join)
-          ];
+             $self->_resolve_condition($rel_info->{cond}, $as, $alias) ];
   }
 }
 
@@ -1543,89 +1545,14 @@ sub resolve_condition {
   $self->_resolve_condition (@_);
 }
 
-our $UNRESOLVABLE_CONDITION = \ '1 = 0';
+# Resolves the passed condition to a concrete query fragment. If given an alias,
+# returns a join condition; if given an object, inverts that object to produce
+# a related conditional from that object.
+our $UNRESOLVABLE_CONDITION = \'1 = 0';
 
-# Resolves the passed condition to a concrete query fragment and a flag
-# indicating whether this is a cross-table condition. Also an optional
-# list of non-triviail values (notmally conditions) returned as a part
-# of a joinfree condition hash
 sub _resolve_condition {
-  my ($self, $cond, $as, $for, $relname) = @_;
-
-  my $obj_rel = !!blessed $for;
-
-  if (ref $cond eq 'CODE') {
-    my $relalias = $obj_rel ? 'me' : $as;
-
-    my ($crosstable_cond, $joinfree_cond) = $cond->({
-      self_alias => $obj_rel ? $as : $for,
-      foreign_alias => $relalias,
-      self_resultsource => $self,
-      foreign_relname => $relname || ($obj_rel ? $as : $for),
-      self_rowobj => $obj_rel ? $for : undef
-    });
-
-    my $cond_cols;
-    if ($joinfree_cond) {
-
-      # FIXME sanity check until things stabilize, remove at some point
-      $self->throw_exception (
-        "A join-free condition returned for relationship '$relname' whithout a row-object to chain from"
-      ) unless $obj_rel;
-
-      # FIXME another sanity check
-      if (
-        ref $joinfree_cond ne 'HASH'
-          or
-        first { $_ !~ /^\Q$relalias.\E.+/ } keys %$joinfree_cond
-      ) {
-        $self->throw_exception (
-          "The join-free condition returned for relationship '$relname' must be a hash "
-         .'reference with all keys being valid columns on the related result source'
-        );
-      }
-
-      # normalize
-      for (values %$joinfree_cond) {
-        $_ = $_->{'='} if (
-          ref $_ eq 'HASH'
-            and
-          keys %$_ == 1
-            and
-          exists $_->{'='}
-        );
-      }
-
-      # see which parts of the joinfree cond are conditionals
-      my $relcol_list = { map { $_ => 1 } $self->related_source($relname)->columns };
-
-      for my $c (keys %$joinfree_cond) {
-        my ($colname) = $c =~ /^ (?: \Q$relalias.\E )? (.+)/x;
-
-        unless ($relcol_list->{$colname}) {
-          push @$cond_cols, $colname;
-          next;
-        }
-
-        if (
-          ref $joinfree_cond->{$c}
-            and
-          ref $joinfree_cond->{$c} ne 'SCALAR'
-            and
-          ref $joinfree_cond->{$c} ne 'REF'
-        ) {
-          push @$cond_cols, $colname;
-          next;
-        }
-      }
-
-      return wantarray ? ($joinfree_cond, 0, $cond_cols) : $joinfree_cond;
-    }
-    else {
-      return wantarray ? ($crosstable_cond, 1) : $crosstable_cond;
-    }
-  }
-  elsif (ref $cond eq 'HASH') {
+  my ($self, $cond, $as, $for) = @_;
+  if (ref $cond eq 'HASH') {
     my %ret;
     foreach my $k (keys %{$cond}) {
       my $v = $cond->{$k};
@@ -1662,28 +1589,17 @@ sub _resolve_condition {
       } elsif (!defined $as) { # undef, i.e. "no reverse object"
         $ret{$v} = undef;
       } else {
-        $ret{"${as}.${k}"} = { -ident => "${for}.${v}" };
+        $ret{"${as}.${k}"} = "${for}.${v}";
       }
     }
-
-    return wantarray
-      ? ( \%ret, ($obj_rel || !defined $as || ref $as) ? 0 : 1 )
-      : \%ret
-    ;
-  }
-  elsif (ref $cond eq 'ARRAY') {
-    my (@ret, $crosstable);
-    for (@$cond) {
-      my ($cond, $crosstab) = $self->_resolve_condition($_, $as, $for, $relname);
-      push @ret, $cond;
-      $crosstable ||= $crosstab;
-    }
-    return wantarray ? (\@ret, $crosstable) : \@ret;
-  }
-  else {
-    $self->throw_exception ("Can't handle condition $cond for relationship '$relname' yet :(");
+    return \%ret;
+  } elsif (ref $cond eq 'ARRAY') {
+    return [ map { $self->_resolve_condition($_, $as, $for) } @$cond ];
+  } else {
+   die("Can't handle condition $cond yet :(");
   }
 }
+
 
 # Accepts one or more relationships for the current source and returns an
 # array of column names for each of those relationships. Column names are
@@ -1737,7 +1653,6 @@ sub _resolve_prefetch {
         "Can't prefetch has_many ${pre} (join cond too complex)")
         unless ref($rel_info->{cond}) eq 'HASH';
       my $dots = @{[$as_prefix =~ m/\./g]} + 1; # +1 to match the ".${as_prefix}"
-
       if (my ($fail) = grep { @{[$_ =~ m/\./g]} == $dots }
                          keys %{$collapse}) {
         my ($last) = ($fail =~ /([^\.]+)$/);
@@ -1751,7 +1666,6 @@ sub _resolve_prefetch {
           . 'Use at your own risk.'
         );
       }
-
       #my @col = map { (/^self\.(.+)$/ ? ("${as_prefix}.$1") : ()); }
       #              values %{$rel_info->{cond}};
       $collapse->{".${as_prefix}${pre}"} = [ $rel_source->_pri_cols ];

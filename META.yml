@@ -58,4 +58,4 @@ resources:
   homepage: http://www.dbix-class.org/
   license: http://dev.perl.org/licenses/
   repository: git://git.shadowcat.co.uk/dbsrgits/DBIx-Class.git
-version: 0.08189_01
+version: 0.08127

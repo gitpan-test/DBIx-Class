@@ -1,14 +1,13 @@
 Revision history for DBIx::Class
 
-0.08189_01 2011-01-17 11:55 (UTC)
-    * New Features / Changes
-        - Support for completely arbitrary SQL::Abstract-based conditions
-          in all types of relationships
-
-0.08127 (tentative release)
+0.08127 2011-01-19 16:40 (UTC)
     * New Features / Changes
         - Schema/resultsource instances are now crossreferenced via a new
           system guaranteeing leak-free mutually assured destruction
+        - DBIx::Class now warns when the user erroneously supplies
+          AutoCommit => 0 to connect()
+        - A warning is also issued before forcing the RaiseError
+          setting of externally supplied DBI handles
         - Switch to a warning when find() is invoked with both a 'key'
           argument and a NULL-containing condition to satisfy the named
           constraint. Previously (starting with 0.08124) an exception was
@@ -18,6 +17,8 @@ Revision history for DBIx::Class
           Previously (starting with 0.08124) an exception was thrown
 
     * Fixes
+        - A number of improvements/diagnostics of multiple active resultset
+          handling on MSSQL over DBD::ODBC
         - Revert default selection to being lazy again (eagerness introduced
           in 0.08125) - fixes DBIx::Class::Helper::ResultSet::RemoveColumns
         - Fix losing order of columns provided in select/as (regression from
@@ -30,8 +31,15 @@ Revision history for DBIx::Class
         - Improve freeze/thaw semantics and error messages (RT#62546)
         - Fix inconsistency in Manual::Features (RT#64500)
         - Fix incorrect SQL when using for => 'shared' with MySQL (RT#64590)
-        - Fix sloppy refactor of RSrc::sequence back from 89170201
+        - Throw comprehensible exception on erroneous $schema->source()
+          invocation
+        - Fix sloppy refactor of ResultSource::sequence back from 89170201
           (RT#64839)
+        - Fix incorrect error detection during populate() on Oracle
+        - Better handling of result_source-less row objects by
+          auto-calling result_source_instance when necessary
+        - Fix reverse_relationship_info and sqlt deploy on partially
+          loaded schemas (relationships point to non-existent sources)
 
     * Misc
         - Fix test warning on win32 - at this point the test suite is

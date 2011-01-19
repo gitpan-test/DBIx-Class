@@ -50,14 +50,10 @@ sub _has_one {
     $cond = { "foreign.${f_key}" => "self.${pri}" };
   }
   $class->_validate_has_one_condition($cond);
-
-  my $default_cascade = ref $cond eq 'CODE' ? 0 : 1;
-
   $class->add_relationship($rel, $f_class,
    $cond,
    { accessor => 'single',
-     cascade_update => $default_cascade,
-     cascade_delete => $default_cascade,
+     cascade_update => 1, cascade_delete => 1,
      ($join_type ? ('join_type' => $join_type) : ()),
      %{$attrs || {}} });
   1;
