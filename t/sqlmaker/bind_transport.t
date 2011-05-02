@@ -5,13 +5,18 @@ use Test::More;
 use lib qw(t/lib);
 use DBICTest;
 use DBIC::SqlMakerTest;
+use DBIx::Class::SQLMaker::LimitDialects;
+
+my ($ROWS, $OFFSET) = (
+   DBIx::Class::SQLMaker::LimitDialects->__rows_bindtype,
+   DBIx::Class::SQLMaker::LimitDialects->__offset_bindtype,
+);
 
 my $schema = DBICTest->init_schema();
 
-my $ne_bind = [ _ne => 'bar' ];
 my $rs = $schema->resultset('CD')->search({ -and => [
-  'me.artist' => { '!=', 'foo' },
-  'me.artist' => { '!=', \[ '?', $ne_bind ] },
+  'me.artist' => { '!=', '666' },
+  'me.artist' => { '!=', \[ '?', [ _ne => 'bar' ] ] },
 ]});
 
 # bogus sql query to make sure bind composition happens properly
@@ -37,17 +42,19 @@ for (1,2) {
       GROUP BY me.cdid, me.artist - ?
       HAVING me.artist < ?
       ORDER BY me.artist * ?
-      LIMIT 1 OFFSET 2
+      LIMIT ? OFFSET ?
     )',
     [
-      [ 'me.artist' => 'foo' ],
-      $ne_bind,
-      [ _add => 1 ],
-      [ 'me.artist' => 'foo' ],
-      $ne_bind,
-      [ _sub => 2 ],
-      [ _lt => 3 ],
-      [ _mu => 4 ],
+      [ { sqlt_datatype => 'integer', dbic_colname => 'me.artist' } => 666 ],
+      [ { dbic_colname => '_ne' } => 'bar' ],
+      [ { dbic_colname => '_add' } => 1 ],
+      [ { sqlt_datatype => 'integer', dbic_colname => 'me.artist' } => 666 ],
+      [ { dbic_colname => '_ne' } => 'bar' ],
+      [ { dbic_colname => '_sub' } => 2 ],
+      [ { dbic_colname => '_lt' } => 3 ],
+      [ { dbic_colname => '_mu' } => 4 ],
+      [ $ROWS => 1 ],
+      [ $OFFSET => 2 ],
     ],
     'Correct crazy sql',
   );

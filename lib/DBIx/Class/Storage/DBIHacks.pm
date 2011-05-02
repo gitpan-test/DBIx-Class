@@ -13,7 +13,6 @@ use warnings;
 use base 'DBIx::Class::Storage';
 use mro 'c3';
 
-use Carp::Clan qw/^DBIx::Class/;
 use List::Util 'first';
 use Scalar::Util 'blessed';
 use namespace::clean;
@@ -40,7 +39,14 @@ sub _prune_unused_joins {
 
   my @newfrom = $from->[0]; # FROM head is always present
 
-  my %need_joins = (map { %{$_||{}} } (values %$aliastypes) );
+  my %need_joins;
+  for (values %$aliastypes) {
+    # add all requested aliases
+    $need_joins{$_} = 1 for keys %$_;
+
+    # add all their parents (as per joinpath which is an AoH { table => alias })
+    $need_joins{$_} = 1 for map { values %$_ } map { @$_ } values %$_;
+  }
   for my $j (@{$from}[1..$#$from]) {
     push @newfrom, $j if (
       (! $j->[0]{-alias}) # legacy crap
@@ -108,7 +114,7 @@ sub _adjust_select_args_for_complex_prefetch {
   # the fake group_by is so that the pruner throws away all non-selecting, non-restricting
   # multijoins (since we def. do not care about those inside the subquery)
 
-  my $subq_joinspec = do {
+  my $inner_subq = do {
 
     # must use it here regardless of user requests
     local $self->{_use_join_optimizer} = 1;
@@ -120,8 +126,8 @@ sub _adjust_select_args_for_complex_prefetch {
     my $inner_aliastypes =
       $self->_resolve_aliastypes_from_select_args( $inner_from, $inner_select, $where, $inner_attrs );
 
-    # if a multi-type non-selecting (only restricting) join was needed in the subquery
-    # add a group_by to simulate the collapse in the subq
+    # we need to simulate collapse in the subq if a multiplying join is pulled
+    # by being a non-selecting restrictor
     if (
       ! $inner_attrs->{group_by}
         and
@@ -147,18 +153,12 @@ sub _adjust_select_args_for_complex_prefetch {
     local $self->{_use_join_optimizer} = 0;
 
     # generate the subquery
-    my $subq = $self->_select_args_to_query (
+    $self->_select_args_to_query (
       $inner_from,
       $inner_select,
       $where,
       $inner_attrs,
     );
-
-    +{
-      -alias => $attrs->{alias},
-      -rsrc => $inner_from->[0]{-rsrc},
-      $attrs->{alias} => $subq,
-    };
   };
 
   # Generate the outer from - this is relatively easy (really just replace
@@ -179,8 +179,13 @@ sub _adjust_select_args_for_complex_prefetch {
     $j = [ $j ] unless ref $j eq 'ARRAY'; # promote the head-from to an AoH
 
     if ($j->[0]{-alias} eq $attrs->{alias}) { # time to swap
+
       push @outer_from, [
-        $subq_joinspec,
+        {
+          -alias => $attrs->{alias},
+          -rsrc => $j->[0]{-rsrc},
+          $attrs->{alias} => $inner_subq,
+        },
         @{$j}[1 .. $#$j],
       ];
       last; # we'll take care of what's left in $from below
@@ -195,20 +200,26 @@ sub _adjust_select_args_for_complex_prefetch {
   my $outer_aliastypes =
     $self->_resolve_aliastypes_from_select_args( $from, $outer_select, $where, $outer_attrs );
 
+  # unroll parents
+  my ($outer_select_chain, $outer_restrict_chain) = map { +{
+    map { $_ => 1 } map { values %$_} map { @$_ } values %{ $outer_aliastypes->{$_} || {} }
+  } } qw/selecting restricting/;
+
   # see what's left - throw away if not selecting/restricting
-  # also throw in a group_by if restricting to guard against
-  # cross-join explosions
-  #
+  # also throw in a group_by if a non-selecting multiplier,
+  # to guard against cross-join explosions
   my $need_outer_group_by;
   while (my $j = shift @$from) {
     my $alias = $j->[0]{-alias};
 
-    if ($outer_aliastypes->{selecting}{$alias}) {
-      push @outer_from, $j;
+    if (
+      $outer_select_chain->{$alias}
+    ) {
+      push @outer_from, $j
     }
-    elsif ($outer_aliastypes->{restricting}{$alias}) {
+    elsif ($outer_restrict_chain->{$alias}) {
       push @outer_from, $j;
-      $need_outer_group_by ||= ! $j->[0]{-is_single};
+      $need_outer_group_by ||= $outer_aliastypes->{multiplying}{$alias} ? 1 : 0;
     }
   }
 
@@ -269,8 +280,13 @@ sub _resolve_aliastypes_from_select_args {
       or next;
 
     $alias_list->{$al} = $j;
-    $aliases_by_type->{multiplying}{$al} = 1
-      if ref($_) eq 'ARRAY' and ! $j->{-is_single}; # not array == {from} head == can't be multiplying
+    $aliases_by_type->{multiplying}{$al} ||= $j->{-join_path}||[] if (
+      # not array == {from} head == can't be multiplying
+      ( ref($_) eq 'ARRAY' and ! $j->{-is_single} )
+        or
+      # a parent of ours is already a multiplier
+      ( grep { $aliases_by_type->{multiplying}{$_} } @{ $j->{-join_path}||[] } )
+    );
   }
 
   # get a column to source/alias map (including unqualified ones)
@@ -331,7 +347,8 @@ sub _resolve_aliastypes_from_select_args {
 
     for my $type (keys %$to_scan) {
       for my $piece (@{$to_scan->{$type}}) {
-        $aliases_by_type->{$type}{$alias} = 1 if ($piece =~ $al_re);
+        $aliases_by_type->{$type}{$alias} ||= $alias_list->{$alias}{-join_path}||[]
+          if ($piece =~ $al_re);
       }
     }
   }
@@ -345,7 +362,10 @@ sub _resolve_aliastypes_from_select_args {
 
     for my $type (keys %$to_scan) {
       for my $piece (@{$to_scan->{$type}}) {
-        $aliases_by_type->{$type}{$colinfo->{$col}{-source_alias}} = 1 if ($piece =~ $col_re);
+        if ($piece =~ $col_re) {
+          my $alias = $colinfo->{$col}{-source_alias};
+          $aliases_by_type->{$type}{$alias} ||= $alias_list->{$alias}{-join_path}||[];
+        }
       }
     }
   }
@@ -353,20 +373,11 @@ sub _resolve_aliastypes_from_select_args {
   # Add any non-left joins to the restriction list (such joins are indeed restrictions)
   for my $j (values %$alias_list) {
     my $alias = $j->{-alias} or next;
-    $aliases_by_type->{restricting}{$alias} = 1 if (
+    $aliases_by_type->{restricting}{$alias} ||= $j->{-join_path}||[] if (
       (not $j->{-join_type})
         or
       ($j->{-join_type} !~ /^left (?: \s+ outer)? $/xi)
     );
-  }
-
-  # mark all restricting/selecting join parents as such
-  # (e.g.  join => { cds => 'tracks' } - tracks will need to bring cds too )
-  for my $type (qw/restricting selecting/) {
-    for my $alias (keys %{$aliases_by_type->{$type}||{}}) {
-      $aliases_by_type->{$type}{$_} = 1
-        for (map { values %$_ } @{ $alias_list->{$alias}{-join_path} || [] });
-    }
   }
 
   return $aliases_by_type;
@@ -495,7 +506,13 @@ sub _resolve_column_info {
       or next;
 
     $return{$col} = {
-      %{ ( $colinfos->{$source_alias} ||= $rsrc->columns_info )->{$colname} },
+      %{
+          ( $colinfos->{$source_alias} ||= $rsrc->columns_info )->{$colname}
+            ||
+          $self->throw_exception(
+            "No such column '$colname' on source " . $rsrc->source_name
+          );
+      },
       -result_source => $rsrc,
       -source_alias => $source_alias,
     };
@@ -572,71 +589,6 @@ sub _inner_join_to_node {
   }
 
   return \@new_from;
-}
-
-# Most databases do not allow aliasing of tables in UPDATE/DELETE. Thus
-# a condition containing 'me' or other table prefixes will not work
-# at all. What this code tries to do (badly) is introspect the condition
-# and remove all column qualifiers. If it bails out early (returns undef)
-# the calling code should try another approach (e.g. a subquery)
-sub _strip_cond_qualifiers {
-  my ($self, $where) = @_;
-
-  my $cond = {};
-
-  # No-op. No condition, we're updating/deleting everything
-  return $cond unless $where;
-
-  if (ref $where eq 'ARRAY') {
-    $cond = [
-      map {
-        my %hash;
-        foreach my $key (keys %{$_}) {
-          $key =~ /([^.]+)$/;
-          $hash{$1} = $_->{$key};
-        }
-        \%hash;
-      } @$where
-    ];
-  }
-  elsif (ref $where eq 'HASH') {
-    if ( (keys %$where) == 1 && ( (keys %{$where})[0] eq '-and' )) {
-      $cond->{-and} = [];
-      my @cond = @{$where->{-and}};
-       for (my $i = 0; $i < @cond; $i++) {
-        my $entry = $cond[$i];
-        my $hash;
-        my $ref = ref $entry;
-        if ($ref eq 'HASH' or $ref eq 'ARRAY') {
-          $hash = $self->_strip_cond_qualifiers($entry);
-        }
-        elsif (! $ref) {
-          $entry =~ /([^.]+)$/;
-          $hash->{$1} = $cond[++$i];
-        }
-        else {
-          $self->throw_exception ("_strip_cond_qualifiers() is unable to handle a condition reftype $ref");
-        }
-        push @{$cond->{-and}}, $hash;
-      }
-    }
-    else {
-      foreach my $key (keys %$where) {
-        if ($key eq '-or' && ref $where->{$key} eq 'ARRAY') {
-          $cond->{$key} = $self->_strip_cond_qualifiers($where->{$key});
-        }
-        else {
-          $key =~ /([^.]+)$/;
-          $cond->{$1} = $where->{$key};
-        }
-      }
-    }
-  }
-  else {
-    return undef;
-  }
-
-  return $cond;
 }
 
 sub _extract_order_criteria {

@@ -18,7 +18,7 @@ Somewhere in your build-file (e.g. L<Module::Install>'s Makefile.PL):
 
   ...
 
-  configure_requires 'DBIx::Class' => '0.08190';
+  configure_requires 'DBIx::Class' => '0.08190_01';
 
   require DBIx::Class::Optional::Dependencies;
 
@@ -137,6 +137,42 @@ Modules required to connect to DB2
 
 Requirement group: B<rdbms_db2>
 
+=head2 MS Access support via DBD::ADO (Windows only)
+
+Modules required to connect to MS Access via DBD::ADO. This particular DBD is available on Windows only
+
+=over
+
+=item * DBD::ADO
+
+=back
+
+Requirement group: B<rdbms_msaccess_ado>
+
+=head2 MS Access support via DBD::ODBC
+
+Modules required to connect to MS Access via DBD::ODBC
+
+=over
+
+=item * DBD::ODBC
+
+=back
+
+Requirement group: B<rdbms_msaccess_odbc>
+
+=head2 MSSQL support via DBD::ADO (Windows only)
+
+Modules required to connect to MSSQL via DBD::ADO. This particular DBD is available on Windows only
+
+=over
+
+=item * DBD::ADO
+
+=back
+
+Requirement group: B<rdbms_mssql_ado>
+
 =head2 MSSQL support via DBD::ODBC
 
 Modules required to connect to MSSQL via DBD::ODBC
@@ -151,7 +187,7 @@ Requirement group: B<rdbms_mssql_odbc>
 
 =head2 MSSQL support via DBD::Sybase
 
-Modules required to connect to MSSQL support via DBD::Sybase
+Modules required to connect to MSSQL via DBD::Sybase
 
 =over
 

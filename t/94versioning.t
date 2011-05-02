@@ -5,6 +5,13 @@ use Test::More;
 use Test::Warn;
 use Test::Exception;
 
+use Path::Class;
+use File::Copy;
+use Time::HiRes qw/time sleep/;
+
+use lib qw(t/lib);
+use DBICTest; # do not remove even though it is not used
+
 my ($dsn, $user, $pass);
 
 BEGIN {
@@ -18,13 +25,6 @@ BEGIN {
       'Test needs ' . DBIx::Class::Optional::Dependencies->req_missing_for ('deploy')
     unless DBIx::Class::Optional::Dependencies->req_ok_for ('deploy')
 }
-
-use Path::Class;
-use File::Copy;
-use Time::HiRes qw/time sleep/;
-
-use lib qw(t/lib);
-use DBICTest; # do not remove even though it is not used
 
 use_ok('DBICVersion_v1');
 
@@ -155,7 +155,7 @@ my $schema_v3 = DBICVersion::Schema->connect($dsn, $user, $pass, { ignore_versio
 
 # attempt v1 -> v3 upgrade
 {
-  local $SIG{__WARN__} = sub { warn if $_[0] !~ /Attempting upgrade\.$/ };
+  local $SIG{__WARN__} = sub { warn $_[0] if $_[0] !~ /Attempting upgrade\.$/ };
   $schema_v3->upgrade();
   is($schema_v3->get_db_version(), '3.0', 'db version number upgraded');
 }
@@ -180,7 +180,7 @@ system( qq($^X -pi -e "s/ALTER/-- this is a comment\nALTER/" $fn->{trans_v23};) 
 
 # Then attempt v1 -> v3 upgrade
 {
-  local $SIG{__WARN__} = sub { warn if $_[0] !~ /Attempting upgrade\.$/ };
+  local $SIG{__WARN__} = sub { warn $_[0] if $_[0] !~ /Attempting upgrade\.$/ };
   $schema_v3->upgrade();
   is($schema_v3->get_db_version(), '3.0', 'db version number upgraded to 3.0');
 
@@ -234,7 +234,7 @@ system( qq($^X -pi -e "s/ALTER/-- this is a comment\nALTER/" $fn->{trans_v23};) 
     $schema_v2->deploy;
   }
 
-  local $SIG{__WARN__} = sub { warn if $_[0] !~ /Attempting upgrade\.$/ };
+  local $SIG{__WARN__} = sub { warn $_[0] if $_[0] !~ /Attempting upgrade\.$/ };
   $schema_v2->upgrade();
 
   is($schema_v2->get_db_version(), '3.0', 'Fast deploy/upgrade');

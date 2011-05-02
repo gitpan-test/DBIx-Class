@@ -6,6 +6,12 @@ use Test::More;
 use lib qw(t/lib);
 use DBICTest;
 use DBIC::SqlMakerTest;
+use DBIx::Class::SQLMaker::LimitDialects;
+
+my ($TOTAL, $OFFSET) = (
+   DBIx::Class::SQLMaker::LimitDialects->__total_bindtype,
+   DBIx::Class::SQLMaker::LimitDialects->__offset_bindtype,
+);
 
 my $s = DBICTest->init_schema (no_deploy => 1, );
 $s->storage->sql_maker->limit_dialect ('RowNum');
@@ -26,11 +32,14 @@ is_same_sql_bind (
             SELECT foo.id AS id, bar.id AS bar__id, TO_CHAR(foo.womble, "blah") AS bleh
               FROM cd me
           ) me
-        WHERE ROWNUM <= 4
+        WHERE ROWNUM <= ?
       ) me
-    WHERE rownum__index >= 4
+    WHERE rownum__index >= ?
   )',
-  [],
+  [
+    [ $TOTAL => 4 ],
+    [ $OFFSET => 4 ],
+  ],
   'Rownum subsel aliasing works correctly'
 );
 
@@ -46,13 +55,60 @@ is_same_sql_bind (
             SELECT foo.id AS id, ends_with_me.id AS ends_with_me__id
               FROM cd me
           ) me
-        WHERE ROWNUM <= 5
+        WHERE ROWNUM <= ?
       ) me
-    WHERE rownum__index >= 4
+    WHERE rownum__index >= ?
   )',
-  [],
+  [
+    [ $TOTAL => 5 ],
+    [ $OFFSET => 4 ],
+  ],
   'Rownum subsel aliasing works correctly'
 );
+
+{
+my $subq = $s->resultset('Owners')->search({
+   'count.id' => { -ident => 'owner.id' },
+}, { alias => 'owner' })->count_rs;
+
+my $rs_selectas_rel = $s->resultset('BooksInLibrary')->search ({}, {
+  columns => [
+     { owner_name => 'owner.name' },
+     { owner_books => $subq->as_query },
+  ],
+  join => 'owner',
+  rows => 2,
+  offset => 3,
+});
+
+is_same_sql_bind(
+  $rs_selectas_rel->as_query,
+  '(
+    SELECT owner_name, owner_books
+      FROM (
+        SELECT owner_name, owner_books, ROWNUM rownum__index
+          FROM (
+            SELECT  owner.name AS owner_name,
+              ( SELECT COUNT( * ) FROM owners owner WHERE (count.id = owner.id)) AS owner_books
+              FROM books me
+              JOIN owners owner ON owner.id = me.owner
+            WHERE ( source = ? )
+          ) me
+        WHERE ROWNUM <= ?
+      ) me
+    WHERE rownum__index >= ?
+  )',
+  [
+    [ { sqlt_datatype => 'varchar', sqlt_size => 100, dbic_colname => 'source' }
+      => 'Library' ],
+    [ $TOTAL => 5 ],
+    [ $OFFSET => 4 ],
+  ],
+
+  'pagination with subquery works'
+);
+
+}
 
 {
   $rs = $s->resultset('Artist')->search({}, {

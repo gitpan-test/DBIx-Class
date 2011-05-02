@@ -12,6 +12,13 @@ use Scope::Guard ();
 my ($dsn, $user, $pass)    = @ENV{map { "DBICTEST_FIREBIRD_${_}" }      qw/DSN USER PASS/};
 my ($dsn2, $user2, $pass2) = @ENV{map { "DBICTEST_FIREBIRD_ODBC_${_}" } qw/DSN USER PASS/};
 
+# Example DSNs:
+# dbi:InterBase:db=/var/lib/firebird/2.5/data/hlaghdb.fdb
+# dbi:Firebird:db=/var/lib/firebird/2.5/data/hlaghdb.fdb
+
+# Example ODBC DSN:
+# dbi:ODBC:Driver=Firebird;Dbname=/var/lib/firebird/2.5/data/hlaghdb.fdb
+
 plan skip_all => <<'EOF' unless $dsn || $dsn2;
 Set $ENV{DBICTEST_FIREBIRD_DSN} and/or $ENV{DBICTEST_FIREBIRD_ODBC_DSN},
 _USER and _PASS to run these tests.
@@ -37,7 +44,7 @@ foreach my $conn_idx (0..$#info) {
     auto_savepoint  => 1,
     quote_char      => q["],
     name_sep        => q[.],
-    on_connect_call => 'use_softcommit',
+    ($dsn !~ /ODBC/ ? (on_connect_call => 'use_softcommit') : ()),
   });
   my $dbh = $schema->storage->dbh;
 
@@ -100,6 +107,17 @@ EOF
   my $st = $schema->resultset('SequenceTest')->create({ name => 'foo', pkid1 => 55 });
   is($st->pkid1, 55, "Firebird Auto-PK without trigger: First primary key set manually");
 
+# test transaction commit
+  $schema->txn_do(sub {
+    $ars->create({ name => 'in_transaction' });
+  });
+  ok (($ars->search({ name => 'in_transaction' })->first),
+    'transaction committed');
+  is $schema->storage->_dbh->{AutoCommit}, 1,
+    '$dbh->{AutoCommit} is correct after transaction commit';
+
+  $ars->search({ name => 'in_transaction' })->delete;
+
 # test savepoints
   throws_ok {
     $schema->txn_do(sub {
@@ -116,6 +134,9 @@ EOF
     });
   } qr/rolling back outer txn/,
     'correct exception for rollback';
+
+  is $schema->storage->_dbh->{AutoCommit}, 1,
+    '$dbh->{AutoCommit} is correct after transaction rollback';
 
   ok ((not $ars->search({ name => 'in_outer_txn' })->first),
     'outer txn rolled back');
@@ -163,7 +184,6 @@ EOF
 
   my ($updated) = $schema->resultset('Artist')->search({name => 'foo'});
   is eval { $updated->rank }, 4, 'and the update made it to the database';
-
 
 # test LIMIT support
   my $lim = $ars->search( {},
@@ -218,7 +238,8 @@ EOF
     "id"     INT PRIMARY KEY,
     "bytea"  INT,
     "blob"   BLOB,
-    "clob"   BLOB SUB_TYPE TEXT
+    "clob"   BLOB SUB_TYPE TEXT,
+    "a_memo" INT
   )
   ]);
 

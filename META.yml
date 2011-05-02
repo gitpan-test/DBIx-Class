@@ -5,6 +5,7 @@ author:
 build_requires:
   DBD::SQLite: 1.29
   File::Temp: 0.22
+  Package::Stash: 0.28
   Test::Builder: 0.33
   Test::Exception: 0.31
   Test::More: 0.92
@@ -12,7 +13,7 @@ build_requires:
 configure_requires:
   ExtUtils::MakeMaker: 6.42
 distribution_type: module
-generated_by: 'Module::Install version 1.00'
+generated_by: 'Module::Install version 1.01'
 license: perl
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
@@ -29,15 +30,15 @@ no_index:
     - xt
   package:
     - DBIx::Class::Storage::DBIHacks
+    - DBIx::Class::Carp
 requires:
-  Carp::Clan: 6.0
   Class::Accessor::Grouped: 0.10002
-  Class::C3::Componentised: 1.0005
+  Class::C3::Componentised: 1.0009
   Class::Inspector: 1.24
   Config::Any: 0.20
   Context::Preserve: 0.01
-  DBI: 1.609
-  Data::Dumper::Concise: 1.000
+  DBI: 1.57
+  Data::Dumper::Concise: 2.020
   Data::Page: 2.00
   File::Path: 2.07
   Hash::Merge: 0.12
@@ -58,4 +59,4 @@ resources:
   homepage: http://www.dbix-class.org/
   license: http://dev.perl.org/licenses/
   repository: git://git.shadowcat.co.uk/dbsrgits/DBIx-Class.git
-version: 0.08190
+version: 0.08190_01

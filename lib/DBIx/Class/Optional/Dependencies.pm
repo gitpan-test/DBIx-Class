@@ -3,7 +3,7 @@ package DBIx::Class::Optional::Dependencies;
 use warnings;
 use strict;
 
-use Carp;
+use Carp ();
 
 # NO EXTERNAL NON-5.8.1 CORE DEPENDENCIES EVER (e.g. C::A::G)
 # This module is to be loaded by Makefile.PM on a pristine system
@@ -54,6 +54,15 @@ my $rdbms_mssql_odbc = {
 my $rdbms_mssql_sybase = {
   'DBD::Sybase'                   => '0',
 };
+my $rdbms_mssql_ado = {
+  'DBD::ADO'                      => '0',
+};
+my $rdbms_msaccess_odbc = {
+  'DBD::ODBC'                     => '0',
+};
+my $rdbms_msaccess_ado = {
+  'DBD::ADO'                      => '0',
+};
 my $rdbms_mysql = {
   'DBD::mysql'                    => '0',
 };
@@ -66,6 +75,9 @@ my $rdbms_ase = {
 };
 my $rdbms_db2 = {
   'DBD::DB2'                      => '0',
+};
+my $rdbms_firebird_odbc = {
+  'DBD::ODBC'                     => '0',
 };
 
 my $reqs = {
@@ -124,6 +136,12 @@ my $reqs = {
 
   id_shortener => {
     req => $id_shortener,
+  },
+
+  test_component_accessor => {
+    req => {
+      'Class::Unload'             => '0.07',
+    },
   },
 
   test_pod => {
@@ -242,7 +260,37 @@ my $reqs = {
     },
     pod => {
       title => 'MSSQL support via DBD::Sybase',
-      desc => 'Modules required to connect to MSSQL support via DBD::Sybase',
+      desc => 'Modules required to connect to MSSQL via DBD::Sybase',
+    },
+  },
+
+  rdbms_mssql_ado => {
+    req => {
+      %$rdbms_mssql_ado,
+    },
+    pod => {
+      title => 'MSSQL support via DBD::ADO (Windows only)',
+      desc => 'Modules required to connect to MSSQL via DBD::ADO. This particular DBD is available on Windows only',
+    },
+  },
+
+  rdbms_msaccess_odbc => {
+    req => {
+      %$rdbms_msaccess_odbc,
+    },
+    pod => {
+      title => 'MS Access support via DBD::ODBC',
+      desc => 'Modules required to connect to MS Access via DBD::ODBC',
+    },
+  },
+
+  rdbms_msaccess_ado => {
+    req => {
+      %$rdbms_msaccess_ado,
+    },
+    pod => {
+      title => 'MS Access support via DBD::ADO (Windows only)',
+      desc => 'Modules required to connect to MS Access via DBD::ADO. This particular DBD is available on Windows only',
     },
   },
 
@@ -308,11 +356,42 @@ my $reqs = {
     },
   },
 
+  test_rdbms_mssql_ado => {
+    req => {
+      $ENV{DBICTEST_MSSQL_ADO_DSN}
+        ? (
+          %$rdbms_mssql_ado,
+        ) : ()
+    },
+  },
+
   test_rdbms_mssql_sybase => {
     req => {
       $ENV{DBICTEST_MSSQL_DSN}
         ? (
           %$rdbms_mssql_sybase,
+        ) : ()
+    },
+  },
+
+  test_rdbms_msaccess_odbc => {
+    req => {
+      $ENV{DBICTEST_MSACCESS_ODBC_DSN}
+        ? (
+          %$rdbms_msaccess_odbc,
+          %$datetime_basic,
+          'Data::GUID' => '0',
+        ) : ()
+    },
+  },
+
+  test_rdbms_msaccess_ado => {
+    req => {
+      $ENV{DBICTEST_MSACCESS_ADO_DSN}
+        ? (
+          %$rdbms_msaccess_ado,
+          %$datetime_basic,
+          'Data::GUID' => 0,
         ) : ()
     },
   },
@@ -356,6 +435,15 @@ my $reqs = {
     },
   },
 
+  test_rdbms_firebird_odbc => {
+    req => {
+      $ENV{DBICTEST_FIREBIRD_ODBC_DSN}
+        ? (
+          %$rdbms_firebird_odbc,
+        ) : ()
+    },
+  },
+
   test_memcached => {
     req => {
       $ENV{DBICTEST_MEMCACHED}
@@ -371,11 +459,11 @@ my $reqs = {
 sub req_list_for {
   my ($class, $group) = @_;
 
-  croak "req_list_for() expects a requirement group name"
+  Carp::croak "req_list_for() expects a requirement group name"
     unless $group;
 
   my $deps = $reqs->{$group}{req}
-    or croak "Requirement group '$group' does not exist";
+    or Carp::croak "Requirement group '$group' does not exist";
 
   return { %$deps };
 }
@@ -385,7 +473,7 @@ our %req_availability_cache;
 sub req_ok_for {
   my ($class, $group) = @_;
 
-  croak "req_ok_for() expects a requirement group name"
+  Carp::croak "req_ok_for() expects a requirement group name"
     unless $group;
 
   return $class->_check_deps($group)->{status};
@@ -394,7 +482,7 @@ sub req_ok_for {
 sub req_missing_for {
   my ($class, $group) = @_;
 
-  croak "req_missing_for() expects a requirement group name"
+  Carp::croak "req_missing_for() expects a requirement group name"
     unless $group;
 
   return $class->_check_deps($group)->{missing};
@@ -403,7 +491,7 @@ sub req_missing_for {
 sub req_errorlist_for {
   my ($class, $group) = @_;
 
-  croak "req_errorlist_for() expects a requirement group name"
+  Carp::croak "req_errorlist_for() expects a requirement group name"
     unless $group;
 
   return $class->_check_deps($group)->{errorlist};
@@ -433,6 +521,7 @@ sub _check_deps {
     if (keys %errors) {
       my $missing = join (', ', map { $deps->{$_} ? "$_ >= $deps->{$_}" : $_ } (sort keys %errors) );
       $missing .= " (see $class for details)" if $reqs->{$group}{pod};
+      $missing .= "\n";
       $res = {
         status => 0,
         errorlist => \%errors,
@@ -621,7 +710,7 @@ EOD
     'You may distribute this code under the same terms as Perl itself',
   );
 
-  open (my $fh, '>', $podfn) or croak "Unable to write to $podfn: $!";
+  open (my $fh, '>', $podfn) or Carp::croak "Unable to write to $podfn: $!";
   print $fh join ("\n\n", @chunks);
   close ($fh);
 }

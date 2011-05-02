@@ -15,6 +15,15 @@ __PACKAGE__->mk_group_accessors(simple => qw/
 
 __PACKAGE__->sql_maker_class('DBIx::Class::SQLMaker::MSSQL');
 
+__PACKAGE__->sql_quote_char([qw/[ ]/]);
+
+__PACKAGE__->datetime_parser_type (
+  'DBIx::Class::Storage::DBI::MSSQL::DateTime::Format'
+);
+
+
+__PACKAGE__->new_guid('NEWID()');
+
 sub _set_identity_insert {
   my ($self, $table) = @_;
 
@@ -62,7 +71,7 @@ sub insert {
 
 sub _prep_for_execute {
   my $self = shift;
-  my ($op, $extra_bind, $ident, $args) = @_;
+  my ($op, $ident, $args) = @_;
 
 # cast MONEY values properly
   if ($op eq 'insert' || $op eq 'update') {
@@ -104,7 +113,7 @@ sub _execute {
   my $self = shift;
   my ($op) = @_;
 
-  my ($rv, $sth, @bind) = $self->dbh_do($self->can('_dbh_execute'), @_);
+  my ($rv, $sth, @bind) = $self->next::method(@_);
 
   if ($op eq 'insert') {
 
@@ -161,23 +170,19 @@ sub _select_args_to_query {
 
 # savepoint syntax is the same as in Sybase ASE
 
-sub _svp_begin {
+sub _exec_svp_begin {
   my ($self, $name) = @_;
 
-  $self->_get_dbh->do("SAVE TRANSACTION $name");
+  $self->_dbh->do("SAVE TRANSACTION $name");
 }
 
 # A new SAVE TRANSACTION with the same name releases the previous one.
-sub _svp_release { 1 }
+sub _exec_svp_release { 1 }
 
-sub _svp_rollback {
+sub _exec_svp_rollback {
   my ($self, $name) = @_;
 
-  $self->_get_dbh->do("ROLLBACK TRANSACTION $name");
-}
-
-sub datetime_parser_type {
-  'DBIx::Class::Storage::DBI::MSSQL::DateTime::Format'
+  $self->_dbh->do("ROLLBACK TRANSACTION $name");
 }
 
 sub sqlt_type { 'SQLServer' }

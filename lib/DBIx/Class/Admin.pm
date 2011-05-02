@@ -2,9 +2,8 @@ package DBIx::Class::Admin;
 
 # check deps
 BEGIN {
-  use Carp::Clan qw/^DBIx::Class/;
   use DBIx::Class;
-  croak('The following modules are required for DBIx::Class::Admin ' . DBIx::Class::Optional::Dependencies->req_missing_for ('admin') )
+  die('The following modules are required for DBIx::Class::Admin ' . DBIx::Class::Optional::Dependencies->req_missing_for ('admin') )
     unless DBIx::Class::Optional::Dependencies->req_ok_for ('admin');
 }
 
@@ -134,7 +133,7 @@ has 'set' => (
 
 =head2 attrs
 
-a hash ref or json string to be used for passing additonal info to the ->search call
+a hash ref or json string to be used for passing additional info to the ->search call
 
 =cut
 
@@ -181,7 +180,7 @@ has config_file => (
 
 =head2 config_stanza
 
-config_stanza for use with config_file should be a '::' deliminated 'path' to the connection information
+config_stanza for use with config_file should be a '::' delimited 'path' to the connection information
 designed for use with catalyst config files
 
 =cut
@@ -257,7 +256,7 @@ has version => (
 
 =head2 preversion
 
-Previouse version of the schema to create an upgrade diff for, the full sql for that version of the sql must be in the sql_dir
+Previous version of the schema to create an upgrade diff for, the full sql for that version of the sql must be in the sql_dir
 
 =cut
 
@@ -324,7 +323,7 @@ sub _trigger_trace {
 
 =back
 
-L<create> will generate sql for the supplied schema_class in sql_dir. The
+C<create> will generate sql for the supplied schema_class in sql_dir. The
 flavour of sql to generate can be controlled by supplying a sqlt_type which
 should be a L<SQL::Translator> name.
 
@@ -403,7 +402,7 @@ sub install {
     print "return is $ret\n" if (!$self->quiet);
   }
   elsif ($schema->get_db_version() and $self->force ) {
-    carp "Forcing install may not be a good idea";
+    warn "Forcing install may not be a good idea\n";
     if($self->_confirm() ) {
       $self->schema->_set_db_version({ version => $version});
     }

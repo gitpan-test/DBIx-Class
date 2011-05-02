@@ -22,9 +22,9 @@ GETTING HELP/SUPPORT
     *   twitter <http://www.twitter.com/dbix_class>
 
 SYNOPSIS
-    Create a schema class called MyDB/Schema.pm:
+    Create a schema class called MyApp/Schema.pm:
 
-      package MyDB::Schema;
+      package MyApp::Schema;
       use base qw/DBIx::Class::Schema/;
 
       __PACKAGE__->load_namespaces();
@@ -32,39 +32,39 @@ SYNOPSIS
       1;
 
     Create a result class to represent artists, who have many CDs, in
-    MyDB/Schema/Result/Artist.pm:
+    MyApp/Schema/Result/Artist.pm:
 
     See DBIx::Class::ResultSource for docs on defining result classes.
 
-      package MyDB::Schema::Result::Artist;
+      package MyApp::Schema::Result::Artist;
       use base qw/DBIx::Class::Core/;
 
       __PACKAGE__->table('artist');
       __PACKAGE__->add_columns(qw/ artistid name /);
       __PACKAGE__->set_primary_key('artistid');
-      __PACKAGE__->has_many(cds => 'MyDB::Schema::Result::CD');
+      __PACKAGE__->has_many(cds => 'MyApp::Schema::Result::CD');
 
       1;
 
     A result class to represent a CD, which belongs to an artist, in
-    MyDB/Schema/Result/CD.pm:
+    MyApp/Schema/Result/CD.pm:
 
-      package MyDB::Schema::Result::CD;
+      package MyApp::Schema::Result::CD;
       use base qw/DBIx::Class::Core/;
 
       __PACKAGE__->load_components(qw/InflateColumn::DateTime/);
       __PACKAGE__->table('cd');
       __PACKAGE__->add_columns(qw/ cdid artistid title year /);
       __PACKAGE__->set_primary_key('cdid');
-      __PACKAGE__->belongs_to(artist => 'MyDB::Schema::Result::Artist', 'artistid');
+      __PACKAGE__->belongs_to(artist => 'MyApp::Schema::Result::Artist', 'artistid');
 
       1;
 
     Then you can use these classes in your application's code:
 
       # Connect to your database.
-      use MyDB::Schema;
-      my $schema = MyDB::Schema->connect($dbi_dsn, $user, $pass, \%dbi_params);
+      use MyApp::Schema;
+      my $schema = MyApp::Schema->connect($dbi_dsn, $user, $pass, \%dbi_params);
 
       # Query for all artists and put them in an array,
       # or retrieve them as a result set object.
@@ -167,6 +167,8 @@ AUTHOR
 CONTRIBUTORS
     abraxxa: Alexander Hartmaier <abraxxa@cpan.org>
 
+    acca: Alexander Kuznetsov <acca@cpan.org>
+
     aherzog: Adam Herzog <adam@herzogdesigns.com>
 
     Alexander Keusch <cpan@keusch.at>
@@ -227,6 +229,8 @@ CONTRIBUTORS
 
     dyfrgi: Michael Leuchtenburg <michael@slashhome.org>
 
+    felliott: Fitz Elliott <fitz.elliott@gmail.com>
+
     freetime: Bill Moseley <moseley@hank.org>
 
     frew: Arthur Axel "fREW" Schmidt <frioux@gmail.com>
@@ -234,6 +238,8 @@ CONTRIBUTORS
     goraxe: Gordon Irving <goraxe@cpan.org>
 
     gphat: Cory G Watson <gphat@cpan.org>
+
+    Grant Street Group <http://www.grantstreet.com/>
 
     groditi: Guillermo Roditi <groditi@cpan.org>
 
@@ -244,6 +250,8 @@ CONTRIBUTORS
     ilmari: Dagfinn Ilmari Mannsåker <ilmari@ilmari.org>
 
     initself: Mike Baas <mike@initselftech.com>
+
+    jawnsy: Jonathan Yu <jawnsy@cpan.org>
 
     jasonmay: Jason May <jason.a.may@gmail.com>
 
@@ -273,7 +281,11 @@ CONTRIBUTORS
 
     mattlaw: Matt Lawrence
 
+    mattp: Matt Phillips <mattp@cpan.org>
+
     michaelr: Michael Reddick <michael.reddick@gmail.com>
+
+    milki: Jonathan Chu <milki@rescomp.berkeley.edu>
 
     ned: Neil de Carteret
 
@@ -325,6 +337,8 @@ CONTRIBUTORS
 
     robkinyon: Rob Kinyon <rkinyon@cpan.org>
 
+    Robert Olson <bob@rdolson.org>
+
     Roman: Roman Filippov <romanf@cpan.org>
 
     Sadrak: Felix Antonius Wilhelm Ostmann <sadrak@cpan.org>
@@ -344,6 +358,8 @@ CONTRIBUTORS
     sszabo: Stephan Szabo <sszabo@bigpanda.com>
 
     talexb: Alex Beamish <talexb@gmail.com>
+
+    tamias: Ronald J Kimball <rjk@tamias.net>
 
     teejay : Aaron Trevena <teejay@cpan.org>
 

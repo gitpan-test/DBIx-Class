@@ -1,3 +1,30 @@
+use strict;
+use warnings;
+
+use Test::Exception;
+use Test::More;
+use Sub::Name;
+use Try::Tiny;
+
+use lib qw(t/lib);
+use DBICTest;
+use DBIC::SqlMakerTest;
+
+plan skip_all => 'Test needs ' . DBIx::Class::Optional::Dependencies->req_missing_for ('test_rdbms_oracle')
+  unless DBIx::Class::Optional::Dependencies->req_ok_for ('test_rdbms_oracle');
+
+$ENV{NLS_SORT} = "BINARY";
+$ENV{NLS_COMP} = "BINARY";
+$ENV{NLS_LANG} = "AMERICAN";
+
+my ($dsn,  $user,  $pass)  = @ENV{map { "DBICTEST_ORA_${_}" }  qw/DSN USER PASS/};
+
+# optional:
+my ($dsn2, $user2, $pass2) = @ENV{map { "DBICTEST_ORA_EXTRAUSER_${_}" } qw/DSN USER PASS/};
+
+plan skip_all => 'Set $ENV{DBICTEST_ORA_DSN}, _USER and _PASS to run this test.'
+  unless ($dsn && $user && $pass);
+
 {
   package    # hide from PAUSE
     DBICTest::Schema::ArtistFQN;
@@ -23,37 +50,17 @@
       data_type         => 'integer',
       is_auto_increment => 1,
     },
+    'default_value_col' => {
+      data_type           => 'varchar',
+      size                => 100,
+      is_nullable         => 0,
+      retrieve_on_insert  => 1,
+    }
   );
   __PACKAGE__->set_primary_key(qw/ artistid autoinc_col /);
 
   1;
 }
-
-use strict;
-use warnings;
-
-use Test::Exception;
-use Test::More;
-use Sub::Name;
-
-use lib qw(t/lib);
-use DBICTest;
-use DBIC::SqlMakerTest;
-
-plan skip_all => 'Test needs ' . DBIx::Class::Optional::Dependencies->req_missing_for ('test_rdbms_oracle')
-  unless DBIx::Class::Optional::Dependencies->req_ok_for ('test_rdbms_oracle');
-
-$ENV{NLS_SORT} = "BINARY";
-$ENV{NLS_COMP} = "BINARY";
-$ENV{NLS_LANG} = "AMERICAN";
-
-my ($dsn,  $user,  $pass)  = @ENV{map { "DBICTEST_ORA_${_}" }  qw/DSN USER PASS/};
-
-# optional:
-my ($dsn2, $user2, $pass2) = @ENV{map { "DBICTEST_ORA_EXTRAUSER_${_}" } qw/DSN USER PASS/};
-
-plan skip_all => 'Set $ENV{DBICTEST_ORA_DSN}, _USER and _PASS to run this test.'
-  unless ($dsn && $user && $pass);
 
 DBICTest::Schema->load_classes('ArtistFQN');
 
@@ -64,67 +71,67 @@ DBICTest::Schema::CD->load_components('PK::Auto::Oracle');
 DBICTest::Schema::Track->load_components('PK::Auto::Oracle');
 
 
-##########
-# recyclebin sometimes comes in the way
-my $on_connect_sql = ["ALTER SESSION SET recyclebin = OFF"];
-
-# iterate all tests on following options
-my @tryopt = (
-  { on_connect_do => $on_connect_sql },
-  { quote_char => '"', on_connect_do => $on_connect_sql, },
-);
-
-# keep a database handle open for cleanup
-my ($dbh, $dbh2);
-
-# test insert returning
-
 # check if we indeed do support stuff
-my $test_server_supports_insert_returning = do {
-  my $v = DBICTest::Schema->connect($dsn, $user, $pass)
-                   ->storage
-                    ->_get_dbh
-                     ->get_info(18);
+my $v = do {
+  my $v = DBICTest::Schema->connect($dsn, $user, $pass)->storage->_dbh_get_info(18);
   $v =~ /^(\d+)\.(\d+)/
     or die "Unparseable Oracle server version: $v\n";
 
-# TODO find out which version supports the RETURNING syntax
-# 8i has it and earlier docs are a 404 on oracle.com
-  ( $1 > 8 || ($1 == 8 && $2 >= 1) ) ? 1 : 0;
+  sprintf('%d.%03d', $1, $2);
 };
+
+my $test_server_supports_only_orajoins = $v < 9;
+
+# TODO find out which version supports the RETURNING syntax
+# 8i (8.1) has it and earlier docs are a 404 on oracle.com
+my $test_server_supports_insert_returning = $v >= 8.001;
+
 is (
   DBICTest::Schema->connect($dsn, $user, $pass)->storage->_use_insert_returning,
   $test_server_supports_insert_returning,
   'insert returning capability guessed correctly'
 );
 
+##########
+# the recyclebin (new for 10g) sometimes comes in the way
+my $on_connect_sql = $v >= 10 ? ["ALTER SESSION SET recyclebin = OFF"] : [];
+
+# iterate all tests on following options
+my @tryopt = (
+  { on_connect_do => $on_connect_sql },
+  { quote_char => '"', on_connect_do => $on_connect_sql },
+);
+
+# keep a database handle open for cleanup
+my ($dbh, $dbh2);
+
 my $schema;
-for my $use_insert_returning ($test_server_supports_insert_returning
-  ? (1,0)
-  : (0)
-) {
+for my $use_insert_returning ($test_server_supports_insert_returning ? (1,0) : (0) ) {
+  for my $force_ora_joins ($test_server_supports_only_orajoins ? (0) : (0,1) ) {
 
-  no warnings qw/once/;
-  local *DBICTest::Schema::connection = subname 'DBICTest::Schema::connection' => sub {
-    my $s = shift->next::method (@_);
-    $s->storage->_use_insert_returning ($use_insert_returning);
-    $s;
-  };
+    no warnings qw/once/;
+    local *DBICTest::Schema::connection = subname 'DBICTest::Schema::connection' => sub {
+      my $s = shift->next::method (@_);
+      $s->storage->_use_insert_returning ($use_insert_returning);
+      $s->storage->sql_maker_class('DBIx::Class::SQLMaker::OracleJoins') if $force_ora_joins;
+      $s;
+    };
 
-  for my $opt (@tryopt) {
-    # clean all cached sequences from previous run
-    for (map { values %{DBICTest::Schema->source($_)->columns_info} } (qw/Artist CD Track/) ) {
-      delete $_->{sequence};
+    for my $opt (@tryopt) {
+      # clean all cached sequences from previous run
+      for (map { values %{DBICTest::Schema->source($_)->columns_info} } (qw/Artist CD Track/) ) {
+        delete $_->{sequence};
+      }
+
+      my $schema = DBICTest::Schema->connect($dsn, $user, $pass, $opt);
+
+      $dbh = $schema->storage->dbh;
+      my $q = $schema->storage->sql_maker->quote_char || '';
+
+      do_creates($dbh, $q);
+
+      _run_tests($schema, $opt);
     }
-
-    my $schema = DBICTest::Schema->connect($dsn, $user, $pass, $opt);
-
-    $dbh = $schema->storage->dbh;
-    my $q = $schema->storage->sql_maker->quote_char || '';
-
-    do_creates($dbh, $q);
-
-    _run_tests($schema, $opt);
   }
 }
 
@@ -172,6 +179,12 @@ sub _run_tests {
   is( $new->artistid, 3, "Oracle Auto-PK worked with fully-qualified tablename" );
   is( $new->autoinc_col, 1000, "Oracle Auto-Inc overruled with fully-qualified tablename");
 
+
+  is( $new->default_value_col, 'default_value', $schema->storage->_use_insert_returning
+    ? 'Check retrieve_on_insert on default_value_col with INSERT ... RETURNING'
+    : 'Check retrieve_on_insert on default_value_col without INSERT ... RETURNING'
+  );
+
   SKIP: {
     skip 'not detecting sequences when using INSERT ... RETURNING', 1
       if $schema->storage->_use_insert_returning;
@@ -197,7 +210,6 @@ sub _run_tests {
   is( $it->next->name, "Artist 6", "iterator->next ok" );
   is( $it->next, undef, "next past end of resultset ok" );
 
-
 # test identifiers over the 30 char limit
   lives_ok {
     my @results = $schema->resultset('CD')->search(undef, {
@@ -220,11 +232,51 @@ sub _run_tests {
     is $query->first->cds_very_very_very_long_relationship_name->first->cdid, 1
   } 'query with rel name over 30 chars survived and worked';
 
+# test rel names over the 30 char limit using group_by and join
+  {
+    my @group_cols = ( 'me.name' );
+    my $query = $schema->resultset('Artist')->search({
+      artistid => 1
+    }, {
+      select => \@group_cols,
+      as => [map { /^\w+\.(\w+)$/ } @group_cols],
+      join => [qw( cds_very_very_very_long_relationship_name )],
+      group_by => \@group_cols,
+    });
+
+    lives_and {
+      my @got = $query->get_column('name')->all();
+      is_deeply \@got, [$new_artist->name];
+    } 'query with rel name over 30 chars worked on join, group_by for me col';
+
+    lives_and {
+      is $query->count(), 1
+    } 'query with rel name over 30 chars worked on join, group_by, count for me col';
+  }
+  {
+    my @group_cols = ( 'cds_very_very_very_long_relationship_name.title' );
+    my $query = $schema->resultset('Artist')->search({
+      artistid => 1
+    }, {
+      select => \@group_cols,
+      as => [map { /^\w+\.(\w+)$/ } @group_cols],
+      join => [qw( cds_very_very_very_long_relationship_name )],
+      group_by => \@group_cols,
+    });
+
+    lives_and {
+      my @got = $query->get_column('title')->all();
+      is_deeply \@got, [$new_cd->title];
+    } 'query with rel name over 30 chars worked on join, group_by for long rel col';
+
+    lives_and {
+      is $query->count(), 1
+    } 'query with rel name over 30 chars worked on join, group_by, count for long rel col';
+  }
+
   # rel name over 30 char limit with user condition
   # This requires walking the SQLA data structure.
   {
-    local $TODO = 'user condition on rel longer than 30 chars';
-
     $query = $schema->resultset('Artist')->search({
       'cds_very_very_very_long_relationship_name.title' => 'EP C'
     }, {
@@ -298,7 +350,7 @@ sub _run_tests {
   } 'with_deferred_fk_checks code survived';
 
   is eval { $schema->resultset('Track')->find(999)->title }, 'deferred FK track',
-    'code in with_deferred_fk_checks worked'; 
+    'code in with_deferred_fk_checks worked';
 
   throws_ok {
     $schema->resultset('Track')->create({
@@ -324,19 +376,18 @@ sub _run_tests {
     my %binstr = ( 'small' => join('', map { chr($_) } ( 1 .. 127 )) );
     $binstr{'large'} = $binstr{'small'} x 1024;
 
-    my $maxloblen = length $binstr{'large'};
+    my $maxloblen = (length $binstr{'large'}) + 5;
     note "Localizing LongReadLen to $maxloblen to avoid truncation of test data";
     local $dbh->{'LongReadLen'} = $maxloblen;
 
     my $rs = $schema->resultset('BindType');
-    my $id = 0;
 
     if ($DBD::Oracle::VERSION eq '1.23') {
       throws_ok { $rs->create({ id => 1, blob => $binstr{large} }) }
         qr/broken/,
         'throws on blob insert with DBD::Oracle == 1.23';
 
-      skip 'buggy BLOB support in DBD::Oracle 1.23', 7;
+      skip 'buggy BLOB support in DBD::Oracle 1.23', 1;
     }
 
     # disable BLOB mega-output
@@ -344,16 +395,59 @@ sub _run_tests {
     $schema->storage->debug (0);
 
     local $TODO = 'Something is confusing column bindtype assignment when quotes are active'
+                . ': https://rt.cpan.org/Ticket/Display.html?id=64206'
       if $q;
 
-    foreach my $type (qw( blob clob )) {
-      foreach my $size (qw( small large )) {
-        $id++;
+    my $id;
+    foreach my $size (qw( small large )) {
+      $id++;
 
-        lives_ok { $rs->create( { 'id' => $id, $type => $binstr{$size} } ) }
-        "inserted $size $type without dying";
-        ok($rs->find($id)->$type eq $binstr{$size}, "verified inserted $size $type" );
-      }
+      my $str = $binstr{$size};
+      lives_ok {
+        $rs->create( { 'id' => $id, blob => "blob:$str", clob => "clob:$str" } )
+      } "inserted $size without dying";
+
+      my %kids = %{$schema->storage->_dbh->{CachedKids}};
+      my @objs = $rs->search({ blob => "blob:$str", clob => "clob:$str" })->all;
+      is_deeply (
+        $schema->storage->_dbh->{CachedKids},
+        \%kids,
+        'multi-part LOB equality query was not cached',
+      ) if $size eq 'large';
+      is @objs, 1, 'One row found matching on both LOBs';
+      ok (try { $objs[0]->blob }||'' eq "blob:$str", 'blob inserted/retrieved correctly');
+      ok (try { $objs[0]->clob }||'' eq "clob:$str", 'clob inserted/retrieved correctly');
+
+      @objs = $rs->search({ clob => { -like => 'clob:%' } })->all;
+      ok (@objs, 'rows found matching CLOB with a LIKE query');
+
+      ok(my $subq = $rs->search(
+        { blob => "blob:$str", clob => "clob:$str" },
+        {
+          from => \ "(SELECT * FROM ${q}bindtype_test${q} WHERE ${q}id${q} != ?) ${q}me${q}",
+          bind => [ [ undef => 12345678 ] ],
+        }
+      )->get_column('id')->as_query);
+
+      @objs = $rs->search({ id => { -in => $subq } })->all;
+      is (@objs, 1, 'One row found matching on both LOBs as a subquery');
+
+      lives_ok {
+        $rs->search({ blob => "blob:$str", clob => "clob:$str" })
+          ->update({ blob => 'updated blob', clob => 'updated clob' });
+      } 'blob UPDATE with WHERE clause survived';
+
+      @objs = $rs->search({ blob => "updated blob", clob => 'updated clob' })->all;
+      is @objs, 1, 'found updated row';
+      ok (try { $objs[0]->blob }||'' eq "updated blob", 'blob updated/retrieved correctly');
+      ok (try { $objs[0]->clob }||'' eq "updated clob", 'clob updated/retrieved correctly');
+
+      lives_ok {
+        $rs->search({ blob => "updated blob", clob => "updated clob" })
+          ->delete;
+      } 'blob DELETE with WHERE clause survived';
+      @objs = $rs->search({ blob => "updated blob", clob => 'updated clob' })->all;
+      is @objs, 0, 'row deleted successfully';
     }
 
     $schema->storage->debug ($orig_debug);
@@ -411,6 +505,48 @@ sub _run_tests {
     'Partially failed populate did not alter table contents'
   );
 
+# test complex join (exercise orajoins)
+  lives_ok {
+    my @hri = $schema->resultset('CD')->search(
+      { 'artist.name' => 'pop_art_1', 'me.cdid' => { '!=', 999} },
+      { join => 'artist', prefetch => 'tracks', rows => 4, order_by => 'tracks.trackid' }
+    )->hri_dump->all;
+
+    my $expect = [{
+      artist => 1,
+      cdid => 1,
+      genreid => undef,
+      single_track => undef,
+      title => "EP C",
+      tracks => [
+        {
+          cd => 1,
+          last_updated_at => undef,
+          last_updated_on => undef,
+          position => 1,
+          title => "Track1",
+          trackid => 1
+        },
+        {
+          cd => 1,
+          last_updated_at => undef,
+          last_updated_on => undef,
+          position => 1,
+          title => "Track2",
+          trackid => 2
+        },
+      ],
+      year => 2003
+    }];
+
+    is_deeply (
+      \@hri,
+      $expect,
+      'Correct set of data prefetched',
+    );
+
+  } 'complex prefetch ok';
+
 # test sequence detection from a different schema
   SKIP: {
   TODO: {
@@ -422,7 +558,7 @@ sub _run_tests {
     skip 'not detecting cross-schema sequence name when using INSERT ... RETURNING', 1
       if $schema->storage->_use_insert_returning;
 
-    # Oracle8i Reference Release 2 (8.1.6) 
+    # Oracle8i Reference Release 2 (8.1.6)
     #   http://download.oracle.com/docs/cd/A87860_01/doc/server.817/a76961/ch294.htm#993
     # Oracle Database Reference 10g Release 2 (10.2)
     #   http://download.oracle.com/docs/cd/B19306_01/server.102/b14237/statviews_2107.htm#sthref1297
@@ -437,6 +573,7 @@ sub _run_tests {
 
     # grand select privileges to the 2nd user
     $dbh->do("GRANT INSERT ON ${q}artist${q} TO " . uc $user2);
+    $dbh->do("GRANT SELECT ON ${q}artist${q} TO " . uc $user2);
     $dbh->do("GRANT SELECT ON ${q}artist_pk_seq${q} TO " . uc $user2);
     $dbh->do("GRANT SELECT ON ${q}artist_autoinc_seq${q} TO " . uc $user2);
 
@@ -518,7 +655,7 @@ sub do_creates {
   # this one is always unquoted as per manually specified sequence =>
   $dbh->do("CREATE SEQUENCE pkid2_seq START WITH 10 MAXVALUE 999999 MINVALUE 0");
 
-  $dbh->do("CREATE TABLE ${q}artist${q} (${q}artistid${q} NUMBER(12), ${q}name${q} VARCHAR(255), ${q}autoinc_col${q} NUMBER(12), ${q}rank${q} NUMBER(38), ${q}charfield${q} VARCHAR2(10))");
+  $dbh->do("CREATE TABLE ${q}artist${q} (${q}artistid${q} NUMBER(12), ${q}name${q} VARCHAR(255),${q}default_value_col${q} VARCHAR(255) DEFAULT 'default_value', ${q}autoinc_col${q} NUMBER(12), ${q}rank${q} NUMBER(38), ${q}charfield${q} VARCHAR2(10))");
   $dbh->do("ALTER TABLE ${q}artist${q} ADD (CONSTRAINT ${q}artist_pk${q} PRIMARY KEY (${q}artistid${q}))");
 
   $dbh->do("CREATE TABLE ${q}sequence_test${q} (${q}pkid1${q} NUMBER(12), ${q}pkid2${q} NUMBER(12), ${q}nonpkid${q} NUMBER(12), ${q}name${q} VARCHAR(255))");
@@ -531,7 +668,7 @@ sub do_creates {
   $dbh->do("CREATE TABLE ${q}track${q} (${q}trackid${q} NUMBER(12), ${q}cd${q} NUMBER(12) REFERENCES CD(${q}cdid${q}) DEFERRABLE, ${q}position${q} NUMBER(12), ${q}title${q} VARCHAR(255), ${q}last_updated_on${q} DATE, ${q}last_updated_at${q} DATE)");
   $dbh->do("ALTER TABLE ${q}track${q} ADD (CONSTRAINT ${q}track_pk${q} PRIMARY KEY (${q}trackid${q}))");
 
-  $dbh->do("CREATE TABLE ${q}bindtype_test${q} (${q}id${q} integer NOT NULL PRIMARY KEY, ${q}bytea${q} integer NULL, ${q}blob${q} blob NULL, ${q}clob${q} clob NULL)");
+  $dbh->do("CREATE TABLE ${q}bindtype_test${q} (${q}id${q} integer NOT NULL PRIMARY KEY, ${q}bytea${q} integer NULL, ${q}blob${q} blob NULL, ${q}clob${q} clob NULL, ${q}a_memo${q} integer NULL)");
 
   $dbh->do(qq{
     CREATE OR REPLACE TRIGGER ${q}artist_insert_trg_auto${q}

@@ -4,8 +4,7 @@ use strict;
 use warnings;
 
 use base 'DBIx::Class';
-
-use Carp::Clan qw/^DBIx::Class/;
+use DBIx::Class::Carp;
 use DBIx::Class::Exception;
 
 # not importing first() as it will clash with our own method

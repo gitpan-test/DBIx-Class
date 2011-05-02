@@ -2,11 +2,10 @@ package DBIx::Class::Storage::TxnScopeGuard;
 
 use strict;
 use warnings;
-use Carp::Clan qw/^DBIx::Class/;
 use Try::Tiny;
 use Scalar::Util qw/weaken blessed/;
 use DBIx::Class::Exception;
-use namespace::clean;
+use DBIx::Class::Carp;
 
 # temporary until we fix the $@ issue in core
 # we also need a real appendable, stackable exception object
@@ -19,6 +18,8 @@ BEGIN {
     *IS_BROKEN_PERL = sub () { 0 };
   }
 }
+
+use namespace::clean;
 
 my ($guards_count, $compat_handler, $foreign_handler);
 
@@ -121,7 +122,11 @@ sub DESTROY {
     try { $storage->_seems_connected && $storage->txn_rollback }
     catch { $rollback_exception = shift };
 
-    if (defined $rollback_exception && $rollback_exception !~ /DBIx::Class::Storage::NESTED_ROLLBACK_EXCEPTION/) {
+    if ( $rollback_exception and (
+      ! defined blessed $rollback_exception
+          or
+      ! $rollback_exception->isa('DBIx::Class::Storage::NESTED_ROLLBACK_EXCEPTION')
+    ) ) {
       # append our text - THIS IS A TEMPORARY FIXUP!
       # a real stackable exception object is in the works
       if (ref $exception eq 'DBIx::Class::Exception') {

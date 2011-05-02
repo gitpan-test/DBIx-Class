@@ -227,6 +227,13 @@ for my $use_insert_returning ($test_server_supports_insert_returning
       arrayfield => [5, 6],
     });
 
+    lives_ok {
+      $schema->populate('ArrayTest', [
+        [ qw/arrayfield/ ],
+        [ [0,0]          ],
+      ]);
+    } 'inserting arrayref using void ctx populate';
+
     # Search using arrays
     lives_ok {
       is_deeply (
@@ -562,12 +569,12 @@ sub drop_test_schema {
 
         for my $stat (
                       'DROP SCHEMA dbic_t_schema_5 CASCADE',
-                      'DROP SEQUENCE public.artist_artistid_seq',
+                      'DROP SEQUENCE public.artist_artistid_seq CASCADE',
                       'DROP SCHEMA dbic_t_schema_4 CASCADE',
                       'DROP SCHEMA dbic_t_schema CASCADE',
-                      'DROP SEQUENCE pkid1_seq',
-                      'DROP SEQUENCE pkid2_seq',
-                      'DROP SEQUENCE nonpkid_seq',
+                      'DROP SEQUENCE pkid1_seq CASCADE',
+                      'DROP SEQUENCE pkid2_seq CASCADE',
+                      'DROP SEQUENCE nonpkid_seq CASCADE',
                       'DROP SCHEMA dbic_t_schema_2 CASCADE',
                       'DROP SCHEMA dbic_t_schema_3 CASCADE',
                      ) {

@@ -7,11 +7,10 @@ use DBIx::Class::ResultSet;
 use DBIx::Class::ResultSourceHandle;
 
 use DBIx::Class::Exception;
-use Carp::Clan qw/^DBIx::Class/;
+use DBIx::Class::Carp;
 use Try::Tiny;
 use List::Util 'first';
 use Scalar::Util qw/blessed weaken isweak/;
-use Storable qw/nfreeze thaw/;
 use namespace::clean;
 
 use base qw/DBIx::Class/;
@@ -32,18 +31,18 @@ DBIx::Class::ResultSource - Result source object
 
   # Create a table based result source, in a result class.
 
-  package MyDB::Schema::Result::Artist;
+  package MyApp::Schema::Result::Artist;
   use base qw/DBIx::Class::Core/;
 
   __PACKAGE__->table('artist');
   __PACKAGE__->add_columns(qw/ artistid name /);
   __PACKAGE__->set_primary_key('artistid');
-  __PACKAGE__->has_many(cds => 'MyDB::Schema::Result::CD');
+  __PACKAGE__->has_many(cds => 'MyApp::Schema::Result::CD');
 
   1;
 
   # Create a query (view) based result source, in a result class
-  package MyDB::Schema::Result::Year2000CDs;
+  package MyApp::Schema::Result::Year2000CDs;
   use base qw/DBIx::Class::Core/;
 
   __PACKAGE__->load_components('InflateColumn::DateTime');
@@ -254,7 +253,19 @@ generate a new key value. If not specified, L<DBIx::Class::PK::Auto>
 will attempt to retrieve the name of the sequence from the database
 automatically.
 
+=item retrieve_on_insert
+
+  { retrieve_on_insert => 1 }
+
+For every column where this is set to true, DBIC will retrieve the RDBMS-side
+value upon a new row insertion (normally only the autoincrement PK is
+retrieved on insert). C<INSERT ... RETURNING> is used automatically if
+supported by the underlying storage, otherwise an extra SELECT statement is
+executed to retrieve the missing data.
+
 =item auto_nextval
+
+   { auto_nextval => 1 }
 
 Set this to a true value for a column whose value is retrieved automatically
 from a sequence or function (if supported by your Storage driver.) For a
@@ -428,7 +439,7 @@ sub columns {
   my $columns_info = $source->columns_info;
 
 Like L</column_info> but returns information for the requested columns. If
-the optional column-list arrayref is ommitted it returns info on all columns
+the optional column-list arrayref is omitted it returns info on all columns
 currently defined on the ResultSource via L</add_columns>.
 
 =cut
@@ -634,7 +645,7 @@ sub sequence {
   my ($self,$seq) = @_;
 
   my @pks = $self->primary_columns
-    or next;
+    or return;
 
   $_->{sequence} = $seq
     for values %{ $self->columns_info (\@pks) };
@@ -929,8 +940,8 @@ sub default_sqlt_deploy_hook {
 
   my $class = $self->result_class;
 
-  if ($class and $class->can('sqlt_deploy_hook')) {
-    $class->sqlt_deploy_hook(@_);
+  if ($class and my $hook = $class->can('sqlt_deploy_hook')) {
+    $self->$hook(@_);
   }
 }
 
@@ -1327,54 +1338,72 @@ L</relationship_info>.
 
 sub reverse_relationship_info {
   my ($self, $rel) = @_;
-  my $rel_info = $self->relationship_info($rel);
+
+  my $rel_info = $self->relationship_info($rel)
+    or $self->throw_exception("No such relationship '$rel'");
+
   my $ret = {};
 
   return $ret unless ((ref $rel_info->{cond}) eq 'HASH');
 
-  my @cond = keys(%{$rel_info->{cond}});
-  my @refkeys = map {/^\w+\.(\w+)$/} @cond;
-  my @keys = map {$rel_info->{cond}->{$_} =~ /^\w+\.(\w+)$/} @cond;
+  my $stripped_cond = $self->__strip_relcond ($rel_info->{cond});
 
-  # Get the related result source for this relationship
-  my $othertable = $self->related_source($rel);
+  my $rsrc_schema_moniker = $self->source_name
+    if try { $self->schema };
+
+  # this may be a partial schema or something else equally esoteric
+  my $other_rsrc = try { $self->related_source($rel) }
+    or return $ret;
 
   # Get all the relationships for that source that related to this source
   # whose foreign column set are our self columns on $rel and whose self
-  # columns are our foreign columns on $rel.
-  my @otherrels = $othertable->relationships();
-  my $otherrelationship;
-  foreach my $otherrel (@otherrels) {
-    # this may be a partial schema with the related source not being
-    # available at all
-    my $back = try { $othertable->related_source($otherrel) } or next;
+  # columns are our foreign columns on $rel
+  foreach my $other_rel ($other_rsrc->relationships) {
 
-    # did we get back to ourselves?
-    next unless $back->source_name eq $self->source_name;
+    # only consider stuff that points back to us
+    # "us" here is tricky - if we are in a schema registration, we want
+    # to use the source_names, otherwise we will use the actual classes
 
-    my $otherrel_info = $othertable->relationship_info($otherrel);
-    my @othertestconds;
+    # the schema may be partial
+    my $roundtrip_rsrc = try { $other_rsrc->related_source($other_rel) }
+      or next;
 
-    if (ref $otherrel_info->{cond} eq 'HASH') {
-      @othertestconds = ($otherrel_info->{cond});
-    }
-    elsif (ref $otherrel_info->{cond} eq 'ARRAY') {
-      @othertestconds = @{$otherrel_info->{cond}};
+    if ($rsrc_schema_moniker and try { $roundtrip_rsrc->schema } ) {
+      next unless $rsrc_schema_moniker eq $roundtrip_rsrc->source_name;
     }
     else {
-      next;
+      next unless $self->result_class eq $roundtrip_rsrc->result_class;
     }
 
-    foreach my $othercond (@othertestconds) {
-      my @other_cond = keys(%$othercond);
-      my @other_refkeys = map {/^\w+\.(\w+)$/} @other_cond;
-      my @other_keys = map {$othercond->{$_} =~ /^\w+\.(\w+)$/} @other_cond;
-      next if (!$self->_compare_relationship_keys(\@refkeys, \@other_keys) ||
-               !$self->_compare_relationship_keys(\@other_refkeys, \@keys));
-      $ret->{$otherrel} =  $otherrel_info;
-    }
+    my $other_rel_info = $other_rsrc->relationship_info($other_rel);
+
+    # this can happen when we have a self-referential class
+    next if $other_rel_info eq $rel_info;
+
+    next unless ref $other_rel_info->{cond} eq 'HASH';
+    my $other_stripped_cond = $self->__strip_relcond($other_rel_info->{cond});
+
+    $ret->{$other_rel} = $other_rel_info if (
+      $self->_compare_relationship_keys (
+        [ keys %$stripped_cond ], [ values %$other_stripped_cond ]
+      )
+        and
+      $self->_compare_relationship_keys (
+        [ values %$stripped_cond ], [ keys %$other_stripped_cond ]
+      )
+    );
   }
+
   return $ret;
+}
+
+# all this does is removes the foreign/self prefix from a condition
+sub __strip_relcond {
+  +{
+    map
+      { map { /^ (?:foreign|self) \. (\w+) $/x } ($_, $_[1]{$_}) }
+      keys %{$_[1]}
+  }
 }
 
 sub compare_relationship_keys {
@@ -1385,36 +1414,12 @@ sub compare_relationship_keys {
 
 # Returns true if both sets of keynames are the same, false otherwise.
 sub _compare_relationship_keys {
-  my ($self, $keys1, $keys2) = @_;
-
-  # Make sure every keys1 is in keys2
-  my $found;
-  foreach my $key (@$keys1) {
-    $found = 0;
-    foreach my $prim (@$keys2) {
-      if ($prim eq $key) {
-        $found = 1;
-        last;
-      }
-    }
-    last unless $found;
-  }
-
-  # Make sure every key2 is in key1
-  if ($found) {
-    foreach my $prim (@$keys2) {
-      $found = 0;
-      foreach my $key (@$keys1) {
-        if ($prim eq $key) {
-          $found = 1;
-          last;
-        }
-      }
-      last unless $found;
-    }
-  }
-
-  return $found;
+#  my ($self, $keys1, $keys2) = @_;
+  return
+    join ("\x00", sort @{$_[1]})
+      eq
+    join ("\x00", sort @{$_[2]})
+  ;
 }
 
 # Returns the {from} structure used to express JOIN conditions
@@ -1815,7 +1820,18 @@ sub related_source {
   if( !$self->has_relationship( $rel ) ) {
     $self->throw_exception("No such relationship '$rel' on " . $self->source_name);
   }
-  return $self->schema->source($self->relationship_info($rel)->{source});
+
+  # if we are not registered with a schema - just use the prototype
+  # however if we do have a schema - ask for the source by name (and
+  # throw in the process if all fails)
+  if (my $schema = try { $self->schema }) {
+    $schema->source($self->relationship_info($rel)->{source});
+  }
+  else {
+    my $class = $self->relationship_info($rel)->{class};
+    $self->ensure_class_loaded($class);
+    $class->result_source_instance;
+  }
 }
 
 =head2 related_class
@@ -1872,7 +1888,10 @@ sub handle {
 {
   my $global_phase_destroy;
 
-  END { $global_phase_destroy++ }
+  # SpeedyCGI runs END blocks every cycle but keeps object instances
+  # hence we have to disable the globaldestroy hatch, and rely on the
+  # eval trap below (which appears to work, but is risky done so late)
+  END { $global_phase_destroy = 1 unless $CGI::SpeedyCGI::i_am_speedy }
 
   sub DESTROY {
     return if $global_phase_destroy;
@@ -1895,23 +1914,34 @@ sub handle {
     );
 
     # weaken our schema hold forcing the schema to find somewhere else to live
-    weaken $_[0]->{schema};
+    # during global destruction (if we have not yet bailed out) this will throw
+    # which will serve as a signal to not try doing anything else
+    local $@;
+    eval {
+      weaken $_[0]->{schema};
+      1;
+    } or do {
+      $global_phase_destroy = 1;
+      return;
+    };
 
-    # if schema is still there reintroduce ourselves with strong refs back
+
+    # if schema is still there reintroduce ourselves with strong refs back to us
     if ($_[0]->{schema}) {
       my $srcregs = $_[0]->{schema}->source_registrations;
       for (keys %$srcregs) {
+        next unless $srcregs->{$_};
         $srcregs->{$_} = $_[0] if $srcregs->{$_} == $_[0];
       }
     }
   }
 }
 
-sub STORABLE_freeze { nfreeze($_[0]->handle) }
+sub STORABLE_freeze { Storable::nfreeze($_[0]->handle) }
 
 sub STORABLE_thaw {
   my ($self, $cloning, $ice) = @_;
-  %$self = %{ (thaw $ice)->resolve };
+  %$self = %{ (Storable::thaw($ice))->resolve };
 }
 
 =head2 throw_exception

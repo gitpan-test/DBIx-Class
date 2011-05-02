@@ -7,6 +7,10 @@ use Test::More;
 use lib qw(t/lib);
 use DBIC::SqlMakerTest;
 
+use DBIx::Class::SQLMaker::LimitDialects;
+my $ROWS = DBIx::Class::SQLMaker::LimitDialects->__rows_bindtype,
+my $TOTAL = DBIx::Class::SQLMaker::LimitDialects->__total_bindtype,
+
 $ENV{NLS_SORT} = "BINARY";
 $ENV{NLS_COMP} = "BINARY";
 $ENV{NLS_LANG} = "AMERICAN";
@@ -114,9 +118,10 @@ do_creates($dbh);
         SELECT me.artistid, me.name, me.rank, me.charfield, me.parentid
           FROM artist me
         START WITH name = ?
-        CONNECT BY parentid = PRIOR artistid 
+        CONNECT BY parentid = PRIOR artistid
       )',
-      [ [ name => 'root'] ],
+      [ [ { 'sqlt_datatype' => 'varchar', 'dbic_colname' => 'name', 'sqlt_size' => 100 }
+            => 'root'] ],
     );
     is_deeply (
       [ $rs->get_column ('name')->all ],
@@ -130,9 +135,10 @@ do_creates($dbh);
         SELECT COUNT( * )
           FROM artist me
         START WITH name = ?
-        CONNECT BY parentid = PRIOR artistid 
+        CONNECT BY parentid = PRIOR artistid
       )',
-      [ [ name => 'root'] ],
+      [ [ { 'sqlt_datatype' => 'varchar', 'dbic_colname' => 'name', 'sqlt_size' => 100 }
+            => 'root'] ],
     );
 
     is( $rs->count, 5, 'Connect By count ok' );
@@ -156,10 +162,11 @@ do_creates($dbh);
         SELECT me.artistid, me.name, me.rank, me.charfield, me.parentid
           FROM artist me
         START WITH name = ?
-        CONNECT BY parentid = PRIOR artistid 
+        CONNECT BY parentid = PRIOR artistid
         ORDER SIBLINGS BY name DESC
       )',
-      [ [ name => 'root'] ],
+      [ [ { 'sqlt_datatype' => 'varchar', 'dbic_colname' => 'name', 'sqlt_size' => 100 }
+            => 'root'] ],
     );
 
     is_deeply (
@@ -183,9 +190,10 @@ do_creates($dbh);
           FROM artist me
         WHERE ( parentid IS NULL )
         START WITH name = ?
-        CONNECT BY parentid = PRIOR artistid 
+        CONNECT BY parentid = PRIOR artistid
       )',
-      [ [ name => 'root'] ],
+      [ [ { 'sqlt_datatype' => 'varchar', 'dbic_colname' => 'name', 'sqlt_size' => 100 }
+            => 'root'] ],
     );
 
     is_deeply(
@@ -218,9 +226,14 @@ do_creates($dbh);
           LEFT JOIN cd cds ON cds.artist = me.artistid
         WHERE ( cds.title LIKE ? )
         START WITH me.name = ?
-        CONNECT BY parentid = PRIOR artistid 
+        CONNECT BY parentid = PRIOR artistid
       )',
-      [ [ 'cds.title' => '%cd' ], [ 'me.name' => 'root' ] ],
+      [
+        [ { 'sqlt_datatype' => 'varchar', 'dbic_colname' => 'cds.title', 'sqlt_size' => 100 }
+            => '%cd'],
+        [ { 'sqlt_datatype' => 'varchar', 'dbic_colname' => 'me.name', 'sqlt_size' => 100 }
+            => 'root'],
+      ],
     );
 
     is_deeply(
@@ -237,9 +250,14 @@ do_creates($dbh);
           LEFT JOIN cd cds ON cds.artist = me.artistid
         WHERE ( cds.title LIKE ? )
         START WITH me.name = ?
-        CONNECT BY parentid = PRIOR artistid 
+        CONNECT BY parentid = PRIOR artistid
       )',
-      [ [ 'cds.title' => '%cd' ], [ 'me.name' => 'root' ] ],
+      [
+        [ { 'sqlt_datatype' => 'varchar', 'dbic_colname' => 'cds.title', 'sqlt_size' => 100 }
+            => '%cd'],
+        [ { 'sqlt_datatype' => 'varchar', 'dbic_colname' => 'me.name', 'sqlt_size' => 100 }
+            => 'root'],
+      ],
     );
 
     is( $rs->count, 1, 'Connect By with a join; count ok' );
@@ -259,10 +277,13 @@ do_creates($dbh);
         SELECT me.artistid, me.name, me.rank, me.charfield, me.parentid
           FROM artist me
         START WITH name = ?
-        CONNECT BY parentid = PRIOR artistid 
+        CONNECT BY parentid = PRIOR artistid
         ORDER BY LEVEL ASC, name ASC
       )',
-      [ [ name => 'root' ] ],
+      [
+        [ { 'sqlt_datatype' => 'varchar', 'dbic_colname' => 'name', 'sqlt_size' => 100 }
+            => 'root'],
+      ],
     );
 
 
@@ -310,9 +331,12 @@ do_creates($dbh);
             CONNECT BY parentid = PRIOR artistid
             ORDER BY name ASC
           ) me
-        WHERE ROWNUM <= 2
+        WHERE ROWNUM <= ?
       )',
-      [ [ name => 'root' ] ],
+      [
+        [ { 'sqlt_datatype' => 'varchar', 'dbic_colname' => 'name', 'sqlt_size' => 100 }
+            => 'root'], [ $ROWS => 2 ],
+      ],
     );
 
     is_deeply (
@@ -333,40 +357,54 @@ do_creates($dbh);
                 START WITH name = ?
                 CONNECT BY parentid = PRIOR artistid
               ) me
-            WHERE ROWNUM <= 2
+            WHERE ROWNUM <= ?
           ) me
       )',
-      [ [ name => 'root' ] ],
+      [
+        [ { 'sqlt_datatype' => 'varchar', 'dbic_colname' => 'name', 'sqlt_size' => 100 }
+            => 'root'], [ $ROWS => 2 ] ,
+      ],
     );
 
     is( $rs->count, 2, 'Connect By; LIMIT count ok' );
   }
 
   # combine a connect_by with group_by and having
+  # add some bindvals to make sure things still work
   {
     my $rs = $schema->resultset('Artist')->search({}, {
-      select => { count => 'rank', -as => 'cnt' },
+      select => \[ 'COUNT(rank) + ?', [ __cbind => 3 ] ],
+      as => 'cnt',
       start_with => { name => 'root' },
       connect_by => { parentid => { -prior => { -ident => 'artistid' } } },
-      group_by => ['rank'],
+      group_by => \[ 'rank + ? ', [ __gbind =>  1] ],
       having => \[ 'count(rank) < ?', [ cnt => 2 ] ],
     });
 
     is_same_sql_bind (
       $rs->as_query,
       '(
-        SELECT COUNT(rank) AS cnt
+        SELECT COUNT(rank) + ?
           FROM artist me
         START WITH name = ?
         CONNECT BY parentid = PRIOR artistid
-        GROUP BY rank HAVING count(rank) < ?
+        GROUP BY( rank + ? ) HAVING count(rank) < ?
       )',
-      [ [ name => 'root' ], [ cnt => 2 ] ],
+      [
+        [ { dbic_colname => '__cbind' }
+            => 3 ],
+        [ { 'sqlt_datatype' => 'varchar', 'dbic_colname' => 'name', 'sqlt_size' => 100 }
+            => 'root'],
+        [ { dbic_colname => '__gbind' }
+            => 1 ],
+        [ { dbic_colname => 'cnt' }
+            => 2 ],
+      ],
     );
 
     is_deeply (
       [ $rs->get_column ('cnt')->all ],
-      [1, 1],
+      [4, 4],
       'Group By a Connect By query - correct values'
     );
   }
@@ -402,9 +440,12 @@ do_creates($dbh);
         SELECT me.artistid, me.name, me.rank, me.charfield, me.parentid, CONNECT_BY_ISCYCLE
           FROM artist me
         START WITH name = ?
-        CONNECT BY NOCYCLE parentid = PRIOR artistid 
+        CONNECT BY NOCYCLE parentid = PRIOR artistid
       )',
-      [ [ name => 'cycle-root'] ],
+      [
+        [ { 'sqlt_datatype' => 'varchar', 'dbic_colname' => 'name', 'sqlt_size' => 100 }
+            => 'cycle-root'],
+      ],
     );
     is_deeply (
       [ $rs->get_column ('name')->all ],
@@ -423,9 +464,12 @@ do_creates($dbh);
         SELECT COUNT( * )
           FROM artist me
         START WITH name = ?
-        CONNECT BY NOCYCLE parentid = PRIOR artistid 
+        CONNECT BY NOCYCLE parentid = PRIOR artistid
       )',
-      [ [ name => 'cycle-root'] ],
+      [
+        [ { 'sqlt_datatype' => 'varchar', 'dbic_colname' => 'name', 'sqlt_size' => 100 }
+            => 'cycle-root'],
+      ],
     );
 
     is( $rs->count, 4, 'Connect By Nocycle count ok' );

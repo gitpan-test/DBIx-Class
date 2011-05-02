@@ -1,5 +1,91 @@
 Revision history for DBIx::Class
 
+0.08190_01 2011-05-02 15:00 (UTC)
+    * New Features / Changes
+        - Add quote_names connection option. When set to true automatically
+          sets quote_char and name_sep appropriate for your RDBMS
+        - Add retrieve_on_insert column info flag, allowing to retrieve any
+          column value instead of just autoinc primary keys
+        - Bring back strict ordering of selectors in complex search chains
+          (an ill-fated attempt was made in 0.08127 to order intelligently)
+        - All limit dialects (except for the older Top and FetchFirst) are
+          now using bind parameters for the limits/offsets, making DBI's
+          prepare_cached useful across paged resutsets
+        - Support for savepoints for SQLite
+        - Support for MS Access databases via DBD::ODBC and DBD::ADO (only
+          Win32 support currently tested)
+        - Support for the Firebird RDBMS over the new DBD::Firebird driver
+        - IC::DateTime support for MSSQL over DBD::ADO
+        - Both the ::ODBC and ::ADO dispatchers now warn if a rdbms-specific
+          driver is not found for this connection before falling back to
+          plain ::Storage::DBI
+        - ::Storage::DBI::sth was mistakenly marked/documented as public,
+          privatize and warn on deprecated use
+        - Massive overhaul of bind values/attributes handling - slightly
+          changes the output of as_query (should not cause compat issues)
+        - Support ancient DB2 versions (5.4 and older), with proper limit
+          dialect
+        - Support sub-second precision for TIMESTAMPs for Firebird over ODBC
+        - Support BLOBs and CLOBs in WHERE clauses for Oracle, including LIKE
+          queries for CLOBs.
+
+    * Fixes
+        - Fix ::Storage::DBI::* MRO problems on 5.8.x perls
+        - Disable mysql_auto_reconnect for MySQL - depending on the ENV
+          it sometimes defaults to on and causes major borkage on older
+          DBD::mysql versions
+        - Fix dropped bind values in select/group_by on Oracle (omission
+          from 0542ec57 and 4c2b30d6)
+        - Fix remaining errors with Oracle and identifiers longer than the
+          Oracle-imposed maximum of 30 characters (RT#66390)
+        - Fix older oracle-specific "WhereJoins" to work properly with
+          name quoting
+        - Fix problems with M.A.D. under CGI::SpeedyCGI (RT#65131)
+        - Reenable paging of cached resultsets - breakage erroneously added
+          in 0.08127
+        - Better error handling when prepare() fails silently
+        - Fixes skipped lines when a comment is followed by a statement
+          when deploying a schema via sql file
+        - Fix reverse_relationship_info on prototypical result sources
+          (sources not yet registered with a schema)
+        - Warn and skip relationships missing from a partial schema during
+          dbic cascade_delete
+        - Automatically require the requested cursor class before use
+          (RT#64795)
+        - Work around a Firebird ODBC driver bug exposed by DBD::ODBC 1.29
+        - Fix (to the extent allowed by the driver) transaction support in
+          DBD::Sybase compiled against FreeTDS
+        - Fix exiting via next warnings in ResultSource::sequence()
+        - Fix stripping of table qualifiers in update/delete in arrayref
+          condition elements
+        - Change SQLMaker carp-monkeypatch to be compatible with versions
+          of SQL::Abstract >= 1.73
+        - Fix using \[] literals in the from resultset attribute
+        - Fix populate() with \[], arrays (datatype) and other exotic values
+        - Fix handling of rollbacks in nested transactions
+        - Fix complex limits (RNO/RowNum/FetchFirst/Top/GenSubq) with
+          sub-selects in the selectors list (correlated subqueries)
+        - Fix inconsistency between $rs->next with and without HRI when all
+          the "root" columns are in fact injected from the right rs side
+        - Fix the join optimizer to correctly preserve the non-multi path to
+          a multi relationship ( x -> might_have y -> has_many z )
+        - Fix object-derived custom-relationship resultsets to resultsources
+          with multilevel monikers (e.g. $schema->source('Foo::Bar') )
+        - Fix incorrect signature of the default sqlt_deploy_hook - it now
+          matches the documentation of passing in the result source object
+        - Fix inadequate handling of internal storage methods within
+          ::Storage::Replicated (RT#66295)
+
+    * Misc
+        - Rewire all warnings to a new Carp-like implementation internal
+          to DBIx::Class, and remove the Carp::Clan dependency
+        - Only load Class::C3 and friends if necessary ($] < 5.010)
+        - Greatly reduced loading of non-essential modules to aid startup
+          time (mainly benefiting CGI users)
+        - Make sure all namespaces are clean of rogue imports
+        - Dropped DBI req 2 years back - everything works with 1.57, no
+          point requiring something newer
+
 0.08190-TRIAL 2011-01-24 15:35 (UTC)
 
     * New Features / Changes

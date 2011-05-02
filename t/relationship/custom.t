@@ -43,10 +43,19 @@ is_same_sql_bind(
     WHERE ( ( me.artist = ? AND ( me.year < ? AND me.year > ? ) ) )
   )',
   [
-    [ 'me.artist' => 21   ],
-    [ 'me.year' => 1990 ],
-    [ 'me.year' => 1979 ],
-  ]
+    [
+      { sqlt_datatype => 'integer', dbic_colname => 'me.artist' }
+        => 21
+    ],
+    [
+      { sqlt_datatype => 'varchar', sqlt_size => 100, dbic_colname => 'me.year' }
+        => 1990
+    ],
+    [
+      { sqlt_datatype => 'varchar', sqlt_size => 100, dbic_colname => 'me.year' }
+        => 1979
+    ],
+  ],
 );
 my @cds_80s = $cds_80s_rs->all;
 is(@cds_80s, 6, '6 80s cds found (1980 - 1985)');
@@ -64,11 +73,52 @@ is_same_sql_bind(
       WHERE ( artist__row.artistid = ? )
   )',
   [
-    [ 'me.year' => 2000 ],
-    [ 'me.year' => 1989 ],
-    [ 'artist__row.artistid' => 22 ],
+    [
+      { sqlt_datatype => 'varchar', sqlt_size => 100, dbic_colname => 'me.year' }
+        => 2000
+    ],
+    [
+      { sqlt_datatype => 'varchar', sqlt_size => 100, dbic_colname => 'me.year' }
+        => 1989
+    ],
+    [ { sqlt_datatype => 'integer', dbic_colname => 'artist__row.artistid' }
+        => 22
+    ],
   ]
 );
+
+# re-test with ::-containing moniker name
+# (we don't have any currently, so fudge it with lots of local() )
+{
+  local $schema->source('Artist')->{source_name} = 'Ar::Tist';
+  local $artist2->{related_resultsets};
+
+  is_same_sql_bind(
+    $artist2->cds_90s->as_query,
+    '(
+      SELECT me.cdid, me.artist, me.title, me.year, me.genreid, me.single_track
+        FROM artist ar_tist__row
+        JOIN cd me
+          ON ( me.artist = ar_tist__row.artistid AND ( me.year < ? AND me.year > ? ) )
+        WHERE ( ar_tist__row.artistid = ? )
+    )',
+    [
+      [
+        { sqlt_datatype => 'varchar', sqlt_size => 100, dbic_colname => 'me.year' }
+          => 2000
+      ],
+      [
+      { sqlt_datatype => 'varchar', sqlt_size => 100, dbic_colname => 'me.year' }
+          => 1989
+      ],
+      [ { sqlt_datatype => 'integer', dbic_colname => 'ar_tist__row.artistid' }
+          => 22
+      ],
+    ]
+  );
+}
+
+
 my @cds_90s = $cds_90s_rs->all;
 is(@cds_90s, 6, '6 90s cds found (1990 - 1995) even with non-optimized search');
 map { ok($_->year < 2000 && $_->year > 1989) } @cds_90s;
@@ -152,6 +202,18 @@ is_deeply (
   [$last_tracks_rs->get_column ('trackid')->all],
   [ map { $_->trackid } @last_tracks ],
   'last group-entry via self-join works',
+);
+
+is_deeply (
+  [map { $_->last_track->id } grep { $_->last_track } $schema->resultset('CD')->search ({}, { order_by => 'cdid', prefetch => 'last_track'})->all],
+  [ map { $_->trackid } @last_tracks ],
+  'last_track via insane subquery condition works',
+);
+
+is_deeply (
+  [map { $_->last_track->id } grep { $_->last_track } $schema->resultset('CD')->search ({}, { order_by => 'cdid'})->all],
+  [ map { $_->trackid } @last_tracks ],
+  'last_track via insane subquery condition works, even without prefetch',
 );
 
 my $artwork = $schema->resultset('Artwork')->search({},{ order_by => 'cd_id' })->first;

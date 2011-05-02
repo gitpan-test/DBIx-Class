@@ -53,16 +53,19 @@ my $test_requires = {
   'Test::Exception'          => '0.31',
   'Test::More'               => '0.92',
   'Test::Warn'               => '0.21',
+
+  # this is already a dep of n::c, but just in case - used by t/55namespaces_cleaned.t
+  # remove and do a manual glob-collection if n::c is no longer a dep
+  'Package::Stash'           => '0.28',
 };
 
 my $runtime_requires = {
-  'Carp::Clan'               => '6.0',
   'Class::Accessor::Grouped' => '0.10002',
-  'Class::C3::Componentised' => '1.0005',
+  'Class::C3::Componentised' => '1.0009',
   'Class::Inspector'         => '1.24',
   'Config::Any'              => '0.20',
   'Context::Preserve'        => '0.01',
-  'Data::Dumper::Concise'    => '1.000',
+  'Data::Dumper::Concise'    => '2.020',
   'Data::Page'               => '2.00',
   'Hash::Merge'              => '0.12',
   'MRO::Compat'              => '0.09',
@@ -73,7 +76,7 @@ my $runtime_requires = {
   'Try::Tiny'                => '0.04',
 
   # XS (or XS-dependent) libs
-  'DBI'                      => '1.609',
+  'DBI'                      => '1.57',
   'namespace::clean'         => '0.20',
   'Sub::Name'                => '0.04',
   'Variable::Magic'          => '0.44',
@@ -193,14 +196,20 @@ tests_recursive (qw|
 # temporary(?) until I get around to fix M::I wrt xt/
 # needs Module::Install::AuthorTests
 eval {
+  # this should not be necessary since the autoloader is supposed
+  # to work, but there were reports of it failing
+  require Module::Install::AuthorTests;
   recursive_author_tests (qw/xt/);
   1;
 } || do {
   if ($Module::Install::AUTHOR && ! $args->{skip_author_deps}) {
     my $err = $@;
+
+    # better error message in case of missing dep
     eval { require Module::Install::AuthorTests }
       || die "\nYou need Module::Install::AuthorTests installed to run this Makefile.PL in author mode (or supply --skip_author_deps):\n\n$@\n";
-    die $@;
+
+    die $err;
   }
 };
 
@@ -247,6 +256,7 @@ no_index directory => $_ for (qw|
 |);
 no_index package => $_ for (qw/
   DBIx::Class::Storage::DBIHacks
+  DBIx::Class::Carp
 /);
 
 WriteAll();

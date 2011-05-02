@@ -326,10 +326,10 @@ You can write subqueries relatively easily in DBIC.
   });
 
   my $rs = $schema->resultset('CD')->search({
-    artist_id => { 'IN' => $inside_rs->get_column('id')->as_query },
+    artist_id => { -in => $inside_rs->get_column('id')->as_query },
   });
 
-The usual operators ( =, !=, IN, NOT IN, etc.) are supported.
+The usual operators ( '=', '!=', -in, -not_in, etc.) are supported.
 
 B<NOTE>: You have to explicitly use '=' when doing an equality comparison.
 The following will B<not> work:
@@ -1078,7 +1078,7 @@ If you want to get a filtered result set, you can just add add to $attr as follo
 
  __PACKAGE__->has_many('pages' => 'Page', 'book', { where => { scrap => 0 } } );
 
-=head2 Many-to-many relationships
+=head2 Many-to-many relationship bridges
 
 This is straightforward using L<ManyToMany|DBIx::Class::Relationship/many_to_many>:
 
@@ -1370,14 +1370,21 @@ retry if the server goes away mid-operations, unlike C<txn_do>.
 L<DBIx::Class::Schema::Loader> will connect to a database and create a
 L<DBIx::Class::Schema> and associated sources by examining the database.
 
-The recommend way of achieving this is to use the
+The recommend way of achieving this is to use the L<dbicdump> utility or the
+L<Catalyst> helper, as described in
+L<Manual::Intro|DBIx::Class::Manual::Intro/Using DBIx::Class::Schema::Loader>.
+
+Alternatively, use the
 L<make_schema_at|DBIx::Class::Schema::Loader/make_schema_at> method:
 
   perl -MDBIx::Class::Schema::Loader=make_schema_at,dump_to_dir:./lib \
-    -e 'make_schema_at("My::Schema", { debug => 1 }, [ "dbi:Pg:dbname=foo","postgres" ])'
+    -e 'make_schema_at("My::Schema", \
+    { db_schema => 'myschema', components => ["InflateColumn::DateTime"] }, \
+    [ "dbi:Pg:dbname=foo", "username", "password" ])'
 
-This will create a tree of files rooted at C<./lib/My/Schema/> containing
-source definitions for all the tables found in the C<foo> database.
+This will create a tree of files rooted at C<./lib/My/Schema/> containing source
+definitions for all the tables found in the C<myschema> schema in the C<foo>
+database.
 
 =head2 Creating DDL SQL
 
@@ -1911,10 +1918,10 @@ L<Class::Method::Modifiers>:
       $self->squared( $value * $value );
     }
 
-    $self->next::method(@_);
+    $self->$orig(@_);
   }
 
-Note that the hard work is done by the call to C<next::method>, which
+Note that the hard work is done by the call to C<< $self->$orig >>, which
 redispatches your call to store_column in the superclass(es).
 
 Generally, if this is a calculation your database can easily do, try

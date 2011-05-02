@@ -17,13 +17,9 @@ unless ($INC{"DBIx/Class/CDBICompat.pm"}) {
 
 __PACKAGE__->load_components(qw/ResultSetProxy/);
 
-{
-    no warnings 'once';
-    *dbi_commit = \&txn_commit;
-    *dbi_rollback = \&txn_rollback;
-}
-
 sub storage { shift->schema_instance(@_)->storage; }
+sub dbi_commit { shift->txn_commit(@_) }
+sub dbi_rollback { shift->txn_rollback(@_) }
 
 =head1 NAME
 
@@ -203,19 +199,19 @@ sub result_source_instance {
 
 ****DEPRECATED****
 
-See L<class_resolver>
+See L</class_resolver>
 
 =head2 dbi_commit
 
 ****DEPRECATED****
 
-Alias for L<txn_commit>
+Alias for L</txn_commit>
 
 =head2 dbi_rollback
 
 ****DEPRECATED****
 
-Alias for L<txn_rollback>
+Alias for L</txn_rollback>
 
 =end HIDE_BECAUSE_THIS_CLASS_IS_DEPRECATED
 

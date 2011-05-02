@@ -3,27 +3,22 @@ package DBIx::Class::ResultSet;
 use strict;
 use warnings;
 use base qw/DBIx::Class/;
-use Carp::Clan qw/^DBIx::Class/;
+use DBIx::Class::Carp;
 use DBIx::Class::Exception;
-use Data::Page;
 use DBIx::Class::ResultSetColumn;
-use DBIx::Class::ResultSourceHandle;
-use Hash::Merge ();
 use Scalar::Util qw/blessed weaken/;
 use Try::Tiny;
-use Storable qw/nfreeze thaw/;
 
 # not importing first() as it will clash with our own method
 use List::Util ();
-
-use namespace::clean;
-
 
 BEGIN {
   # De-duplication in _merge_attr() is disabled, but left in for reference
   # (the merger is used for other things that ought not to be de-duped)
   *__HM_DEDUP = sub () { 0 };
 }
+
+use namespace::clean;
 
 use overload
         '0+'     => "count",
@@ -98,7 +93,7 @@ another.
       year => $request->param('year'),
     });
 
-    $self->apply_security_policy( $cd_rs );
+    $cd_rs = $self->apply_security_policy( $cd_rs );
 
     return $cd_rs->all();
   }
@@ -213,6 +208,12 @@ sub new {
     attrs => $attrs,
   }, $class;
 
+  # if there is a dark selector, this means we are already in a
+  # chain and the cleanup/sanification was taken care of by
+  # _search_rs already
+  $self->_normalize_selection($attrs)
+    unless $attrs->{_dark_selector};
+
   $self->result_class(
     $attrs->{result_class} || $source->result_class
   );
@@ -226,7 +227,7 @@ sub new {
 
 =item Arguments: $cond, \%attrs?
 
-=item Return Value: $resultset (scalar context), @row_objs (list context)
+=item Return Value: $resultset (scalar context) ||  @row_objs (list context)
 
 =back
 
@@ -235,6 +236,9 @@ sub new {
 
   my $new_rs = $cd_rs->search([ { year => 2005 }, { year => 2004 } ]);
                  # year = 2005 OR year = 2004
+
+In list context, C<< ->all() >> is called implicitly on the resultset, thus
+returning a list of row objects instead. To avoid that, use L</search_rs>.
 
 If you need to pass in additional attributes but no additional condition,
 call it as C<search(undef, \%attrs)>.
@@ -301,7 +305,6 @@ always return a resultset, even in list context.
 
 =cut
 
-my $callsites_warned;
 sub search_rs {
   my $self = shift;
 
@@ -345,24 +348,23 @@ sub search_rs {
   # take care of call attrs (only if anything is changing)
   if (keys %$call_attrs) {
 
-    $self->throw_exception ('_trailing_select is not a public attribute - do not use it in search()')
-      if ( exists $call_attrs->{_trailing_select} or exists $call_attrs->{'+_trailing_select'} );
+    my @selector_attrs = qw/select as columns cols +select +as +columns include_columns/;
 
-    my @selector_attrs = qw/select as columns cols +select +as +columns include_columns _trailing_select +_trailing_select/;
+    # reset the current selector list if new selectors are supplied
+    if (List::Util::first { exists $call_attrs->{$_} } qw/columns cols select as/) {
+      delete @{$old_attrs}{(@selector_attrs, '_dark_selector')};
+    }
 
-    # Normalize the selector list (operates on the passed-in attr structure)
+    # Normalize the new selector list (operates on the passed-in attr structure)
     # Need to do it on every chain instead of only once on _resolved_attrs, in
-    # order to separate 'as'-ed from blind 'select's
+    # order to allow detection of empty vs partial 'as'
+    $call_attrs->{_dark_selector} = $old_attrs->{_dark_selector}
+      if $old_attrs->{_dark_selector};
     $self->_normalize_selection ($call_attrs);
 
     # start with blind overwriting merge, exclude selector attrs
     $new_attrs = { %{$old_attrs}, %{$call_attrs} };
     delete @{$new_attrs}{@selector_attrs};
-
-    # reset the current selector list if new selectors are supplied
-    if (List::Util::first { exists $call_attrs->{$_} } qw/columns cols select as/) {
-      delete @{$old_attrs}{@selector_attrs};
-    }
 
     for (@selector_attrs) {
       $new_attrs->{$_} = $self->_merge_attr($old_attrs->{$_}, $call_attrs->{$_})
@@ -410,15 +412,7 @@ sub search_rs {
   } if @_;
 
   if( @_ > 1 and ! $rsrc->result_class->isa('DBIx::Class::CDBICompat') ) {
-    # determine callsite obeying Carp::Clan rules (fucking ugly but don't have better ideas)
-    my $callsite = do {
-      my $w;
-      local $SIG{__WARN__} = sub { $w = shift };
-      carp;
-      $w
-    };
-    carp 'search( %condition ) is deprecated, use search( \%condition ) instead'
-      unless $callsites_warned->{$callsite}++;
+    carp_unique 'search( %condition ) is deprecated, use search( \%condition ) instead';
   }
 
   for ($old_where, $call_cond) {
@@ -442,12 +436,15 @@ sub search_rs {
   return $rs;
 }
 
+my $dark_sel_dumper;
 sub _normalize_selection {
   my ($self, $attrs) = @_;
 
   # legacy syntax
   $attrs->{'+columns'} = $self->_merge_attr($attrs->{'+columns'}, delete $attrs->{include_columns})
     if exists $attrs->{include_columns};
+
+  # columns are always placed first, however 
 
   # Keep the X vs +X separation until _resolved_attrs time - this allows to
   # delay the decision on whether to use a default select list ($rsrc->columns)
@@ -459,9 +456,7 @@ sub _normalize_selection {
   # supplied at all) - try to infer the alias, either from the -as parameter
   # of the selector spec, or use the parameter whole if it looks like a column
   # name (ugly legacy heuristic). If all fails - leave the selector bare (which
-  # is ok as well), but transport it over a separate attribute to make sure it is
-  # the last thing in the select list, thus unable to throw off the corresponding
-  # 'as' chain
+  # is ok as well), but make sure no more additions to the 'as' chain take place
   for my $pref ('', '+') {
 
     my ($sel, $as) = map {
@@ -484,53 +479,51 @@ sub _normalize_selection {
       );
     }
     elsif( ! @$as ) {
-      # no as part supplied at all - try to deduce
+      # no as part supplied at all - try to deduce (unless explicit end of named selection is declared)
       # if any @$as has been supplied we assume the user knows what (s)he is doing
       # and blindly keep stacking up pieces
-      my (@new_sel, @new_trailing);
-      for (@$sel) {
-        if ( ref $_ eq 'HASH' and exists $_->{-as} ) {
-          push @$as, $_->{-as};
-          push @new_sel, $_;
-        }
-        # assume any plain no-space, no-parenthesis string to be a column spec
-        # FIXME - this is retarded but is necessary to support shit like 'count(foo)'
-        elsif ( ! ref $_ and $_ =~ /^ [^\s\(\)]+ $/x) {
-          push @$as, $_;
-          push @new_sel, $_;
-        }
-        # if all else fails - shove the selection to the trailing stack and move on
-        else {
-          push @new_trailing, $_;
+      unless ($attrs->{_dark_selector}) {
+        SELECTOR:
+        for (@$sel) {
+          if ( ref $_ eq 'HASH' and exists $_->{-as} ) {
+            push @$as, $_->{-as};
+          }
+          # assume any plain no-space, no-parenthesis string to be a column spec
+          # FIXME - this is retarded but is necessary to support shit like 'count(foo)'
+          elsif ( ! ref $_ and $_ =~ /^ [^\s\(\)]+ $/x) {
+            push @$as, $_;
+          }
+          # if all else fails - raise a flag that no more aliasing will be allowed
+          else {
+            $attrs->{_dark_selector} = {
+              plus_stage => $pref,
+              string => ($dark_sel_dumper ||= do {
+                  require Data::Dumper::Concise;
+                  Data::Dumper::Concise::DumperObject()->Indent(0);
+                })->Values([$_])->Dump
+              ,
+            };
+            last SELECTOR;
+          }
         }
       }
-
-      @$sel = @new_sel;
-      $attrs->{"${pref}_trailing_select"} = $self->_merge_attr($attrs->{"${pref}_trailing_select"}, \@new_trailing)
-        if @new_trailing;
     }
     elsif (@$as < @$sel) {
       $self->throw_exception(
         "Unable to handle an ${pref}as specification (@$as) with less elements than the corresponding ${pref}select"
       );
     }
-
-    # now see what the result for this pair looks like:
-    if (@$as == @$sel) {
-
-      # if balanced - treat as a columns entry
-      $attrs->{"${pref}columns"} = $self->_merge_attr(
-        $attrs->{"${pref}columns"},
-        [ map { +{ $as->[$_] => $sel->[$_] } } ( 0 .. $#$as ) ]
+    elsif ($pref and $attrs->{_dark_selector}) {
+      $self->throw_exception(
+        "Unable to process named '+select', resultset contains an unnamed selector $attrs->{_dark_selector}{string}"
       );
     }
-    else {
-      # unbalanced - shove in select/as, not subject to deduplication in _resolved_attrs
-      $attrs->{"${pref}select"} = $self->_merge_attr($attrs->{"${pref}select"}, $sel);
-      $attrs->{"${pref}as"} = $self->_merge_attr($attrs->{"${pref}as"}, $as);
-    }
-  }
 
+
+    # merge result
+    $attrs->{"${pref}select"} = $self->_merge_attr($attrs->{"${pref}select"}, $sel);
+    $attrs->{"${pref}as"} = $self->_merge_attr($attrs->{"${pref}as"}, $as);
+  }
 }
 
 sub _stack_cond {
@@ -554,7 +547,7 @@ sub _stack_cond {
 
 =item Arguments: $sql_fragment, @bind_values
 
-=item Return Value: $resultset (scalar context), @row_objs (list context)
+=item Return Value: $resultset (scalar context) || @row_objs (list context)
 
 =back
 
@@ -797,7 +790,6 @@ sub _qualify_cond_columns {
   return \%aliased;
 }
 
-my $callsites_warned_ucond;
 sub _build_unique_cond {
   my ($self, $constraint_name, $extra_cond, $croak_on_null) = @_;
 
@@ -834,20 +826,13 @@ sub _build_unique_cond {
       and
     my @undefs = grep { ! defined $final_cond->{$_} } (keys %$final_cond)
   ) {
-    my $callsite = do {
-      my $w;
-      local $SIG{__WARN__} = sub { $w = shift };
-      carp;
-      $w
-    };
-
-    carp ( sprintf (
+    carp_unique ( sprintf (
       "NULL/undef values supplied for requested unique constraint '%s' (NULL "
     . 'values in column(s): %s). This is almost certainly not what you wanted, '
     . 'though you can set DBIC_NULLABLE_KEY_NOWARN to disable this warning.',
       $constraint_name,
       join (', ', map { "'$_'" } @undefs),
-    )) unless $callsites_warned_ucond->{$callsite}++;
+    ));
   }
 
   return $final_cond;
@@ -859,7 +844,7 @@ sub _build_unique_cond {
 
 =item Arguments: $rel, $cond, \%attrs?
 
-=item Return Value: $new_resultset
+=item Return Value: $new_resultset (scalar context) || @row_objs (list context)
 
 =back
 
@@ -869,6 +854,11 @@ sub _build_unique_cond {
 
 Searches the specified relationship, optionally specifying a condition and
 attributes for matching records. See L</ATTRIBUTES> for more information.
+
+In list context, C<< ->all() >> is called implicitly on the resultset, thus
+returning a list of row objects instead. To avoid that, use L</search_related_rs>.
+
+See also L</search_related_rs>.
 
 =cut
 
@@ -1050,7 +1040,7 @@ sub get_column {
 
 =item Arguments: $cond, \%attrs?
 
-=item Return Value: $resultset (scalar context), @row_objs (list context)
+=item Return Value: $resultset (scalar context) || @row_objs (list context)
 
 =back
 
@@ -1076,7 +1066,7 @@ instead. An example conversion is:
 
 sub search_like {
   my $class = shift;
-  carp (
+  carp_unique (
     'search_like() is deprecated and will be removed in DBIC version 0.09.'
    .' Instead use ->search({ x => { -like => "y%" } })'
    .' (note the outer pair of {}s - they are important!)'
@@ -1093,7 +1083,7 @@ sub search_like {
 
 =item Arguments: $first, $last
 
-=item Return Value: $resultset (scalar context), @row_objs (list context)
+=item Return Value: $resultset (scalar context) || @row_objs (list context)
 
 =back
 
@@ -1446,7 +1436,7 @@ sub _count_rs {
   # overwrite the selector (supplied by the storage)
   $tmp_attrs->{select} = $rsrc->storage->_count_select ($rsrc, $attrs);
   $tmp_attrs->{as} = 'count';
-  delete @{$tmp_attrs}{qw/columns _trailing_select/};
+  delete @{$tmp_attrs}{qw/columns/};
 
   my $tmp_rs = $rsrc->resultset_class->new($rsrc, $tmp_attrs)->get_column ('count');
 
@@ -1464,7 +1454,7 @@ sub _count_subq_rs {
 
   my $sub_attrs = { %$attrs };
   # extra selectors do not go in the subquery and there is no point of ordering it, nor locking it
-  delete @{$sub_attrs}{qw/collapse columns as select _prefetch_selector_range _trailing_select order_by for/};
+  delete @{$sub_attrs}{qw/collapse columns as select _prefetch_selector_range order_by for/};
 
   # if we multi-prefetch we group_by primary keys only as this is what we would
   # get out of the rs via ->next/->all. We *DO WANT* to clobber old group_by regardless
@@ -1573,8 +1563,7 @@ sub count_literal { shift->search_literal(@_)->count; }
 
 =back
 
-Returns all elements in the resultset. Called implicitly if the resultset
-is returned in list context.
+Returns all elements in the resultset.
 
 =cut
 
@@ -1665,12 +1654,8 @@ sub _rs_update_delete {
 
   my $rsrc = $self->result_source;
 
-  # if a condition exists we need to strip all table qualifiers
-  # if this is not possible we'll force a subquery below
-  my $cond = $rsrc->schema->storage->_strip_cond_qualifiers ($self->{cond});
-
   my $needs_group_by_subq = $self->_has_resolved_attr (qw/collapse group_by -join/);
-  my $needs_subq = $needs_group_by_subq || (not defined $cond) || $self->_has_resolved_attr(qw/rows offset/);
+  my $needs_subq = $needs_group_by_subq || $self->_has_resolved_attr(qw/rows offset/);
 
   if ($needs_group_by_subq or $needs_subq) {
 
@@ -1715,10 +1700,23 @@ sub _rs_update_delete {
     return $self->result_source->storage->_subq_update_delete($subrs, $op, $values);
   }
   else {
+    # Most databases do not allow aliasing of tables in UPDATE/DELETE. Thus
+    # a condition containing 'me' or other table prefixes will not work
+    # at all. What this code tries to do (badly) is to generate a condition
+    # with the qualifiers removed, by exploiting the quote mechanism of sqla
+    #
+    # this is atrocious and should be replaced by normal sqla introspection
+    # one sunny day
+    my ($sql, @bind) = do {
+      my $sqla = $rsrc->storage->sql_maker;
+      local $sqla->{_dequalify_idents} = 1;
+      $sqla->_recurse_where($self->{cond});
+    } if $self->{cond};
+
     return $rsrc->storage->$op(
       $rsrc,
       $op eq 'update' ? $values : (),
-      $cond,
+      $self->{cond} ? \[$sql, @bind] : (),
     );
   }
 }
@@ -1859,7 +1857,7 @@ sub delete_all {
 
 Accepts either an arrayref of hashrefs or alternatively an arrayref of arrayrefs.
 For the arrayref of hashrefs style each hashref should be a structure suitable
-forsubmitting to a $resultset->create(...) method.
+for submitting to a $resultset->create(...) method.
 
 In void context, C<insert_bulk> in L<DBIx::Class::Storage::DBI> is used
 to insert the data, as this is a faster method.
@@ -2172,10 +2170,6 @@ sub pager {
 
   return $self->{pager} if $self->{pager};
 
-  if ($self->get_cache) {
-    $self->throw_exception ('Pagers on cached resultsets are not supported');
-  }
-
   my $attrs = $self->{attrs};
   if (!defined $attrs->{page}) {
     $self->throw_exception("Can't create pager for non-paged rs");
@@ -2196,6 +2190,7 @@ sub pager {
 ### necessary for future development of DBIx::DS. Do *NOT* change this code
 ### before talking to ribasushi/mst
 
+  require Data::Page;
   my $pager = Data::Page->new(
     0,  #start with an empty set
     $attrs->{rows},
@@ -3253,16 +3248,13 @@ sub _resolved_attrs {
   my $source = $self->result_source;
   my $alias  = $attrs->{alias};
 
-  # one last pass of normalization
-  $self->_normalize_selection($attrs);
-
   # default selection list
   $attrs->{columns} = [ $source->columns ]
-    unless List::Util::first { exists $attrs->{$_} } qw/columns cols select as _trailing_select/;
+    unless List::Util::first { exists $attrs->{$_} } qw/columns cols select as/;
 
   # merge selectors together
-  for (qw/columns select as _trailing_select/) {
-    $attrs->{$_} = $self->_merge_attr($attrs->{$_}, $attrs->{"+$_"})
+  for (qw/columns select as/) {
+    $attrs->{$_} = $self->_merge_attr($attrs->{$_}, delete $attrs->{"+$_"})
       if $attrs->{$_} or $attrs->{"+$_"};
   }
 
@@ -3374,15 +3366,14 @@ sub _resolved_attrs {
   # subquery (since a group_by is present)
   if (delete $attrs->{distinct}) {
     if ($attrs->{group_by}) {
-      carp ("Useless use of distinct on a grouped resultset ('distinct' is ignored when a 'group_by' is present)");
+      carp_unique ("Useless use of distinct on a grouped resultset ('distinct' is ignored when a 'group_by' is present)");
     }
     else {
       # distinct affects only the main selection part, not what prefetch may
-      # add below. However trailing is not yet a part of the selection as
-      # prefetch must insert before it
+      # add below.
       $attrs->{group_by} = $source->storage->_group_over_selection (
         $attrs->{from},
-        [ @{$attrs->{select}||[]}, @{$attrs->{_trailing_select}||[]} ],
+        $attrs->{select},
         $attrs->{order_by},
       );
     }
@@ -3390,6 +3381,10 @@ sub _resolved_attrs {
 
   $attrs->{collapse} ||= {};
   if ($attrs->{prefetch}) {
+
+    $self->throw_exception("Unable to prefetch, resultset contains an unnamed selector $attrs->{_dark_selector}{string}")
+      if $attrs->{_dark_selector};
+
     my $prefetch = $self->_merge_joinpref_attr( {}, delete $attrs->{prefetch} );
 
     my $prefetch_ordering = [];
@@ -3431,9 +3426,6 @@ sub _resolved_attrs {
     $attrs->{_collapse_order_by} = \@$prefetch_ordering;
   }
 
-
-  push @{ $attrs->{select} }, @{$attrs->{_trailing_select}}
-    if $attrs->{_trailing_select};
 
   # if both page and offset are specified, produce a combined offset
   # even though it doesn't make much sense, this is what pre 081xx has
@@ -3566,6 +3558,7 @@ sub _merge_joinpref_attr {
 
   sub _merge_attr {
     $hm ||= do {
+      require Hash::Merge;
       my $hm = Hash::Merge->new;
 
       $hm->specify_behavior({
@@ -3655,14 +3648,14 @@ sub STORABLE_freeze {
   # A cursor in progress can't be serialized (and would make little sense anyway)
   delete $to_serialize->{cursor};
 
-  nfreeze($to_serialize);
+  Storable::nfreeze($to_serialize);
 }
 
 # need this hook for symmetry
 sub STORABLE_thaw {
   my ($self, $cloning, $serialized) = @_;
 
-  %$self = %{ thaw($serialized) };
+  %$self = %{ Storable::thaw($serialized) };
 
   $self;
 }
@@ -3774,6 +3767,10 @@ passed to object inflation. Note that the 'artist' is the name of the
 column (or relationship) accessor, and 'name' is the name of the column
 accessor in the related table.
 
+B<NOTE:> You need to explicitly quote '+columns' when defining the attribute.
+Not doing so causes Perl to incorrectly interpret +columns as a bareword with a
+unary plus operator before it.
+
 =head2 include_columns
 
 =over 4
@@ -3813,6 +3810,10 @@ Also note that the L</as> attribute has nothing to do with the SQL-side 'AS'
 identifier aliasing. You can however alias a function, so you can use it in
 e.g. an C<ORDER BY> clause. This is done via the C<-as> B<select function
 attribute> supplied as shown in the example above.
+
+B<NOTE:> You need to explicitly quote '+select'/'+as' when defining the attributes.
+Not doing so causes Perl to incorrectly interpret them as a bareword with a
+unary plus operator before it.
 
 =head2 +select
 
@@ -3978,28 +3979,122 @@ case.
 Simple prefetches will be joined automatically, so there is no need
 for a C<join> attribute in the above search.
 
-C<prefetch> can be used with the following relationship types: C<belongs_to>,
-C<has_one> (or if you're using C<add_relationship>, any relationship declared
-with an accessor type of 'single' or 'filter'). A more complex example that
-prefetches an artists cds, the tracks on those cds, and the tags associated
-with that artist is given below (assuming many-to-many from artists to tags):
+L</prefetch> can be used with the any of the relationship types and
+multiple prefetches can be specified together. Below is a more complex
+example that prefetches a CD's artist, its liner notes (if present),
+the cover image, the tracks on that cd, and the guests on those
+tracks.
 
- my $rs = $schema->resultset('Artist')->search(
+ # Assuming:
+ My::Schema::CD->belongs_to( artist      => 'My::Schema::Artist'     );
+ My::Schema::CD->might_have( liner_note  => 'My::Schema::LinerNotes' );
+ My::Schema::CD->has_one(    cover_image => 'My::Schema::Artwork'    );
+ My::Schema::CD->has_many(   tracks      => 'My::Schema::Track'      );
+
+ My::Schema::Artist->belongs_to( record_label => 'My::Schema::RecordLabel' );
+
+ My::Schema::Track->has_many( guests => 'My::Schema::Guest' );
+
+
+ my $rs = $schema->resultset('CD')->search(
    undef,
    {
      prefetch => [
-       { cds => 'tracks' },
-       { artist_tags => 'tags' }
+       { artist => 'record_label'},  # belongs_to => belongs_to
+       'liner_note',                 # might_have
+       'cover_image',                # has_one
+       { tracks => 'guests' },       # has_many => has_many
      ]
    }
  );
 
+This will produce SQL like the following:
 
-B<NOTE:> If you specify a C<prefetch> attribute, the C<join> and C<select>
-attributes will be ignored.
+ SELECT cd.*, artist.*, record_label.*, liner_note.*, cover_image.*,
+        tracks.*, guests.*
+   FROM cd me
+   JOIN artist artist
+     ON artist.artistid = me.artistid
+   JOIN record_label record_label
+     ON record_label.labelid = artist.labelid
+   LEFT JOIN track tracks
+     ON tracks.cdid = me.cdid
+   LEFT JOIN guest guests
+     ON guests.trackid = track.trackid
+   LEFT JOIN liner_notes liner_note
+     ON liner_note.cdid = me.cdid
+   JOIN cd_artwork cover_image
+     ON cover_image.cdid = me.cdid
+ ORDER BY tracks.cd
 
-B<CAVEATs>: Prefetch does a lot of deep magic. As such, it may not behave
-exactly as you might expect.
+Now the C<artist>, C<record_label>, C<liner_note>, C<cover_image>,
+C<tracks>, and C<guests> of the CD will all be available through the
+relationship accessors without the need for additional queries to the
+database.
+
+However, there is one caveat to be observed: it can be dangerous to
+prefetch more than one L<has_many|DBIx::Class::Relationship/has_many>
+relationship on a given level. e.g.:
+
+ my $rs = $schema->resultset('CD')->search(
+   undef,
+   {
+     prefetch => [
+       'tracks',                         # has_many
+       { cd_to_producer => 'producer' }, # has_many => belongs_to (i.e. m2m)
+     ]
+   }
+ );
+
+In fact, C<DBIx::Class> will emit the following warning:
+
+ Prefetching multiple has_many rels tracks and cd_to_producer at top
+ level will explode the number of row objects retrievable via ->next
+ or ->all. Use at your own risk.
+
+The collapser currently can't identify duplicate tuples for multiple
+L<has_many|DBIx::Class::Relationship/has_many> relationships and as a
+result the second L<has_many|DBIx::Class::Relationship/has_many>
+relation could contain redundant objects.
+
+=head3 Using L</prefetch> with L</join>
+
+L</prefetch> implies a L</join> with the equivalent argument, and is
+properly merged with any existing L</join> specification. So the
+following:
+
+  my $rs = $schema->resultset('CD')->search(
+   {'record_label.name' => 'Music Product Ltd.'},
+   {
+     join     => {artist => 'record_label'},
+     prefetch => 'artist',
+   }
+ );
+
+... will work, searching on the record label's name, but only
+prefetching the C<artist>.
+
+=head3 Using L</prefetch> with L</select> / L</+select> / L</as> / L</+as>
+
+L</prefetch> implies a L</+select>/L</+as> with the fields of the
+prefetched relations.  So given:
+
+  my $rs = $schema->resultset('CD')->search(
+   undef,
+   {
+     select   => ['cd.title'],
+     as       => ['cd_title'],
+     prefetch => 'artist',
+   }
+ );
+
+The L</select> becomes: C<'cd.title', 'artist.*'> and the L</as>
+becomes: C<'cd_title', 'artist.*'>.
+
+=head3 CAVEATS
+
+Prefetch does a lot of deep magic. As such, it may not behave exactly
+as you might expect.
 
 =over 4
 
@@ -4046,7 +4141,7 @@ Makes the resultset paged and specifies the page to retrieve. Effectively
 identical to creating a non-pages resultset and then calling ->page($page)
 on it.
 
-If L<rows> attribute is not specified it defaults to 10 rows per page.
+If L</rows> attribute is not specified it defaults to 10 rows per page.
 
 When you have a paged resultset, L</count> will only return the number
 of rows in the page. To get the total, use the L</pager> and call

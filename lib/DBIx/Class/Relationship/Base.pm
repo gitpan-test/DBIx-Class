@@ -256,14 +256,14 @@ command immediately before C<JOIN>.
 An arrayref containing a list of accessors in the foreign class to create in
 the main class. If, for example, you do the following:
 
-  MyDB::Schema::CD->might_have(liner_notes => 'MyDB::Schema::LinerNotes',
+  MyApp::Schema::CD->might_have(liner_notes => 'MyApp::Schema::LinerNotes',
     undef, {
       proxy => [ qw/notes/ ],
     });
 
-Then, assuming MyDB::Schema::LinerNotes has an accessor named notes, you can do:
+Then, assuming MyApp::Schema::LinerNotes has an accessor named notes, you can do:
 
-  my $cd = MyDB::Schema::CD->find(1);
+  my $cd = MyApp::Schema::CD->find(1);
   $cd->notes('Notes go here'); # set notes -- LinerNotes object is
                                # created if it doesn't exist
 
@@ -272,7 +272,7 @@ Then, assuming MyDB::Schema::LinerNotes has an accessor named notes, you can do:
 A hashref where each key is the accessor you want installed in the main class,
 and its value is the name of the original in the fireign class.
 
-  MyDB::Schema::Track->belongs_to( cd => 'DBICTest::Schema::CD', 'cd', {
+  MyApp::Schema::Track->belongs_to( cd => 'DBICTest::Schema::CD', 'cd', {
       proxy => { cd_title => 'title' },
   });
 
@@ -282,7 +282,7 @@ This will create an accessor named C<cd_title> on the C<$track> row object.
 
 NOTE: you can pass a nested struct too, for example:
 
-  MyDB::Schema::Track->belongs_to( cd => 'DBICTest::Schema::CD', 'cd', {
+  MyApp::Schema::Track->belongs_to( cd => 'DBICTest::Schema::CD', 'cd', {
     proxy => [ 'year', { cd_title => 'title' } ],
   });
 
@@ -444,9 +444,9 @@ sub related_resultset {
       # root alias as 'me', instead of $rel (as opposed to invoking
       # $rs->search_related)
 
-
       local $source->{_relationships}{me} = $source->{_relationships}{$rel};  # make the fake 'me' rel
       my $obj_table_alias = lc($source->source_name) . '__row';
+      $obj_table_alias =~ s/\W+/_/g;
 
       $source->resultset->search(
         $self->ident_condition($obj_table_alias),

@@ -5,12 +5,10 @@ use warnings;
 use strict;
 
 use base qw( DBIx::Class::SQLMaker );
-use Carp::Clan qw/^DBIx::Class|^SQL::Abstract/;
 
 BEGIN {
-  use Carp::Clan qw/^DBIx::Class/;
   use DBIx::Class::Optional::Dependencies;
-  croak('The following extra modules are required for Oracle-based Storages ' . DBIx::Class::Optional::Dependencies->req_missing_for ('id_shortener') )
+  die('The following extra modules are required for Oracle-based Storages ' . DBIx::Class::Optional::Dependencies->req_missing_for ('id_shortener') . "\n" )
     unless DBIx::Class::Optional::Dependencies->req_ok_for ('id_shortener');
 }
 
@@ -27,7 +25,7 @@ sub new {
 
 sub _assemble_binds {
   my $self = shift;
-  return map { @{ (delete $self->{"${_}_bind"}) || [] } } (qw/from where oracle_connect_by having order/);
+  return map { @{ (delete $self->{"${_}_bind"}) || [] } } (qw/select from where oracle_connect_by group having order limit/);
 }
 
 
@@ -109,6 +107,19 @@ sub _where_field_PRIOR {
   return ($sql, @bind);
 }
 
+# use this codepath to hook all identifiers and mangle them if necessary
+# this is invoked regardless of quoting being on or off
+sub _quote {
+  my ($self, $label) = @_;
+
+  return '' unless defined $label;
+  return ${$label} if ref($label) eq 'SCALAR';
+
+  $label =~ s/ ( [^\.]{31,} ) /$self->_shorten_identifier($1)/gxe;
+
+  $self->next::method($label);
+}
+
 # this takes an identifier and shortens it if necessary
 # optionally keywords can be passed as an arrayref to generate useful
 # identifiers
@@ -125,7 +136,7 @@ sub _shorten_identifier {
   return $to_shorten
     if length($to_shorten) <= $max_len;
 
-  croak 'keywords needs to be an arrayref'
+  $self->throw_exception("'keywords' needs to be an arrayref")
     if defined $keywords && ref $keywords ne 'ARRAY';
 
   # if no keywords are passed use the identifier as one
@@ -215,7 +226,7 @@ sub _insert_returning {
   });
 
   my $rc_ref = $options->{returning_container}
-    or croak ('No returning container supplied for IR values');
+    or $self->throw_exception('No returning container supplied for IR values');
 
   @$rc_ref = (undef) x @f_names;
 

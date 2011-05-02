@@ -38,12 +38,13 @@ Currently the enhancements to L<SQL::Abstract> are:
 use base qw/
   DBIx::Class::SQLMaker::LimitDialects
   SQL::Abstract
-  Class::Accessor::Grouped
+  DBIx::Class
 /;
 use mro 'c3';
 
 use Sub::Name 'subname';
-use Carp::Clan qw/^DBIx::Class|^SQL::Abstract|^Try::Tiny/;
+use DBIx::Class::Carp;
+use DBIx::Class::Exception;
 use namespace::clean;
 
 __PACKAGE__->mk_group_accessors (simple => qw/quote_char name_sep limit_dialect/);
@@ -56,34 +57,49 @@ sub _quote_chars {
   ;
 }
 
-BEGIN {
-  # reinstall the carp()/croak() functions imported into SQL::Abstract
-  # as Carp and Carp::Clan do not like each other much
-  no warnings qw/redefine/;
-  no strict qw/refs/;
-  for my $f (qw/carp croak/) {
+# FIXME when we bring in the storage weaklink, check its schema
+# weaklink and channel through $schema->throw_exception
+sub throw_exception { DBIx::Class::Exception->throw($_[1]) }
 
-    my $orig = \&{"SQL::Abstract::$f"};
-    my $clan_import = \&{$f};
-    *{"SQL::Abstract::$f"} = subname "SQL::Abstract::$f" =>
-      sub {
-        if (Carp::longmess() =~ /DBIx::Class::SQLMaker::[\w]+ .+? called \s at/x) {
-          goto $clan_import;
-        }
-        else {
-          goto $orig;
-        }
-      };
-  }
+BEGIN {
+  # reinstall the belch()/puke() functions of SQL::Abstract with custom versions
+  # that use DBIx::Class::Carp/DBIx::Class::Exception instead of plain Carp
+  no warnings qw/redefine/;
+
+  *SQL::Abstract::belch = subname 'SQL::Abstract::belch' => sub (@) {
+    my($func) = (caller(1))[3];
+    carp "[$func] Warning: ", @_;
+  };
+
+  *SQL::Abstract::puke = subname 'SQL::Abstract::puke' => sub (@) {
+    my($func) = (caller(1))[3];
+    __PACKAGE__->throw_exception("[$func] Fatal: " . join ('',  @_));
+  };
+
+  # Current SQLA pollutes its namespace - clean for the time being
+  namespace::clean->clean_subroutines(qw/SQL::Abstract carp croak confess/);
 }
 
 # the "oh noes offset/top without limit" constant
-# limited to 32 bits for sanity (and consistency,
-# since it is ultimately handed to sprintf %u)
+# limited to 31 bits for sanity (and consistency,
+# since it may be handed to the like of sprintf %u)
+#
+# Also *some* builds of SQLite fail the test
+#   some_column BETWEEN ? AND ?: 1, 4294967295
+# with the proper integer bind attrs
+#
 # Implemented as a method, since ::Storage::DBI also
 # refers to it (i.e. for the case of software_limit or
 # as the value to abuse with MSSQL ordered subqueries)
-sub __max_int { 0xFFFFFFFF };
+sub __max_int () { 0x7FFFFFFF };
+
+# poor man's de-qualifier
+sub _quote {
+  $_[0]->next::method( ( $_[0]{_dequalify_idents} and ! ref $_[1] )
+    ? $_[1] =~ / ([^\.]+) $ /x
+    : $_[1]
+  );
+}
 
 sub new {
   my $self = shift->next::method(@_);
@@ -104,7 +120,7 @@ sub _where_op_IDENT {
   my $self = shift;
   my ($op, $rhs) = splice @_, -2;
   if (ref $rhs) {
-    croak "-$op takes a single scalar argument (a quotable identifier)";
+    $self->throw_exception("-$op takes a single scalar argument (a quotable identifier)");
   }
 
   # in case we are called as a top level special op (no '=')
@@ -126,7 +142,7 @@ sub _where_op_VALUE {
   my $lhs = shift;
 
   my @bind = [
-    ($lhs || $self->{_nested_func_lhs} || croak "Unable to find bindtype for -value $rhs"),
+    ($lhs || $self->{_nested_func_lhs} || $self->throw_exception("Unable to find bindtype for -value $rhs") ),
     $rhs
   ];
 
@@ -142,19 +158,10 @@ sub _where_op_VALUE {
   ;
 }
 
-my $callsites_warned;
 sub _where_op_NEST {
-  # determine callsite obeying Carp::Clan rules (fucking ugly but don't have better ideas)
-  my $callsite = do {
-    my $w;
-    local $SIG{__WARN__} = sub { $w = shift };
-    carp;
-    $w
-  };
-
-  carp ("-nest in search conditions is deprecated, you most probably wanted:\n"
+  carp_unique ("-nest in search conditions is deprecated, you most probably wanted:\n"
       .q|{..., -and => [ \%cond0, \@cond1, \'cond2', \[ 'cond3', [ col => bind ] ], etc. ], ... }|
-  ) unless $callsites_warned->{$callsite}++;
+  );
 
   shift->next::method(@_);
 }
@@ -167,13 +174,13 @@ sub select {
   $fields = $self->_recurse_fields($fields);
 
   if (defined $offset) {
-    croak ('A supplied offset must be a non-negative integer')
+    $self->throw_exception('A supplied offset must be a non-negative integer')
       if ( $offset =~ /\D/ or $offset < 0 );
   }
   $offset ||= 0;
 
   if (defined $limit) {
-    croak ('A supplied limit must be a positive integer')
+    $self->throw_exception('A supplied limit must be a positive integer')
       if ( $limit =~ /\D/ or $limit <= 0 );
   }
   elsif ($offset) {
@@ -192,9 +199,9 @@ sub select {
         ||
       do {
         my $dialect = $self->limit_dialect
-          or croak "Unable to generate SQL-limit - no limit dialect specified on $self, and no emulate_limit method found";
+          or $self->throw_exception( "Unable to generate SQL-limit - no limit dialect specified on $self, and no emulate_limit method found" );
         $self->can ("_$dialect")
-          or croak (__PACKAGE__ . " does not implement the requested dialect '$dialect'");
+          or $self->throw_exception(__PACKAGE__ . " does not implement the requested dialect '$dialect'");
       }
     ;
 
@@ -217,7 +224,7 @@ sub select {
 
 sub _assemble_binds {
   my $self = shift;
-  return map { @{ (delete $self->{"${_}_bind"}) || [] } } (qw/select from where group having order/);
+  return map { @{ (delete $self->{"${_}_bind"}) || [] } } (qw/select from where group having order limit/);
 }
 
 my $for_syntax = {
@@ -226,7 +233,7 @@ my $for_syntax = {
 };
 sub _lock_select {
   my ($self, $type) = @_;
-  my $sql = $for_syntax->{$type} || croak "Unknown SELECT .. FOR type '$type' requested";
+  my $sql = $for_syntax->{$type} || $self->throw_exception( "Unknown SELECT .. FOR type '$type' requested" );
   return " $sql";
 }
 
@@ -274,11 +281,11 @@ sub _recurse_fields {
 
     # there should be only one pair
     if (@toomany) {
-      croak "Malformed select argument - too many keys in hash: " . join (',', keys %$fields );
+      $self->throw_exception( "Malformed select argument - too many keys in hash: " . join (',', keys %$fields ) );
     }
 
     if (lc ($func) eq 'distinct' && ref $args eq 'ARRAY' && @$args > 1) {
-      croak (
+      $self->throw_exception (
         'The select => { distinct => ... } syntax is not supported for multiple columns.'
        .' Instead please use { group_by => [ qw/' . (join ' ', @$args) . '/ ] }'
        .' or { select => [ qw/' . (join ' ', @$args) . '/ ], distinct => 1 }'
@@ -301,7 +308,7 @@ sub _recurse_fields {
     return $$fields->[0];
   }
   else {
-    croak($ref . qq{ unexpected in _recurse_fields()})
+    $self->throw_exception( $ref . qq{ unexpected in _recurse_fields()} );
   }
 }
 
@@ -365,25 +372,38 @@ sub _table {
     elsif ($ref eq 'HASH') {
       return $_[0]->_recurse_from($_[1]);
     }
+    elsif ($ref eq 'REF' && ref ${$_[1]} eq 'ARRAY') {
+      my ($sql, @bind) = @{ ${$_[1]} };
+      push @{$_[0]->{from_bind}}, @bind;
+      return $sql
+    }
   }
-
   return $_[0]->next::method ($_[1]);
 }
 
 sub _generate_join_clause {
     my ($self, $join_type) = @_;
 
+    $join_type = $self->{_default_jointype}
+      if ! defined $join_type;
+
     return sprintf ('%s JOIN ',
-      $join_type ?  ' ' . $self->_sqlcase($join_type) : ''
+      $join_type ?  $self->_sqlcase($join_type) : ''
     );
 }
 
 sub _recurse_from {
-  my ($self, $from, @join) = @_;
-  my @sqlf;
-  push @sqlf, $self->_from_chunk_to_sql($from);
+  my $self = shift;
 
-  for (@join) {
+  return join (' ', $self->_gen_from_blocks(@_) );
+}
+
+sub _gen_from_blocks {
+  my ($self, $from, @joins) = @_;
+
+  my @fchunks = $self->_from_chunk_to_sql($from);
+
+  for (@joins) {
     my ($to, $on) = @$_;
 
     # check whether a join type exists
@@ -394,22 +414,23 @@ sub _recurse_from {
       $join_type =~ s/^\s+ | \s+$//xg;
     }
 
-    $join_type = $self->{_default_jointype} if not defined $join_type;
-
-    push @sqlf, $self->_generate_join_clause( $join_type );
+    my @j = $self->_generate_join_clause( $join_type );
 
     if (ref $to eq 'ARRAY') {
-      push(@sqlf, '(', $self->_recurse_from(@$to), ')');
-    } else {
-      push(@sqlf, $self->_from_chunk_to_sql($to));
+      push(@j, '(', $self->_recurse_from(@$to), ')');
+    }
+    else {
+      push(@j, $self->_from_chunk_to_sql($to));
     }
 
     my ($sql, @bind) = $self->_join_condition($on);
-    push(@sqlf, ' ON ', $sql);
+    push(@j, ' ON ', $sql);
     push @{$self->{from_bind}}, @bind;
+
+    push @fchunks, join '', @j;
   }
 
-  return join('', @sqlf);
+  return @fchunks;
 }
 
 sub _from_chunk_to_sql {
@@ -429,7 +450,7 @@ sub _from_chunk_to_sql {
         ( grep { $_ !~ /^\-/ } keys %$fromspec )
       );
 
-      croak "Only one table/as pair expected in from-spec but an exra '$toomuch' key present"
+      $self->throw_exception( "Only one table/as pair expected in from-spec but an exra '$toomuch' key present" )
         if defined $toomuch;
 
       ($self->_from_chunk_to_sql($table), $self->_quote($as) );

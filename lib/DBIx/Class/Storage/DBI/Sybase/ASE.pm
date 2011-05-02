@@ -8,7 +8,7 @@ use base qw/
     DBIx::Class::Storage::DBI::AutoCast
 /;
 use mro 'c3';
-use Carp::Clan qw/^DBIx::Class/;
+use DBIx::Class::Carp;
 use Scalar::Util 'blessed';
 use List::Util 'first';
 use Sub::Name();
@@ -17,6 +17,8 @@ use Try::Tiny;
 use namespace::clean;
 
 __PACKAGE__->sql_limit_dialect ('RowCountOrGenericSubQ');
+__PACKAGE__->sql_quote_char ([qw/[ ]/]);
+__PACKAGE__->datetime_parser_type('DateTime::Format::Sybase');
 
 __PACKAGE__->mk_group_accessors('simple' =>
     qw/_identity _blob_log_on_update _writer_storage _is_extra_storage
@@ -171,35 +173,30 @@ sub disconnect {
   $self->next::method;
 }
 
+# This is only invoked for FreeTDS drivers by ::Storage::DBI::Sybase::FreeTDS
+sub _set_autocommit_stmt {
+  my ($self, $on) = @_;
+
+  return 'SET CHAINED ' . ($on ? 'OFF' : 'ON');
+}
+
 # Set up session settings for Sybase databases for the connection.
 #
 # Make sure we have CHAINED mode turned on if AutoCommit is off in non-FreeTDS
 # DBD::Sybase (since we don't know how DBD::Sybase was compiled.) If however
 # we're using FreeTDS, CHAINED mode turns on an implicit transaction which we
 # only want when AutoCommit is off.
-#
-# Also SET TEXTSIZE for FreeTDS because LongReadLen doesn't work.
 sub _run_connection_actions {
   my $self = shift;
 
   if ($self->_is_bulk_storage) {
-# this should be cleared on every reconnect
+    # this should be cleared on every reconnect
     $self->_began_bulk_work(0);
     return;
   }
 
-  if (not $self->using_freetds) {
-    $self->_dbh->{syb_chained_txn} = 1;
-  } else {
-    # based on LongReadLen in connect_info
-    $self->set_textsize;
-
-    if ($self->_dbh_autocommit) {
-      $self->_dbh->do('SET CHAINED OFF');
-    } else {
-      $self->_dbh->do('SET CHAINED ON');
-    }
-  }
+  $self->_dbh->{syb_chained_txn} = 1
+    unless $self->using_freetds;
 
   $self->next::method(@_);
 }
@@ -241,14 +238,14 @@ sub _is_lob_column {
 
 sub _prep_for_execute {
   my $self = shift;
-  my ($op, $extra_bind, $ident, $args) = @_;
+  my ($op, $ident, $args) = @_;
 
   my ($sql, $bind) = $self->next::method (@_);
 
   my $table = blessed $ident ? $ident->from : $ident;
 
   my $bind_info = $self->_resolve_column_info(
-    $ident, [map $_->[0], @{$bind}]
+    $ident, [map { $_->[0]{dbic_colname} || () } @{$bind}]
   );
   my $bound_identity_col =
     first { $bind_info->{$_}{is_auto_increment} }
@@ -331,7 +328,7 @@ sub _execute {
   my $self = shift;
   my ($op) = @_;
 
-  my ($rv, $sth, @bind) = $self->dbh_do($self->can('_dbh_execute'), @_);
+  my ($rv, $sth, @bind) = $self->next::method(@_);
 
   if ($op eq 'insert') {
     $self->_identity($sth->fetchrow_array);
@@ -632,10 +629,7 @@ EOF
       }
     );
 
-    my @bind = do {
-      my $idx = 0;
-      map [ $_, $idx++ ], @source_columns;
-    };
+    my @bind = map { [ $source_columns[$_] => $_ ] } (0 .. $#source_columns);
 
     $self->_execute_array(
       $source, $sth, \@bind, \@source_columns, \@new_data, sub {
@@ -736,26 +730,25 @@ sub _update_blobs {
       $self->throw_exception("Cannot update TEXT/IMAGE column(s): $_")
     };
 
-# check if we're updating a single row by PK
-  my $pk_cols_in_where = 0;
-  for my $col (@primary_cols) {
-    $pk_cols_in_where++ if defined $where->{$col};
-  }
-  my @rows;
-
-  if ($pk_cols_in_where == @primary_cols) {
+  my @pks_to_update;
+  if (
+    ref $where eq 'HASH'
+      and
+    @primary_cols == grep { defined $where->{$_} } @primary_cols
+  ) {
     my %row_to_update;
     @row_to_update{@primary_cols} = @{$where}{@primary_cols};
-    @rows = \%row_to_update;
-  } else {
+    @pks_to_update = \%row_to_update;
+  }
+  else {
     my $cursor = $self->select ($source, \@primary_cols, $where, {});
-    @rows = map {
+    @pks_to_update = map {
       my %row; @row{@primary_cols} = @$_; \%row
     } $cursor->all;
   }
 
-  for my $row (@rows) {
-    $self->_insert_blobs($source, $blob_cols, $row);
+  for my $ident (@pks_to_update) {
+    $self->_insert_blobs($source, $blob_cols, $ident);
   }
 }
 
@@ -860,42 +853,31 @@ In L<connect_info|DBIx::Class::Storage::DBI/connect_info> to set:
 On connection for use with L<DBIx::Class::InflateColumn::DateTime>, using
 L<DateTime::Format::Sybase>, which you will need to install.
 
-This works for both C<DATETIME> and C<SMALLDATETIME> columns, although
+This works for both C<DATETIME> and C<SMALLDATETIME> columns, note that
 C<SMALLDATETIME> columns only have minute precision.
 
 =cut
 
-{
-  my $old_dbd_warned = 0;
+sub connect_call_datetime_setup {
+  my $self = shift;
+  my $dbh = $self->_get_dbh;
 
-  sub connect_call_datetime_setup {
-    my $self = shift;
-    my $dbh = $self->_get_dbh;
-
-    if ($dbh->can('syb_date_fmt')) {
-      # amazingly, this works with FreeTDS
-      $dbh->syb_date_fmt('ISO_strict');
-    } elsif (not $old_dbd_warned) {
-      carp "Your DBD::Sybase is too old to support ".
-      "DBIx::Class::InflateColumn::DateTime, please upgrade!";
-      $old_dbd_warned = 1;
-    }
+  if ($dbh->can('syb_date_fmt')) {
+    # amazingly, this works with FreeTDS
+    $dbh->syb_date_fmt('ISO_strict');
+  }
+  else {
+    carp_once
+      'Your DBD::Sybase is too old to support '
+     .'DBIx::Class::InflateColumn::DateTime, please upgrade!';
 
     $dbh->do('SET DATEFORMAT mdy');
-
     1;
   }
 }
 
-sub datetime_parser_type { "DateTime::Format::Sybase" }
 
-# ->begin_work and such have no effect with FreeTDS but we run them anyway to
-# let the DBD keep any state it needs to.
-#
-# If they ever do start working, the extra statements will do no harm (because
-# Sybase supports nested transactions.)
-
-sub _dbh_begin_work {
+sub _exec_txn_begin {
   my $self = shift;
 
 # bulkLogin=1 connections are always in a transaction, and can only call BEGIN
@@ -904,44 +886,24 @@ sub _dbh_begin_work {
 
   $self->next::method(@_);
 
-  if ($self->using_freetds) {
-    $self->_get_dbh->do('BEGIN TRAN');
-  }
-
   $self->_began_bulk_work(1) if $self->_is_bulk_storage;
-}
-
-sub _dbh_commit {
-  my $self = shift;
-  if ($self->using_freetds) {
-    $self->_dbh->do('COMMIT');
-  }
-  return $self->next::method(@_);
-}
-
-sub _dbh_rollback {
-  my $self = shift;
-  if ($self->using_freetds) {
-    $self->_dbh->do('ROLLBACK');
-  }
-  return $self->next::method(@_);
 }
 
 # savepoint support using ASE syntax
 
-sub _svp_begin {
+sub _exec_svp_begin {
   my ($self, $name) = @_;
 
-  $self->_get_dbh->do("SAVE TRANSACTION $name");
+  $self->_dbh->do("SAVE TRANSACTION $name");
 }
 
 # A new SAVE TRANSACTION with the same name releases the previous one.
-sub _svp_release { 1 }
+sub _exec_svp_release { 1 }
 
-sub _svp_rollback {
+sub _exec_svp_rollback {
   my ($self, $name) = @_;
 
-  $self->_get_dbh->do("ROLLBACK TRANSACTION $name");
+  $self->_dbh->do("ROLLBACK TRANSACTION $name");
 }
 
 1;
@@ -949,7 +911,7 @@ sub _svp_rollback {
 =head1 Schema::Loader Support
 
 As of version C<0.05000>, L<DBIx::Class::Schema::Loader> should work well with
-most (if not all) versions of Sybase ASE.
+most versions of Sybase ASE.
 
 =head1 FreeTDS
 
@@ -968,18 +930,22 @@ To see if you're using FreeTDS check C<< $schema->storage->using_freetds >>, or 
 
   perl -MDBI -le 'my $dbh = DBI->connect($dsn, $user, $pass); print $dbh->{syb_oc_version}'
 
-Some versions of the libraries involved will not support placeholders, in which
-case the storage will be reblessed to
+It is recommended to set C<tds version> for your ASE server to C<5.0> in
+C</etc/freetds/freetds.conf>.
+
+Some versions or configurations of the libraries involved will not support
+placeholders, in which case the storage will be reblessed to
 L<DBIx::Class::Storage::DBI::Sybase::ASE::NoBindVars>.
 
 In some configurations, placeholders will work but will throw implicit type
 conversion errors for anything that's not expecting a string. In such a case,
 the C<auto_cast> option from L<DBIx::Class::Storage::DBI::AutoCast> is
 automatically set, which you may enable on connection with
-L<DBIx::Class::Storage::DBI::AutoCast/connect_call_set_auto_cast>. The type info
-for the C<CAST>s is taken from the L<DBIx::Class::ResultSource/data_type>
-definitions in your Result classes, and are mapped to a Sybase type (if it isn't
-already) using a mapping based on L<SQL::Translator>.
+L<connect_call_set_auto_cast|DBIx::Class::Storage::DBI::AutoCast/connect_call_set_auto_cast>.
+The type info for the C<CAST>s is taken from the
+L<DBIx::Class::ResultSource/data_type> definitions in your Result classes, and
+are mapped to a Sybase type (if it isn't already) using a mapping based on
+L<SQL::Translator>.
 
 In other configurations, placeholders will work just as they do with the Sybase
 Open Client libraries.
@@ -997,14 +963,14 @@ In addition, they are done on a separate connection so that it's possible to
 have active cursors when doing an insert.
 
 When using C<DBIx::Class::Storage::DBI::Sybase::ASE::NoBindVars> transactions
-are disabled, as there are no concurrency issues with C<SELECT @@IDENTITY> as
-it's a session variable.
+are unnecessary and not used, as there are no concurrency issues with C<SELECT
+@@IDENTITY> which is a session variable.
 
 =head1 TRANSACTIONS
 
-Due to limitations of the TDS protocol, L<DBD::Sybase>, or both, you cannot
-begin a transaction while there are active cursors, nor can you use multiple
-active cursors within a transaction. An active cursor is, for example, a
+Due to limitations of the TDS protocol and L<DBD::Sybase>, you cannot begin a
+transaction while there are active cursors, nor can you use multiple active
+cursors within a transaction. An active cursor is, for example, a
 L<ResultSet|DBIx::Class::ResultSet> that has been executed using C<next> or
 C<first> but has not been exhausted or L<reset|DBIx::Class::ResultSet/reset>.
 
@@ -1098,7 +1064,7 @@ L<populate|DBIx::Class::ResultSet/populate> call, eg.:
 B<NOTE:> the L<add_columns|DBIx::Class::ResultSource/add_columns>
 calls in your C<Result> classes B<must> list columns in database order for this
 to work. Also, you may have to unset the C<LANG> environment variable before
-loading your app, if it doesn't match the character set of your database.
+loading your app, as C<BCP -Y> is not yet supported in DBD::Sybase .
 
 When inserting IMAGE columns using this method, you'll need to use
 L</connect_call_blob_setup> as well.
@@ -1115,6 +1081,7 @@ represent them in your Result classes as:
     data_type => undef,
     default_value => \'getdate()',
     is_nullable => 0,
+    inflate_datetime => 1,
   }
 
 The C<data_type> must exist and must be C<undef>. Then empty inserts will work
@@ -1154,10 +1121,6 @@ Real limits and limited counts using stored procedures deployed on startup.
 
 =item *
 
-Adaptive Server Anywhere (ASA) support
-
-=item *
-
 Blob update with a LIKE query on a blob, without invalidating the WHERE condition.
 
 =item *
@@ -1168,7 +1131,7 @@ bulk_insert using prepare_cached (see comments.)
 
 =head1 AUTHOR
 
-See L<DBIx::Class/CONTRIBUTORS>.
+See L<DBIx::Class/AUTHOR> and L<DBIx::Class/CONTRIBUTORS>.
 
 =head1 LICENSE
 

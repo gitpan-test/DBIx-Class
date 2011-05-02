@@ -7,6 +7,9 @@ use Test::Exception;
 use lib qw(t/lib);
 use DBICTest;
 use DBIC::SqlMakerTest;
+use DBIx::Class::SQLMaker::LimitDialects;
+
+my $ROWS = DBIx::Class::SQLMaker::LimitDialects->__rows_bindtype;
 
 my $schema = DBICTest->init_schema();
 my $sdebug = $schema->storage->debug;
@@ -78,7 +81,8 @@ for ($cd_rs->all) {
         )
       me
     )',
-    [ map { [ 'me.cd' => $_] } ($cd_rs->get_column ('cdid')->all) ],
+    [ map { [ { sqlt_datatype => 'integer', dbic_colname => 'me.cd' }
+      => $_ ] } ($cd_rs->get_column ('cdid')->all) ],
     'count() query generated expected SQL',
   );
 
@@ -96,7 +100,8 @@ for ($cd_rs->all) {
         JOIN cd cd ON cd.cdid = me.cd
       WHERE ( me.cd IN ( ?, ?, ?, ?, ? ) )
     )',
-    [ map { [ 'me.cd' => $_] } ( ($cd_rs->get_column ('cdid')->all) x 2 ) ],
+    [ map { [ { sqlt_datatype => 'integer', dbic_colname => 'me.cd' }
+      => $_ ] } ( ($cd_rs->get_column ('cdid')->all) x 2 ) ],
     'next() query generated expected SQL',
   );
 
@@ -150,10 +155,10 @@ for ($cd_rs->all) {
             FROM cd me
           WHERE ( me.cdid IS NOT NULL )
           GROUP BY me.cdid
-          LIMIT 2
+          LIMIT ?
         ) me
     )',
-    [],
+    [[$ROWS => 2]],
     'count() query generated expected SQL',
   );
 
@@ -170,14 +175,14 @@ for ($cd_rs->all) {
           WHERE ( me.cdid IS NOT NULL )
           GROUP BY me.cdid
           ORDER BY track_count DESC, maxtr ASC
-          LIMIT 2
+          LIMIT ?
         ) me
         LEFT JOIN track tracks ON tracks.cd = me.cdid
         LEFT JOIN liner_notes liner_notes ON liner_notes.liner_id = me.cdid
       WHERE ( me.cdid IS NOT NULL )
       ORDER BY track_count DESC, maxtr ASC, tracks.cd
     )',
-    [],
+    [[$ROWS => 2]],
     'next() query generated expected SQL',
   );
 
@@ -264,7 +269,8 @@ for ($cd_rs->all) {
         )
       me
     )',
-    [ map { [ 'me.cd' => $_] } ($cd_rs->get_column ('cdid')->all) ],
+    [ map { [ { sqlt_datatype => 'integer', dbic_colname => 'me.cd' }
+      => $_ ] } ($cd_rs->get_column ('cdid')->all) ],
     'count() query generated expected SQL',
   );
 }
@@ -323,7 +329,9 @@ for ($cd_rs->all) {
         GROUP BY me.cdid, me.artist, me.title, me.year, me.genreid, me.single_track,
                  artist.artistid, artist.name, artist.rank, artist.charfield
       )',
-      [ map { [ 'tracks.title' => 'ugabuganoexist' ] } (1 .. 2) ],
+      [ map { [ { sqlt_datatype => 'varchar', sqlt_size => 100, dbic_colname => 'tracks.title' }
+            => 'ugabuganoexist' ] } (1,2)
+      ],
     );
 }
 
@@ -343,12 +351,12 @@ for ($cd_rs->all) {
           FROM (SELECT me.cdid, me.artist, me.title, me.year, me.genreid, me.single_track, COUNT( tags.tag ) AS test_count
                 FROM cd me LEFT JOIN tags tags ON tags.cd = me.cdid
             GROUP BY me.cdid, me.artist, me.title, me.year, me.genreid, me.single_track, tags.tag
-            ORDER BY tags.tag ASC LIMIT 1)
+            ORDER BY tags.tag ASC LIMIT ?)
             me
           LEFT JOIN tags tags ON tags.cd = me.cdid
          ORDER BY tags.tag ASC, tags.cd, tags.tag
         )
-    }, []);
+    }, [[$ROWS => 1]]);
 }
 
 done_testing;

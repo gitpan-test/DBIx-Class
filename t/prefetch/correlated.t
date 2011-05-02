@@ -24,7 +24,7 @@ my $c_rs = $cdrs->search ({}, {
   '+columns' => { sibling_count => $cdrs->search(
       {
         'siblings.artist' => { -ident => 'me.artist' },
-        'siblings.cdid' => { '!=' => ['-and', { -ident => 'me.cdid' }, 'bogus condition'] },
+        'siblings.cdid' => { '!=' => ['-and', { -ident => 'me.cdid' }, 23414] },
       }, { alias => 'siblings' },
     )->count_rs->as_query,
   },
@@ -51,11 +51,15 @@ is_same_sql_bind(
   [
 
     # subselect
-    [ 'siblings.cdid' => 'bogus condition' ],
-    [ 'me.artist' => 2 ],
+    [ { sqlt_datatype => 'integer', dbic_colname => 'siblings.cdid' }
+      => 23414 ],
+
+    [ { sqlt_datatype => 'integer', dbic_colname => 'me.artist' }
+      => 2 ],
 
     # outher WHERE
-    [ 'me.artist' => 2 ],
+    [ { sqlt_datatype => 'integer', dbic_colname => 'me.artist' }
+      => 2 ],
   ],
   'Expected SQL on correlated realiased subquery'
 );
@@ -81,12 +85,6 @@ is ($queries, 1, 'Only 1 query fired to retrieve everything');
 $schema->storage->debug($orig_debug);
 $schema->storage->debugcb(undef);
 
-# try to unbalance the select
-
-# first add a lone non-as-ed select
-# it should be reordered to appear at the end without throwing prefetch/bind off
-$c_rs = $c_rs->search({}, { '+select' => \[ 'me.cdid + ?', [ __add => 1 ] ] });
-
 # now add an unbalanced select/as pair
 $c_rs = $c_rs->search ({}, {
   '+select' => $cdrs->search(
@@ -98,7 +96,6 @@ $c_rs = $c_rs->search ({}, {
   )->as_query,
   '+as' => [qw/active_from active_to/],
 });
-
 
 is_same_sql_bind(
   $c_rs->as_query,
@@ -116,8 +113,7 @@ is_same_sql_bind(
             WHERE siblings.artist = me.artist
               AND me.artist != ?
            ),
-           tracks.trackid, tracks.cd, tracks.position, tracks.title, tracks.last_updated_on, tracks.last_updated_at,
-           me.cdid + ?
+           tracks.trackid, tracks.cd, tracks.position, tracks.title, tracks.last_updated_on, tracks.last_updated_at
       FROM cd me
       LEFT JOIN track tracks
         ON tracks.cd = me.cdid
@@ -127,17 +123,19 @@ is_same_sql_bind(
   [
 
     # first subselect
-    [ 'siblings.cdid' => 'bogus condition' ],
-    [ 'me.artist' => 2 ],
+    [ { sqlt_datatype => 'integer', dbic_colname => 'siblings.cdid' }
+      => 23414 ],
+
+    [ { sqlt_datatype => 'integer', dbic_colname => 'me.artist' }
+      => 2 ],
 
     # second subselect
-    [ 'me.artist' => 2 ],
-
-    # the addition
-    [ __add => 1 ],
+    [ { sqlt_datatype => 'integer', dbic_colname => 'me.artist' }
+      => 2 ],
 
     # outher WHERE
-    [ 'me.artist' => 2 ],
+    [ { sqlt_datatype => 'integer', dbic_colname => 'me.artist' }
+      => 2 ],
   ],
   'Expected SQL on correlated realiased subquery'
 );

@@ -38,10 +38,49 @@ for my $null_order (
           ) me
         ORDER BY me.id DESC
        )',
-    [ [ source => 'Library' ] ],
+    [ [ { sqlt_datatype => 'varchar', sqlt_size => 100, dbic_colname => 'source' }
+        => 'Library' ] ],
   );
 }
 
+{
+my $subq = $schema->resultset('Owners')->search({
+   'count.id' => { -ident => 'owner.id' },
+}, { alias => 'owner' })->count_rs;
+
+my $rs_selectas_rel = $schema->resultset('BooksInLibrary')->search ({}, {
+  columns => [
+     { owner_name => 'owner.name' },
+     { owner_books => $subq->as_query },
+  ],
+  join => 'owner',
+  rows => 2,
+  offset => 3,
+});
+
+is_same_sql_bind(
+  $rs_selectas_rel->as_query,
+  '(
+    SELECT TOP 2 owner_name, owner_books
+      FROM (
+            SELECT TOP 5 owner.name AS owner_name,
+            ( SELECT COUNT( * )
+                FROM owners owner
+               WHERE ( count.id = owner.id )
+            ) AS owner_books
+              FROM books me
+              JOIN owners owner ON owner.id = me.owner
+             WHERE ( source = ? )
+          ORDER BY me.id
+      ) me
+  ORDER BY me.id DESC
+ )',
+  [ [ { sqlt_datatype => 'varchar', sqlt_size => 100, dbic_colname => 'source' }
+    => 'Library' ] ],
+  'pagination with subqueries works'
+);
+
+}
 
 for my $ord_set (
   {
@@ -141,7 +180,8 @@ for my $ord_set (
         ) me
       ORDER BY $ord_set->{order_req}
     )",
-    [ [ source => 'Library' ] ],
+    [ [ { sqlt_datatype => 'varchar', sqlt_size => 100, dbic_colname => 'source' }
+        => 'Library' ] ],
   );
 }
 
@@ -171,7 +211,10 @@ is_same_sql_bind (
     WHERE ( source = ? )
     ORDER BY title
   )',
-  [ [ source => 'Library' ], [ source => 'Library' ] ],
+  [ map { [
+    { sqlt_datatype => 'varchar', sqlt_size => 100, dbic_colname => 'source' }
+      => 'Library' ]
+  } (1,2) ],
 );
 
 # test deprecated column mixing over join boundaries
@@ -179,7 +222,7 @@ my $rs_selectas_top = $schema->resultset ('BooksInLibrary')->search ({}, {
   '+select' => ['owner.name'],
   '+as' => ['owner_name'],
   join => 'owner',
-  rows => 1 
+  rows => 1
 });
 
 is_same_sql_bind( $rs_selectas_top->search({})->as_query,
@@ -190,8 +233,9 @@ is_same_sql_bind( $rs_selectas_top->search({})->as_query,
                     JOIN owners owner ON owner.id = me.owner
                     WHERE ( source = ? )
                     ORDER BY me.id
-                   )',
-                   [ [ 'source', 'Library' ] ],
+                  )',
+                  [ [ { sqlt_datatype => 'varchar', sqlt_size => 100, dbic_colname => 'source' }
+                    => 'Library' ] ],
                 );
 
 {

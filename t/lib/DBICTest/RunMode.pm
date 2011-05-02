@@ -1,8 +1,19 @@
-package # hide from PAUSE 
+package # hide from PAUSE
     DBICTest::RunMode;
 
 use strict;
 use warnings;
+
+BEGIN {
+  if ($INC{'DBIx/Class.pm'}) {
+    my ($fr, @frame) = 1;
+    while (@frame = caller($fr++)) {
+      last if $frame[1] !~ m|^t/lib/DBICTest|;
+    }
+
+    die __PACKAGE__ . " must be loaded before DBIx::Class (or modules using DBIx::Class) at $frame[1] line $frame[2]\n";
+  }
+}
 
 use Path::Class qw/file dir/;
 
@@ -97,24 +108,6 @@ EOE
 
     exit 1;
   }
-}
-
-sub peepeeness {
-  return ! $ENV{DBICTEST_ALL_LEAKS} if defined $ENV{DBICTEST_ALL_LEAKS};
-
-  # don't smoke perls with known issues:
-  if (__PACKAGE__->is_smoker) {
-    if ($] == '5.013006') {
-      # leaky 5.13.6 (fixed in blead/cefd5c7c)
-      return 1;
-    }
-    elsif ($] == '5.013005') {
-      # not sure why this one leaks, but disable anyway - ANDK seems to make it weep
-      return 1;
-    }
-  }
-
-  return 0;
 }
 
 # Mimic $Module::Install::AUTHOR

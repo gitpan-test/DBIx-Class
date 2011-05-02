@@ -4,14 +4,11 @@ use strict;
 use warnings;
 
 use DBIx::Class::Exception;
-use Carp::Clan qw/^DBIx::Class|^Try::Tiny/;
+use DBIx::Class::Carp;
 use Try::Tiny;
 use Scalar::Util 'weaken';
-use File::Spec;
 use Sub::Name 'subname';
-use Module::Find();
-use Storable();
-use B qw/svref_2object/;
+use B 'svref_2object';
 use namespace::clean;
 
 use base qw/DBIx::Class/;
@@ -79,20 +76,32 @@ particular which module inherits off which.
   __PACKAGE__->load_namespaces();
 
   __PACKAGE__->load_namespaces(
-   result_namespace => 'Res',
-   resultset_namespace => 'RSet',
-   default_resultset_class => '+MyDB::Othernamespace::RSet',
- );
+     result_namespace => 'Res',
+     resultset_namespace => 'RSet',
+     default_resultset_class => '+MyDB::Othernamespace::RSet',
+  );
 
-With no arguments, this method uses L<Module::Find> to load all your
-Result classes from a sub-namespace F<Result> under your Schema class'
-namespace, i.e. with a Schema of I<MyDB::Schema> all files in
-I<MyDB::Schema::Result> are assumed to be Result classes.
+With no arguments, this method uses L<Module::Find> to load all of the
+Result and ResultSet classes under the namespace of the schema from
+which it is called.  For example, C<My::Schema> will by default find
+and load Result classes named C<My::Schema::Result::*> and ResultSet
+classes named C<My::Schema::ResultSet::*>.
 
-It also finds all ResultSet classes in the namespace F<ResultSet> and
-loads them into the appropriate Result classes using for you. The
-matching is done by assuming the package name of the ResultSet class
-is the same as that of the Result class.
+ResultSet classes are associated with Result class of the same name.
+For example, C<My::Schema::Result::CD> will get the ResultSet class
+C<My::Schema::ResultSet::CD> if it is present.
+
+Both Result and ResultSet namespaces are configurable via the
+C<result_namespace> and C<resultset_namespace> options.
+
+Another option, C<default_resultset_class> specifies a custom default
+ResultSet class for Result classes with no corresponding ResultSet.
+
+All of the namespace and classname options are by default relative to
+the schema classname.  To specify a fully-qualified name, prefix it
+with a literal C<+>.  For example, C<+Other::NameSpace::Result>.
+
+=head3 Warnings
 
 You will be warned if ResultSet classes are discovered for which there
 are no matching Result classes like this:
@@ -105,19 +114,7 @@ L</resultset_class> to some other class, you will be warned like this:
   We found ResultSet class '$rs_class' for '$result', but it seems
   that you had already set '$result' to use '$rs_set' instead
 
-Both of the sub-namespaces are configurable if you don't like the defaults,
-via the options C<result_namespace> and C<resultset_namespace>.
-
-If (and only if) you specify the option C<default_resultset_class>, any found
-Result classes for which we do not find a corresponding
-ResultSet class will have their C<resultset_class> set to
-C<default_resultset_class>.
-
-All of the namespace and classname options to this method are relative to
-the schema classname by default.  To specify a fully-qualified name, prefix
-it with a literal C<+>.
-
-Examples:
+=head3 Examples
 
   # load My::Schema::Result::CD, My::Schema::Result::Artist,
   #    My::Schema::ResultSet::CD, etc...
@@ -139,10 +136,10 @@ Examples:
     resultset_namespace => '+Another::Place::RSets',
   );
 
-If you'd like to use multiple namespaces of each type, simply use an arrayref
-of namespaces for that option.  In the case that the same result
-(or resultset) class exists in multiple namespaces, the latter entries in
-your list of namespaces will override earlier ones.
+To search multiple namespaces for either Result or ResultSet classes,
+use an arrayref of namespaces for that option.  In the case that the
+same result (or resultset) class exists in multiple namespaces, later
+entries in the list of namespaces will override earlier ones.
 
   My::Schema->load_namespaces(
     # My::Schema::Results_C::Foo takes precedence over My::Schema::Results_B::Foo :
@@ -169,6 +166,7 @@ sub _findallmod {
   my $proto = shift;
   my $ns = shift || ref $proto || $proto;
 
+  require Module::Find;
   my @mods = Module::Find::findallmod($ns);
 
   # try to untaint module names. mods where this fails
@@ -240,9 +238,9 @@ sub load_namespaces {
 
   my @to_register;
   {
-    no warnings 'redefine';
-    local *Class::C3::reinitialize = sub { };
-    use warnings 'redefine';
+    no warnings qw/redefine/;
+    local *Class::C3::reinitialize = sub { } if DBIx::Class::_ENV_::OLD_MRO;
+    use warnings qw/redefine/;
 
     # ensure classes are loaded and attached in inheritance order
     for my $res (values %results) {
@@ -295,7 +293,8 @@ sub load_namespaces {
       . 'corresponding Result class';
   }
 
-  Class::C3->reinitialize;
+  Class::C3->reinitialize if DBIx::Class::_ENV_::OLD_MRO;
+
   $class->register_class(@$_) for (@to_register);
 
   return;
@@ -378,7 +377,9 @@ sub load_classes {
   my @to_register;
   {
     no warnings qw/redefine/;
-    local *Class::C3::reinitialize = sub { };
+    local *Class::C3::reinitialize = sub { } if DBIx::Class::_ENV_::OLD_MRO;
+    use warnings qw/redefine/;
+
     foreach my $prefix (keys %comps_for) {
       foreach my $comp (@{$comps_for{$prefix}||[]}) {
         my $comp_class = "${prefix}::${comp}";
@@ -395,7 +396,7 @@ sub load_classes {
       }
     }
   }
-  Class::C3->reinitialize;
+  Class::C3->reinitialize if DBIx::Class::_ENV_::OLD_MRO;
 
   foreach my $to (@to_register) {
     $class->register_class(@$to);
@@ -907,8 +908,10 @@ sub compose_namespace {
   my $schema = $self->clone;
   {
     no warnings qw/redefine/;
+    local *Class::C3::reinitialize = sub { } if DBIx::Class::_ENV_::OLD_MRO;
+    use warnings qw/redefine/;
+
     no strict qw/refs/;
-#    local *Class::C3::reinitialize = sub { };
     foreach my $moniker ($schema->sources) {
       my $source = $schema->source($moniker);
       my $target_class = "${target}::${moniker}";
@@ -927,7 +930,7 @@ sub compose_namespace {
      $schema->register_source($moniker, $source);
     }
   }
-#  Class::C3->reinitialize();
+  Class::C3->reinitialize() if DBIx::Class::_ENV_::OLD_MRO;
   {
     no strict 'refs';
     no warnings 'redefine';
@@ -1036,8 +1039,8 @@ sub clone {
 
 =back
 
-Throws an exception. Defaults to using L<Carp::Clan> to report errors from
-user's perspective.  See L</exception_action> for details on overriding
+Throws an exception. Obeys the exemption rules of L<DBIx::Class::Carp> to report
+errors from outer-user's perspective. See L</exception_action> for details on overriding
 this method's behavior.  If L</stacktrace> is turned on, C<throw_exception>'s
 default behavior will provide a detailed stack trace.
 
@@ -1184,6 +1187,8 @@ format.
 sub ddl_filename {
   my ($self, $type, $version, $dir, $preversion) = @_;
 
+  require File::Spec;
+
   my $filename = ref($self);
   $filename =~ s/::/-/g;
   $filename = File::Spec->catfile($dir, "$filename-$version-$type.sql");
@@ -1203,6 +1208,7 @@ reference to any schema, so are rather useless.
 sub thaw {
   my ($self, $obj) = @_;
   local $DBIx::Class::ResultSourceHandle::thaw_schema = $self;
+  require Storable;
   return Storable::thaw($obj);
 }
 
@@ -1214,6 +1220,7 @@ provided here for symmetry.
 =cut
 
 sub freeze {
+  require Storable;
   return Storable::nfreeze($_[1]);
 }
 
@@ -1236,6 +1243,7 @@ objects so their references to the schema object
 sub dclone {
   my ($self, $obj) = @_;
   local $DBIx::Class::ResultSourceHandle::thaw_schema = $self;
+  require Storable;
   return Storable::dclone($obj);
 }
 
@@ -1382,7 +1390,10 @@ sub _register_source {
 {
   my $global_phase_destroy;
 
-  END { $global_phase_destroy++ }
+  # SpeedyCGI runs END blocks every cycle but keeps object instances
+  # hence we have to disable the globaldestroy hatch, and rely on the
+  # eval trap below (which appears to work, but is risky done so late)
+  END { $global_phase_destroy = 1 unless $CGI::SpeedyCGI::i_am_speedy }
 
   sub DESTROY {
     return if $global_phase_destroy;
@@ -1393,8 +1404,19 @@ sub _register_source {
     for my $moniker (keys %$srcs) {
       # find first source that is not about to be GCed (someone other than $self
       # holds a reference to it) and reattach to it, weakening our own link
+      #
+      # during global destruction (if we have not yet bailed out) this will throw
+      # which will serve as a signal to not try doing anything else
       if (ref $srcs->{$moniker} and svref_2object($srcs->{$moniker})->REFCNT > 1) {
-        $srcs->{$moniker}->schema($self);
+        local $@;
+        eval {
+          $srcs->{$moniker}->schema($self);
+          1;
+        } or do {
+          $global_phase_destroy = 1;
+          last;
+        };
+
         weaken $srcs->{$moniker};
         last;
       }

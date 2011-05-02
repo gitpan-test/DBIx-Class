@@ -1,6 +1,6 @@
 -- 
 -- Created by SQL::Translator::Producer::SQLite
--- Created on Thu Nov 18 08:18:15 2010
+-- Created on Tue Feb 22 18:42:16 2011
 -- 
 
 --
@@ -26,7 +26,8 @@ CREATE TABLE bindtype_test (
   id INTEGER PRIMARY KEY NOT NULL,
   bytea blob,
   blob blob,
-  clob clob
+  clob clob,
+  a_memo memo
 );
 
 --
@@ -56,14 +57,6 @@ CREATE TABLE event (
   varchar_datetime varchar(20),
   skip_inflation datetime,
   ts_without_tz datetime
-);
-
---
--- Table: file_columns
---
-CREATE TABLE file_columns (
-  id INTEGER PRIMARY KEY NOT NULL,
-  file varchar(255) NOT NULL
 );
 
 --

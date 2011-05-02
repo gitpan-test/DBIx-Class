@@ -3,14 +3,56 @@ package DBIx::Class;
 use strict;
 use warnings;
 
-use MRO::Compat;
+BEGIN {
+  package DBIx::Class::_ENV_;
+
+  if ($] < 5.009_005) {
+    require MRO::Compat;
+    *OLD_MRO = sub () { 1 };
+  }
+  else {
+    require mro;
+    *OLD_MRO = sub () { 0 };
+  }
+
+  # ::Runmode would only be loaded by DBICTest, which in turn implies t/
+  *DBICTEST = eval { DBICTest::RunMode->is_author }
+    ? sub () { 1 }
+    : sub () { 0 }
+  ;
+
+  # During 5.13 dev cycle HELEMs started to leak on copy
+  *PEEPEENESS = (defined $ENV{DBICTEST_ALL_LEAKS}
+    # request for all tests would force "non-leaky" illusion and vice-versa
+    ? ! $ENV{DBICTEST_ALL_LEAKS}
+
+    # otherwise confess that this perl is busted ONLY on smokers
+    : do {
+      if (eval { DBICTest::RunMode->is_smoker }) {
+
+        # leaky 5.13.6 (fixed in blead/cefd5c7c)
+        if ($] == '5.013006') { 1 }
+
+        # not sure why this one leaks, but disable anyway - ANDK seems to make it weep
+        elsif ($] == '5.013005') { 1 }
+
+        else { 0 }
+      }
+      else { 0 }
+    }
+  ) ? sub () { 1 } : sub () { 0 };
+}
+
 use mro 'c3';
 
 use DBIx::Class::Optional::Dependencies;
 
 use vars qw($VERSION);
-use base qw/DBIx::Class::Componentised Class::Accessor::Grouped/;
+use base qw/DBIx::Class::Componentised DBIx::Class::AccessorGroup/;
 use DBIx::Class::StartupCheck;
+
+__PACKAGE__->mk_group_accessors(inherited => '_skip_namespace_frames');
+__PACKAGE__->_skip_namespace_frames('^DBIx::Class|^SQL::Abstract|^Try::Tiny');
 
 sub mk_classdata {
   shift->mk_classaccessor(@_);
@@ -27,7 +69,7 @@ sub component_base_class { 'DBIx::Class' }
 # Always remember to do all digits for the version even if they're 0
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
-$VERSION = '0.08190';
+$VERSION = '0.08190_01';
 
 $VERSION = eval $VERSION if $VERSION =~ /_/; # numify for warning-free dev releases
 
@@ -82,9 +124,9 @@ The community can be found via:
 
 =head1 SYNOPSIS
 
-Create a schema class called MyDB/Schema.pm:
+Create a schema class called MyApp/Schema.pm:
 
-  package MyDB::Schema;
+  package MyApp::Schema;
   use base qw/DBIx::Class::Schema/;
 
   __PACKAGE__->load_namespaces();
@@ -92,39 +134,39 @@ Create a schema class called MyDB/Schema.pm:
   1;
 
 Create a result class to represent artists, who have many CDs, in
-MyDB/Schema/Result/Artist.pm:
+MyApp/Schema/Result/Artist.pm:
 
 See L<DBIx::Class::ResultSource> for docs on defining result classes.
 
-  package MyDB::Schema::Result::Artist;
+  package MyApp::Schema::Result::Artist;
   use base qw/DBIx::Class::Core/;
 
   __PACKAGE__->table('artist');
   __PACKAGE__->add_columns(qw/ artistid name /);
   __PACKAGE__->set_primary_key('artistid');
-  __PACKAGE__->has_many(cds => 'MyDB::Schema::Result::CD');
+  __PACKAGE__->has_many(cds => 'MyApp::Schema::Result::CD');
 
   1;
 
 A result class to represent a CD, which belongs to an artist, in
-MyDB/Schema/Result/CD.pm:
+MyApp/Schema/Result/CD.pm:
 
-  package MyDB::Schema::Result::CD;
+  package MyApp::Schema::Result::CD;
   use base qw/DBIx::Class::Core/;
 
   __PACKAGE__->load_components(qw/InflateColumn::DateTime/);
   __PACKAGE__->table('cd');
   __PACKAGE__->add_columns(qw/ cdid artistid title year /);
   __PACKAGE__->set_primary_key('cdid');
-  __PACKAGE__->belongs_to(artist => 'MyDB::Schema::Result::Artist', 'artistid');
+  __PACKAGE__->belongs_to(artist => 'MyApp::Schema::Result::Artist', 'artistid');
 
   1;
 
 Then you can use these classes in your application's code:
 
   # Connect to your database.
-  use MyDB::Schema;
-  my $schema = MyDB::Schema->connect($dbi_dsn, $user, $pass, \%dbi_params);
+  use MyApp::Schema;
+  my $schema = MyApp::Schema->connect($dbi_dsn, $user, $pass, \%dbi_params);
 
   # Query for all artists and put them in an array,
   # or retrieve them as a result set object.
@@ -230,6 +272,8 @@ is traditional :)
 
 abraxxa: Alexander Hartmaier <abraxxa@cpan.org>
 
+acca: Alexander Kuznetsov <acca@cpan.org>
+
 aherzog: Adam Herzog <adam@herzogdesigns.com>
 
 Alexander Keusch <cpan@keusch.at>
@@ -290,6 +334,8 @@ dwc: Daniel Westermann-Clark <danieltwc@cpan.org>
 
 dyfrgi: Michael Leuchtenburg <michael@slashhome.org>
 
+felliott: Fitz Elliott <fitz.elliott@gmail.com>
+
 freetime: Bill Moseley <moseley@hank.org>
 
 frew: Arthur Axel "fREW" Schmidt <frioux@gmail.com>
@@ -297,6 +343,8 @@ frew: Arthur Axel "fREW" Schmidt <frioux@gmail.com>
 goraxe: Gordon Irving <goraxe@cpan.org>
 
 gphat: Cory G Watson <gphat@cpan.org>
+
+Grant Street Group L<http://www.grantstreet.com/>
 
 groditi: Guillermo Roditi <groditi@cpan.org>
 
@@ -307,6 +355,8 @@ hobbs: Andrew Rodland <arodland@cpan.org>
 ilmari: Dagfinn Ilmari MannsE<aring>ker <ilmari@ilmari.org>
 
 initself: Mike Baas <mike@initselftech.com>
+
+jawnsy: Jonathan Yu <jawnsy@cpan.org>
 
 jasonmay: Jason May <jason.a.may@gmail.com>
 
@@ -336,7 +386,11 @@ marcus: Marcus Ramberg <mramberg@cpan.org>
 
 mattlaw: Matt Lawrence
 
+mattp: Matt Phillips <mattp@cpan.org>
+
 michaelr: Michael Reddick <michael.reddick@gmail.com>
+
+milki: Jonathan Chu <milki@rescomp.berkeley.edu>
 
 ned: Neil de Carteret
 
@@ -388,6 +442,8 @@ rjbs: Ricardo Signes <rjbs@cpan.org>
 
 robkinyon: Rob Kinyon <rkinyon@cpan.org>
 
+Robert Olson <bob@rdolson.org>
+
 Roman: Roman Filippov <romanf@cpan.org>
 
 Sadrak: Felix Antonius Wilhelm Ostmann <sadrak@cpan.org>
@@ -407,6 +463,8 @@ Squeeks <squeek@cpan.org>
 sszabo: Stephan Szabo <sszabo@bigpanda.com>
 
 talexb: Alex Beamish <talexb@gmail.com>
+
+tamias: Ronald J Kimball <rjk@tamias.net>
 
 teejay : Aaron Trevena <teejay@cpan.org>
 

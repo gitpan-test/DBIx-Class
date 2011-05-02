@@ -78,7 +78,7 @@ sub _database {
     for ($db_file, "${db_file}-journal") {
       next unless -e $_;
       unlink ($_) or carp (
-        "Unable to unlink existing test database file $_ ($!), creation of fresh database / further tests may fail!\n"
+        "Unable to unlink existing test database file $_ ($!), creation of fresh database / further tests may fail!"
       );
     }
 
@@ -112,7 +112,7 @@ sub _database {
 }
 
 sub __mk_disconnect_guard {
-  return if DBICTest::RunMode->peepeeness; # leaks handles, delaying DESTROY, can't work right
+  return if DBIx::Class::_ENV_::PEEPEENESS(); # leaks handles, delaying DESTROY, can't work right
 
   my $db_file = shift;
   return unless -f $db_file;

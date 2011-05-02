@@ -11,6 +11,7 @@ use mro 'c3';
 
 __PACKAGE__->sql_maker_class('DBIx::Class::SQLMaker::MySQL');
 __PACKAGE__->sql_limit_dialect ('LimitXY');
+__PACKAGE__->sql_quote_char ('`');
 
 sub with_deferred_fk_checks {
   my ($self, $sub) = @_;
@@ -33,6 +34,24 @@ sub _dbh_last_insert_id {
   $dbh->{mysql_insertid};
 }
 
+# here may seem like an odd place to override, but this is the first
+# method called after we are connected *and* the driver is determined
+# ($self is reblessed). See code flow in ::Storage::DBI::_populate_dbh
+sub _run_connection_actions {
+  my $self = shift;
+
+  # default mysql_auto_reconnect to off unless explicitly set
+  if (
+    $self->_dbh->{mysql_auto_reconnect}
+      and
+    ! exists $self->_dbic_connect_attributes->{mysql_auto_reconnect}
+  ) {
+    $self->_dbh->{mysql_auto_reconnect} = 0;
+  }
+
+  $self->next::method(@_);
+}
+
 # we need to figure out what mysql version we're running
 sub sql_maker {
   my $self = shift;
@@ -41,7 +60,7 @@ sub sql_maker {
     my $maker = $self->next::method (@_);
 
     # mysql 3 does not understand a bare JOIN
-    my $mysql_ver = $self->_get_dbh->get_info(18);
+    my $mysql_ver = $self->_dbh_get_info(18);
     $maker->{_default_jointype} = 'INNER' if $mysql_ver =~ /^3/;
   }
 
@@ -69,22 +88,22 @@ sub deployment_statements {
   $self->next::method($schema, $type, $version, $dir, $sqltargs, @rest);
 }
 
-sub _svp_begin {
+sub _exec_svp_begin {
     my ($self, $name) = @_;
 
-    $self->_get_dbh->do("SAVEPOINT $name");
+    $self->_dbh->do("SAVEPOINT $name");
 }
 
-sub _svp_release {
+sub _exec_svp_release {
     my ($self, $name) = @_;
 
-    $self->_get_dbh->do("RELEASE SAVEPOINT $name");
+    $self->_dbh->do("RELEASE SAVEPOINT $name");
 }
 
-sub _svp_rollback {
+sub _exec_svp_rollback {
     my ($self, $name) = @_;
 
-    $self->_get_dbh->do("ROLLBACK TO SAVEPOINT $name")
+    $self->_dbh->do("ROLLBACK TO SAVEPOINT $name")
 }
 
 sub is_replicating {

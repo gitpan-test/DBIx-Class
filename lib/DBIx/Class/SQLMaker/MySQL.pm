@@ -2,7 +2,6 @@ package # Hide from PAUSE
   DBIx::Class::SQLMaker::MySQL;
 
 use base qw( DBIx::Class::SQLMaker );
-use Carp::Clan qw/^DBIx::Class|^SQL::Abstract/;
 
 #
 # MySQL does not understand the standard INSERT INTO $table DEFAULT VALUES
@@ -41,7 +40,8 @@ my $for_syntax = {
 sub _lock_select {
    my ($self, $type) = @_;
 
-   my $sql = $for_syntax->{$type} || croak "Unknown SELECT .. FOR type '$type' requested";
+   my $sql = $for_syntax->{$type}
+    || $self->throw_exception("Unknown SELECT .. FOR type '$type' requested");
 
    return " $sql";
 }
