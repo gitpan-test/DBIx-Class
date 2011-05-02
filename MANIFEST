@@ -6,13 +6,6 @@ examples/Schema/MyDatabase/Main/Result/Artist.pm
 examples/Schema/MyDatabase/Main/Result/Cd.pm
 examples/Schema/MyDatabase/Main/Result/Track.pm
 examples/Schema/testdb.pl
-inc/Module/AutoInstall.pm
-inc/Module/Install.pm
-inc/Module/Install/AutoInstall.pm
-inc/Module/Install/Base.pm
-inc/Module/Install/Include.pm
-inc/Module/Install/Makefile.pm
-inc/Module/Install/Metadata.pm
 lib/DBIx/Class.pm
 lib/DBIx/Class/AccessorGroup.pm
 lib/DBIx/Class/Admin.pm
