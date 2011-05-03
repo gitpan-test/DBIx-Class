@@ -69,7 +69,7 @@ sub component_base_class { 'DBIx::Class' }
 # Always remember to do all digits for the version even if they're 0
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
-$VERSION = '0.08190_03';
+$VERSION = '0.08191';
 
 $VERSION = eval $VERSION if $VERSION =~ /_/; # numify for warning-free dev releases
 
@@ -355,6 +355,8 @@ hobbs: Andrew Rodland <arodland@cpan.org>
 ilmari: Dagfinn Ilmari MannsE<aring>ker <ilmari@ilmari.org>
 
 initself: Mike Baas <mike@initselftech.com>
+
+ironcamel: Naveed Massjouni <naveedm9@gmail.com>
 
 jawnsy: Jonathan Yu <jawnsy@cpan.org>
 
