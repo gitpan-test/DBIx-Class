@@ -4,7 +4,11 @@ package # hide from PAUSE
 use base qw/DBICTest::BaseResult/;
 use Carp qw/confess/;
 
-__PACKAGE__->load_components(qw/InflateColumn::DateTime Ordered/);
+__PACKAGE__->load_components(qw{
+    +DBICTest::DeployComponent
+    InflateColumn::DateTime
+    Ordered
+});
 
 __PACKAGE__->table('track');
 __PACKAGE__->add_columns(
@@ -65,8 +69,8 @@ __PACKAGE__->belongs_to(
     { join_type => 'left' },
 );
 
-__PACKAGE__->might_have (
-  next_track => __PACKAGE__,
+__PACKAGE__->has_many (
+  next_tracks => __PACKAGE__,
   sub {
     my $args = shift;
 
@@ -83,11 +87,20 @@ __PACKAGE__->might_have (
         "$args->{foreign_alias}.position" => { '>' => { -ident => "$args->{self_alias}.position" } },
       },
       $args->{self_rowobj} && {
-        "$args->{foreign_alias}.cd"       => $args->{self_rowobj}->cd,
-        "$args->{foreign_alias}.position" => { '>' => $args->{self_rowobj}->position },
+        "$args->{foreign_alias}.cd"       => $args->{self_rowobj}->get_column('cd'),
+        "$args->{foreign_alias}.position" => { '>' => $args->{self_rowobj}->pos },
       }
     )
   }
 );
+
+our $hook_cb;
+
+sub sqlt_deploy_hook {
+  my $class = shift;
+
+  $hook_cb->($class, @_) if $hook_cb;
+  $class->next::method(@_) if $class->next::can;
+}
 
 1;

@@ -1,5 +1,38 @@
 Revision history for DBIx::Class
 
+0.08193 2011-07-14 17:00 (UTC)
+    * New Features / Changes
+        - Allow schema cloning to mutate attributes
+        - DBIC now attempts more aggressive de-duplication of where
+          conditions on resultset chaining
+        - The Ordered component is now smarter wrt reordering of dirty
+          objects, and does its job with less storage queries
+        - Logging via DBIC_TRACE=1=<filename> no longer overwrites the
+          logfile on every program startup, appending loglines instead
+
+    * Fixes
+        - Fix issue where the query was becoming overly mangled when trying
+          to use pagination with a query that has a sub-select in the WHERE
+          clause
+        - Fix possible incorrect pagination on Oracle, when a resultset
+          is not ordered by a unique column
+        - Revert "Fix incorrect signature of the default sqlt_deploy_hook"
+          from 0.08191 - documentation was in fact incorrect, not the code
+        - Fix Sybase ASE IC::DateTime support (::Storage going out of sync
+          with new default format expected by DateTime::Format::Sybase)
+        - Fix a bug in update_all() resulting in the first row receiving a
+          different dataset than the subsequent ones
+        - Accomodate MSAccess supporting only 'INNER JOIN' (not plain 'JOIN')
+        - InflateColumn::DateTime option datetime_undef_if_invalid no longer
+          masks missing dependency exceptions (RT#66823)
+        - Fix bug in Schema::Versioned failing to insert a schema version row
+          during upgrades at the turn of the second
+        - Fix incorrect bind of integers >= 2^^32 (bigint columns) to
+          SQL_INTEGER, resulting in silent conversion to '-1'
+        - Fix pre 5.10 failures of t/55namespaces_cleaned.t due to buggy
+          require() (RT#68814)
+        - Oracle autoinc inserts no longer leave open cursors behind
+
 0.08192 2011-05-10 04:20 (UTC)
     * Fixes
         - Fix serious regression on SQLite, corrupting data when an alphanum

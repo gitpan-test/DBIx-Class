@@ -18,7 +18,7 @@ Somewhere in your build-file (e.g. L<Module::Install>'s Makefile.PL):
 
   ...
 
-  configure_requires 'DBIx::Class' => '0.08192';
+  configure_requires 'DBIx::Class' => '0.08193';
 
   require DBIx::Class::Optional::Dependencies;
 
@@ -137,6 +137,66 @@ Modules required to connect to DB2
 
 Requirement group: B<rdbms_db2>
 
+=head2 DB2 on AS/400 support
+
+Modules required to connect to DB2 on AS/400
+
+=over
+
+=item * DBD::ODBC
+
+=back
+
+Requirement group: B<rdbms_db2_400>
+
+=head2 Firebird support
+
+Modules required to connect to Firebird
+
+=over
+
+=item * DBD::Firebird
+
+=back
+
+Requirement group: B<rdbms_firebird>
+
+=head2 Firebird support via DBD::InterBase
+
+Modules required to connect to Firebird via DBD::InterBase
+
+=over
+
+=item * DBD::InterBase
+
+=back
+
+Requirement group: B<rdbms_firebird_interbase>
+
+=head2 Firebird support via DBD::ODBC
+
+Modules required to connect to Firebird via DBD::ODBC
+
+=over
+
+=item * DBD::ODBC
+
+=back
+
+Requirement group: B<rdbms_firebird_odbc>
+
+=head2 Informix support
+
+Modules required to connect to Informix
+
+=over
+
+=item * DBD::Informix
+
+=back
+
+Requirement group: B<rdbms_informix>
+
 =head2 MS Access support via DBD::ADO (Windows only)
 
 Modules required to connect to MS Access via DBD::ADO. This particular DBD is available on Windows only
@@ -236,6 +296,30 @@ Modules required to connect to PostgreSQL
 =back
 
 Requirement group: B<rdbms_pg>
+
+=head2 SQLAnywhere support
+
+Modules required to connect to SQLAnywhere
+
+=over
+
+=item * DBD::SQLAnywhere
+
+=back
+
+Requirement group: B<rdbms_sqlanywhere>
+
+=head2 SQLAnywhere support via DBD::ODBC
+
+Modules required to connect to SQLAnywhere via DBD::ODBC
+
+=over
+
+=item * DBD::ODBC
+
+=back
+
+Requirement group: B<rdbms_sqlanywhere_odbc>
 
 =head2 SQLite support
 

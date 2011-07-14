@@ -158,13 +158,13 @@ sub _dbh_get_autoinc_seq {
   my ( $schema, $table ) = $source_name =~ /( (?:${ql})? \w+ (?:${qr})? ) \. ( (?:${ql})? \w+ (?:${qr})? )/x;
 
   # if no explicit schema was requested - use the default schema (which in the case of Oracle is the db user)
-  $schema ||= uc( ($self->_dbi_connect_info||[])->[1] || '');
+  $schema ||= \'= USER';
 
   my ($sql, @bind) = $sql_maker->select (
     'ALL_TRIGGERS',
     [qw/TRIGGER_BODY TABLE_OWNER TRIGGER_NAME/],
     {
-      $schema ? (OWNER => $schema) : (),
+      OWNER => $schema,
       TABLE_NAME => $table || $source_name,
       TRIGGERING_EVENT => { -like => '%INSERT%' },  # this will also catch insert_or_update
       TRIGGER_TYPE => { -like => '%BEFORE%' },      # we care only about 'before' triggers
@@ -174,6 +174,7 @@ sub _dbh_get_autoinc_seq {
 
   # to find all the triggers that mention the column in question a simple
   # regex grep since the trigger_body above is a LONG and hence not searchable
+  # via -like
   my @triggers = ( map
     { my %inf; @inf{qw/body schema name/} = @$_; \%inf }
     ( grep
@@ -182,10 +183,15 @@ sub _dbh_get_autoinc_seq {
     )
   );
 
-  # extract all sequence names mentioned in each trigger
-  for (@triggers) {
-    $_->{sequences} = [ $_->{body} =~ / ( "? [\.\w\"\-]+ "? ) \. nextval /xig ];
-  }
+  # extract all sequence names mentioned in each trigger, throw away
+  # triggers without apparent sequences
+  @triggers = map {
+    my @seqs = $_->{body} =~ / ( [\.\w\"\-]+ ) \. nextval /xig;
+    @seqs
+      ? { %$_, sequences => \@seqs }
+      : ()
+    ;
+  } @triggers;
 
   my $chosen_trigger;
 
@@ -252,8 +258,12 @@ sub _sequence_fetch {
   my ( $self, $type, $seq ) = @_;
 
   # use the maker to leverage quoting settings
-  my $sql_maker = $self->sql_maker;
-  my ($id) = $self->_get_dbh->selectrow_array ($sql_maker->select('DUAL', [ ref $seq ? \"$$seq.$type" : "$seq.$type" ] ) );
+  my $sth = $self->_dbh->prepare_cached(
+    $self->sql_maker->select('DUAL', [ ref $seq ? \"$$seq.$type" : "$seq.$type" ] )
+  );
+  $sth->execute;
+  my ($id) = $sth->fetchrow_array;
+  $sth->finish;
   return $id;
 }
 

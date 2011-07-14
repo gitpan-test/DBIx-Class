@@ -352,6 +352,7 @@ t/inflate/datetime.t
 t/inflate/datetime_determine_parser.t
 t/inflate/datetime_firebird.t
 t/inflate/datetime_informix.t
+t/inflate/datetime_missing_deps.t
 t/inflate/datetime_msaccess.t
 t/inflate/datetime_mssql.t
 t/inflate/datetime_mysql.t
@@ -391,6 +392,7 @@ t/lib/DBICTest.pm
 t/lib/DBICTest/BaseResult.pm
 t/lib/DBICTest/BaseResultSet.pm
 t/lib/DBICTest/Cursor.pm
+t/lib/DBICTest/DeployComponent.pm
 t/lib/DBICTest/ErrorComponent.pm
 t/lib/DBICTest/FakeComponent.pm
 t/lib/DBICTest/ForeignComponent.pm
@@ -539,6 +541,7 @@ t/resultset/update_delete.t
 t/resultset_class.t
 t/resultset_overload.t
 t/row/filter_column.t
+t/row/find_one_has_many.t
 t/row/inflate_result.t
 t/row/pkless.t
 t/schema/anon.t
@@ -595,6 +598,8 @@ t/storage/source_bind_compat.t
 t/storage/stats.t
 t/storage/txn.t
 t/storage/txn_scope_guard.t
+t/update/all.t
+t/update/ident_cond.t
 t/update/type_aware.t
 t/zzzzzzz_perl_perf_bug.t
 t/zzzzzzz_sqlite_deadlock.t

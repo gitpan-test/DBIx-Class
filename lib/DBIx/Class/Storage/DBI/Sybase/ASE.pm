@@ -18,7 +18,9 @@ use namespace::clean;
 
 __PACKAGE__->sql_limit_dialect ('RowCountOrGenericSubQ');
 __PACKAGE__->sql_quote_char ([qw/[ ]/]);
-__PACKAGE__->datetime_parser_type('DateTime::Format::Sybase');
+__PACKAGE__->datetime_parser_type(
+  'DBIx::Class::Storage::DBI::Sybase::ASE::DateTime::Format'
+);
 
 __PACKAGE__->mk_group_accessors('simple' =>
     qw/_identity _blob_log_on_update _writer_storage _is_extra_storage
@@ -26,6 +28,7 @@ __PACKAGE__->mk_group_accessors('simple' =>
        _bulk_disabled_due_to_coderef_connect_info_warned
        _identity_method/
 );
+
 
 my @also_proxy_to_extra_storages = qw/
   connect_call_set_auto_cast auto_cast connect_call_blob_setup
@@ -69,7 +72,7 @@ sub _rebless {
   my $no_bind_vars = __PACKAGE__ . '::NoBindVars';
 
   if ($self->using_freetds) {
-    carp <<'EOF' unless $ENV{DBIC_SYBASE_FREETDS_NOWARN};
+    carp_once <<'EOF' unless $ENV{DBIC_SYBASE_FREETDS_NOWARN};
 
 You are using FreeTDS with Sybase.
 
@@ -850,9 +853,6 @@ In L<connect_info|DBIx::Class::Storage::DBI/connect_info> to set:
   $dbh->syb_date_fmt('ISO_strict'); # output fmt: 2004-08-21T14:36:48.080Z
   $dbh->do('set dateformat mdy');   # input fmt:  08/13/1979 18:08:55.080
 
-On connection for use with L<DBIx::Class::InflateColumn::DateTime>, using
-L<DateTime::Format::Sybase>, which you will need to install.
-
 This works for both C<DATETIME> and C<SMALLDATETIME> columns, note that
 C<SMALLDATETIME> columns only have minute precision.
 
@@ -871,8 +871,15 @@ sub connect_call_datetime_setup {
       'Your DBD::Sybase is too old to support '
      .'DBIx::Class::InflateColumn::DateTime, please upgrade!';
 
+    # FIXME - in retrospect this is a rather bad US-centric choice
+    # of format. Not changing as a bugwards compat, though in reality
+    # the only piece that sees the results of $dt object formatting
+    # (as opposed to parsing) is the database itself, so theoretically
+    # changing both this SET command and the formatter definition of
+    # ::S::D::Sybase::ASE::DateTime::Format below should be safe and
+    # transparent
+
     $dbh->do('SET DATEFORMAT mdy');
-    1;
   }
 }
 
@@ -904,6 +911,34 @@ sub _exec_svp_rollback {
   my ($self, $name) = @_;
 
   $self->_dbh->do("ROLLBACK TRANSACTION $name");
+}
+
+package # hide from PAUSE
+  DBIx::Class::Storage::DBI::Sybase::ASE::DateTime::Format;
+
+my $datetime_parse_format  = '%Y-%m-%dT%H:%M:%S.%3NZ';
+my $datetime_format_format = '%m/%d/%Y %H:%M:%S.%3N';
+
+my ($datetime_parser, $datetime_formatter);
+
+sub parse_datetime {
+  shift;
+  require DateTime::Format::Strptime;
+  $datetime_parser ||= DateTime::Format::Strptime->new(
+    pattern  => $datetime_parse_format,
+    on_error => 'croak',
+  );
+  return $datetime_parser->parse_datetime(shift);
+}
+
+sub format_datetime {
+  shift;
+  require DateTime::Format::Strptime;
+  $datetime_formatter ||= DateTime::Format::Strptime->new(
+    pattern  => $datetime_format_format,
+    on_error => 'croak',
+  );
+  return $datetime_formatter->format_datetime(shift);
 }
 
 1;
