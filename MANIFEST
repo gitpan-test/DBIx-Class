@@ -199,7 +199,6 @@ t/18insert_default.t
 t/19retrieve_on_insert.t
 t/20setuperrors.t
 t/26dumper.t
-t/30dbicplain.t
 t/33exception_wrap.t
 t/34exception_action.t
 t/39load_namespaces_1.t
@@ -209,6 +208,7 @@ t/39load_namespaces_4.t
 t/39load_namespaces_exception.t
 t/39load_namespaces_rt41083.t
 t/39load_namespaces_stress.t
+t/40compose_connection.t
 t/40resultsetmanager.t
 t/46where_attribute.t
 t/50fork.t
@@ -398,8 +398,6 @@ t/lib/DBICTest/FakeComponent.pm
 t/lib/DBICTest/ForeignComponent.pm
 t/lib/DBICTest/ForeignComponent/TestComp.pm
 t/lib/DBICTest/OptionalComponent.pm
-t/lib/DBICTest/Plain.pm
-t/lib/DBICTest/Plain/Test.pm
 t/lib/DBICTest/ResultSetManager.pm
 t/lib/DBICTest/ResultSetManager/Foo.pm
 t/lib/DBICTest/RunMode.pm
