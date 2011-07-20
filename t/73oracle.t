@@ -11,13 +11,6 @@ use lib qw(t/lib);
 use DBICTest;
 use DBIC::SqlMakerTest;
 
-plan skip_all => 'Test needs ' . DBIx::Class::Optional::Dependencies->req_missing_for ('test_rdbms_oracle')
-  unless DBIx::Class::Optional::Dependencies->req_ok_for ('test_rdbms_oracle');
-
-$ENV{NLS_SORT} = "BINARY";
-$ENV{NLS_COMP} = "BINARY";
-$ENV{NLS_LANG} = "AMERICAN";
-
 my ($dsn,  $user,  $pass)  = @ENV{map { "DBICTEST_ORA_${_}" }  qw/DSN USER PASS/};
 
 # optional:
@@ -25,6 +18,13 @@ my ($dsn2, $user2, $pass2) = @ENV{map { "DBICTEST_ORA_EXTRAUSER_${_}" } qw/DSN U
 
 plan skip_all => 'Set $ENV{DBICTEST_ORA_DSN}, _USER and _PASS to run this test.'
   unless ($dsn && $user && $pass);
+
+plan skip_all => 'Test needs ' . DBIx::Class::Optional::Dependencies->req_missing_for ('test_rdbms_oracle')
+  unless DBIx::Class::Optional::Dependencies->req_ok_for ('test_rdbms_oracle');
+
+$ENV{NLS_SORT} = "BINARY";
+$ENV{NLS_COMP} = "BINARY";
+$ENV{NLS_LANG} = "AMERICAN";
 
 {
   package    # hide from PAUSE
@@ -393,7 +393,6 @@ sub _run_tests {
 
     # disable BLOB mega-output
     my $orig_debug = $schema->storage->debug;
-    $schema->storage->debug (0);
 
     local $TODO = 'Something is confusing column bindtype assignment when quotes are active'
                 . ': https://rt.cpan.org/Ticket/Display.html?id=64206'
@@ -402,6 +401,13 @@ sub _run_tests {
     my $id;
     foreach my $size (qw( small large )) {
       $id++;
+
+      if ($size eq 'small') {
+        $schema->storage->debug($orig_debug);
+      }
+      elsif ($size eq 'large') {
+        $schema->storage->debug(0);
+      }
 
       my $str = $binstr{$size};
       lives_ok {
@@ -441,7 +447,7 @@ sub _run_tests {
       is (@objs, 1, 'One row found matching on both LOBs as a subquery');
 
       lives_ok {
-        $rs->search({ blob => "blob:$str", clob => "clob:$str" })
+        $rs->search({ id => $id, blob => "blob:$str", clob => "clob:$str" })
           ->update({ blob => 'updated blob', clob => 'updated clob' });
       } 'blob UPDATE with WHERE clause survived';
 

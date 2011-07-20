@@ -1,10 +1,12 @@
 Revision history for DBIx::Class
 
-0.08193_01 2011-07-17 19:20 (UTC) # just for smoking purposes, will be deleted from cpan once 194 ships
+0.08194 2011-07-20 16:10 (UTC)
     * Fixes
         - Fix $rs->populate([]) to be a no-op rather than an exception
         - Overhaul t/53lean_startup.t to better dodge false positives
         - Stop Data::Compare from loading random plugins
+        - Oracle: Recalculate LOB bind indices for UPDATE with LOBs in WHERE
+          (RT#69548)
 
 0.08193 2011-07-14 17:00 (UTC)
     * New Features / Changes
