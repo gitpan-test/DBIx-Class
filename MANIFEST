@@ -98,6 +98,7 @@ lib/DBIx/Class/Relationship/ManyToMany.pm
 lib/DBIx/Class/Relationship/ProxyMethods.pm
 lib/DBIx/Class/ResultClass/HashRefInflator.pm
 lib/DBIx/Class/ResultSet.pm
+lib/DBIx/Class/ResultSet/Pager.pm
 lib/DBIx/Class/ResultSetColumn.pm
 lib/DBIx/Class/ResultSetManager.pm
 lib/DBIx/Class/ResultSetProxy.pm

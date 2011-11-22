@@ -11,9 +11,10 @@ build_requires:
   Test::More: 0.92
   Test::Warn: 0.21
 configure_requires:
-  ExtUtils::MakeMaker: 6.42
+  ExtUtils::MakeMaker: 6.59
 distribution_type: module
-generated_by: 'Module::Install version 1.01'
+dynamic_config: 1
+generated_by: 'Module::Install version 1.04'
 license: perl
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
@@ -31,6 +32,7 @@ no_index:
   package:
     - DBIx::Class::Storage::DBIHacks
     - DBIx::Class::Carp
+    - DBIx::Class::ResultSet::Pager
 requires:
   Class::Accessor::Grouped: 0.10002
   Class::C3::Componentised: 1.0009
@@ -50,7 +52,6 @@ requires:
   Scope::Guard: 0.03
   Sub::Name: 0.04
   Try::Tiny: 0.04
-  Variable::Magic: 0.44
   namespace::clean: 0.20
   perl: 5.8.1
 resources:
@@ -60,4 +61,4 @@ resources:
   homepage: http://www.dbix-class.org/
   license: http://dev.perl.org/licenses/
   repository: git://git.shadowcat.co.uk/dbsrgits/DBIx-Class.git
-version: 0.08195
+version: 0.08195_01
