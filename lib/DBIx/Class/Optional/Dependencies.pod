@@ -18,7 +18,7 @@ Somewhere in your build-file (e.g. L<Module::Install>'s Makefile.PL):
 
   ...
 
-  configure_requires 'DBIx::Class' => '0.08195_01';
+  configure_requires 'DBIx::Class' => '0.08195_02';
 
   require DBIx::Class::Optional::Dependencies;
 
@@ -279,7 +279,7 @@ Modules required to connect to Oracle
 
 =item * Math::Base36 >= 0.07
 
-=item * Math::BigInt >= 1.89
+=item * Math::BigInt >= 1.80
 
 =back
 

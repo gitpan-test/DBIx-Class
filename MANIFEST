@@ -463,6 +463,7 @@ t/lib/DBICTest/SyntaxErrorComponent3.pm
 t/lib/DBICTest/Taint/Classes/Auto.pm
 t/lib/DBICTest/Taint/Classes/Manual.pm
 t/lib/DBICTest/Taint/Namespaces/Result/Test.pm
+t/lib/DBICTest/Util/OverrideRequire.pm
 t/lib/DBICVersion_v1.pm
 t/lib/DBICVersion_v2.pm
 t/lib/DBICVersion_v3.pm
