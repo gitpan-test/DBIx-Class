@@ -1,6 +1,6 @@
 Revision history for DBIx::Class
 
-0.08195_02 2011-11-25 23:25 (UTC)
+0.08196 2011-11-29 05:35 (UTC)
     * Fixes
         - Fix tests for DBD::SQLite >= 1.34.
         - Fix test failures with DBICTEST_SQLITE_USE_FILE set
@@ -18,6 +18,8 @@ Revision history for DBIx::Class
         - Fix test failures on perl < 5.8.7 and new Package::Stash::XS
         - Fix TxnScopeGuard not behaving correctly when $@ is set at the
           time of $guard instantiation
+        - Fix the join/prefetch resolver when dealing with ''/undef/()
+          relation specifications
 
     * Misc
         - No longer depend on Variable::Magic now that a pure-perl
