@@ -74,11 +74,9 @@ DBICTest::Schema::Track->load_components('PK::Auto::Oracle');
 
 # check if we indeed do support stuff
 my $v = do {
-  my $v = DBICTest::Schema->connect($dsn, $user, $pass)->storage->_dbh_get_info(18);
-  $v =~ /^(\d+)\.(\d+)/
-    or die "Unparseable Oracle server version: $v\n";
-
-  sprintf('%d.%03d', $1, $2);
+  my $si = DBICTest::Schema->connect($dsn, $user, $pass)->storage->_server_info;
+  $si->{normalized_dbms_version}
+    or die "Unparseable Oracle server version: $si->{dbms_version}\n";
 };
 
 my $test_server_supports_only_orajoins = $v < 9;
@@ -110,9 +108,10 @@ my $schema;
 for my $use_insert_returning ($test_server_supports_insert_returning ? (1,0) : (0) ) {
   for my $force_ora_joins ($test_server_supports_only_orajoins ? (0) : (0,1) ) {
 
-    no warnings qw/once/;
+    no warnings qw/once redefine/;
+    my $old_connection = DBICTest::Schema->can('connection');
     local *DBICTest::Schema::connection = subname 'DBICTest::Schema::connection' => sub {
-      my $s = shift->next::method (@_);
+      my $s = shift->$old_connection (@_);
       $s->storage->_use_insert_returning ($use_insert_returning);
       $s->storage->sql_maker_class('DBIx::Class::SQLMaker::OracleJoins') if $force_ora_joins;
       $s;
@@ -371,112 +370,6 @@ sub _run_tests {
   is($st->pkid1, 55, "Oracle Auto-PK without trigger: First primary key set manually");
 
 
-# test BLOBs
-  SKIP: {
-  TODO: {
-    my %binstr = ( 'small' => join('', map { chr($_) } ( 1 .. 127 )) );
-    $binstr{'large'} = $binstr{'small'} x 1024;
-
-    my $maxloblen = (length $binstr{'large'}) + 5;
-    note "Localizing LongReadLen to $maxloblen to avoid truncation of test data";
-    local $dbh->{'LongReadLen'} = $maxloblen;
-
-    my $rs = $schema->resultset('BindType');
-
-    if ($DBD::Oracle::VERSION eq '1.23') {
-      throws_ok { $rs->create({ id => 1, blob => $binstr{large} }) }
-        qr/broken/,
-        'throws on blob insert with DBD::Oracle == 1.23';
-
-      skip 'buggy BLOB support in DBD::Oracle 1.23', 1;
-    }
-
-    # disable BLOB mega-output
-    my $orig_debug = $schema->storage->debug;
-
-    local $TODO = 'Something is confusing column bindtype assignment when quotes are active'
-                . ': https://rt.cpan.org/Ticket/Display.html?id=64206'
-      if $q;
-
-    my $id;
-    foreach my $size (qw( small large )) {
-      $id++;
-
-      if ($size eq 'small') {
-        $schema->storage->debug($orig_debug);
-      }
-      elsif ($size eq 'large') {
-        $schema->storage->debug(0);
-      }
-
-      my $str = $binstr{$size};
-      lives_ok {
-        $rs->create( { 'id' => $id, blob => "blob:$str", clob => "clob:$str" } )
-      } "inserted $size without dying";
-
-      my %kids = %{$schema->storage->_dbh->{CachedKids}};
-      my @objs = $rs->search({ blob => "blob:$str", clob => "clob:$str" })->all;
-      is_deeply (
-        $schema->storage->_dbh->{CachedKids},
-        \%kids,
-        'multi-part LOB equality query was not cached',
-      ) if $size eq 'large';
-      is @objs, 1, 'One row found matching on both LOBs';
-      ok (try { $objs[0]->blob }||'' eq "blob:$str", 'blob inserted/retrieved correctly');
-      ok (try { $objs[0]->clob }||'' eq "clob:$str", 'clob inserted/retrieved correctly');
-
-      TODO: {
-        local $TODO = '-like comparison on blobs not tested before ora 10 (fails on 8i)'
-          if $schema->storage->_server_info->{normalized_dbms_version} < 10;
-
-        lives_ok {
-          @objs = $rs->search({ clob => { -like => 'clob:%' } })->all;
-          ok (@objs, 'rows found matching CLOB with a LIKE query');
-        } 'Query with like on blob succeeds';
-      }
-
-      ok(my $subq = $rs->search(
-        { blob => "blob:$str", clob => "clob:$str" },
-        {
-          from => \ "(SELECT * FROM ${q}bindtype_test${q} WHERE ${q}id${q} != ?) ${q}me${q}",
-          bind => [ [ undef => 12345678 ] ],
-        }
-      )->get_column('id')->as_query);
-
-      @objs = $rs->search({ id => { -in => $subq } })->all;
-      is (@objs, 1, 'One row found matching on both LOBs as a subquery');
-
-      lives_ok {
-        $rs->search({ id => $id, blob => "blob:$str", clob => "clob:$str" })
-          ->update({ blob => 'updated blob', clob => 'updated clob' });
-      } 'blob UPDATE with blobs in WHERE clause survived';
-
-      @objs = $rs->search({ blob => "updated blob", clob => 'updated clob' })->all;
-      is @objs, 1, 'found updated row';
-      ok (try { $objs[0]->blob }||'' eq "updated blob", 'blob updated/retrieved correctly');
-      ok (try { $objs[0]->clob }||'' eq "updated clob", 'clob updated/retrieved correctly');
-
-      lives_ok {
-        $rs->search({ id => $id  })
-          ->update({ blob => 're-updated blob', clob => 're-updated clob' });
-      } 'blob UPDATE without blobs in WHERE clause survived';
-
-      @objs = $rs->search({ blob => 're-updated blob', clob => 're-updated clob' })->all;
-      is @objs, 1, 'found updated row';
-      ok (try { $objs[0]->blob }||'' eq 're-updated blob', 'blob updated/retrieved correctly');
-      ok (try { $objs[0]->clob }||'' eq 're-updated clob', 'clob updated/retrieved correctly');
-
-      lives_ok {
-        $rs->search({ blob => "re-updated blob", clob => "re-updated clob" })
-          ->delete;
-      } 'blob DELETE with WHERE clause survived';
-      @objs = $rs->search({ blob => "re-updated blob", clob => 're-updated clob' })->all;
-      is @objs, 0, 'row deleted successfully';
-    }
-
-    $schema->storage->debug ($orig_debug);
-  }}
-
 # test populate (identity, success and error handling)
   my $art_rs = $schema->resultset('Artist');
 
@@ -530,13 +423,12 @@ sub _run_tests {
   );
 
 # test complex join (exercise orajoins)
-  lives_ok {
-    my @hri = $schema->resultset('CD')->search(
+  lives_ok { is_deeply (
+    $schema->resultset('CD')->search(
       { 'artist.name' => 'pop_art_1', 'me.cdid' => { '!=', 999} },
       { join => 'artist', prefetch => 'tracks', rows => 4, order_by => 'tracks.trackid' }
-    )->hri_dump->all;
-
-    my $expect = [{
+    )->all_hri,
+    [{
       artist => 1,
       cdid => 1,
       genreid => undef,
@@ -561,15 +453,9 @@ sub _run_tests {
         },
       ],
       year => 2003
-    }];
-
-    is_deeply (
-      \@hri,
-      $expect,
-      'Correct set of data prefetched',
-    );
-
-  } 'complex prefetch ok';
+    }],
+    'Correct set of data prefetched',
+  ) } 'complex prefetch ok';
 
 # test sequence detection from a different schema
   SKIP: {
@@ -692,8 +578,6 @@ sub do_creates {
   $dbh->do("CREATE TABLE ${q}track${q} (${q}trackid${q} NUMBER(12), ${q}cd${q} NUMBER(12) REFERENCES CD(${q}cdid${q}) DEFERRABLE, ${q}position${q} NUMBER(12), ${q}title${q} VARCHAR(255), ${q}last_updated_on${q} DATE, ${q}last_updated_at${q} DATE)");
   $dbh->do("ALTER TABLE ${q}track${q} ADD (CONSTRAINT ${q}track_pk${q} PRIMARY KEY (${q}trackid${q}))");
 
-  $dbh->do("CREATE TABLE ${q}bindtype_test${q} (${q}id${q} integer NOT NULL PRIMARY KEY, ${q}bytea${q} integer NULL, ${q}blob${q} blob NULL, ${q}clob${q} clob NULL, ${q}a_memo${q} integer NULL)");
-
   $dbh->do(qq{
     CREATE OR REPLACE TRIGGER ${q}artist_insert_trg_auto${q}
     BEFORE INSERT ON ${q}artist${q}
@@ -788,6 +672,7 @@ END {
     next unless $_;
     local $SIG{__WARN__} = sub {};
     do_clean($_);
-    $_->disconnect;
   }
+  undef $dbh;
+  undef $dbh2;
 }

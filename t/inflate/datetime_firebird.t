@@ -2,7 +2,6 @@ use strict;
 use warnings;
 
 use Test::More;
-use Test::Exception;
 use DBIx::Class::Optional::Dependencies ();
 use lib qw(t/lib);
 use DBICTest;
@@ -52,11 +51,11 @@ foreach my $conn_idx (0..$#info) {
 
   $schema = DBICTest::Schema->connect($dsn, $user, $pass, {
     quote_char => '"',
-    name_sep   => '.', 
+    name_sep   => '.',
     on_connect_call => [ 'datetime_setup' ],
   });
 
-  my $sg = Scope::Guard->new(\&cleanup);
+  my $sg = Scope::Guard->new(sub { cleanup($schema) } );
 
   eval { $schema->storage->dbh->do('DROP TABLE "event"') };
   $schema->storage->dbh->do(<<'SQL');
@@ -78,7 +77,7 @@ SQL
   my $row;
   ok( $row = $rs->create({
     id => 1,
-    starts_at => $date_only, 
+    starts_at => $date_only,
     created_on => $dt,
   }));
   ok( $row = $rs->search({ id => 1 }, { select => [qw/starts_at created_on/] })
@@ -96,7 +95,8 @@ done_testing;
 
 # clean up our mess
 sub cleanup {
-  my $dbh; 
+  my $schema = shift;
+  my $dbh;
   eval {
     $schema->storage->disconnect; # to avoid object FOO is in use errors
     $dbh = $schema->storage->dbh;

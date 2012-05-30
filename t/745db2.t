@@ -20,10 +20,11 @@ plan skip_all => 'Set $ENV{DBICTEST_DB2_DSN}, _USER and _PASS to run this test'
 
 my $schema = DBICTest::Schema->connect($dsn, $user, $pass);
 
+my $name_sep = $schema->storage->_dbh_get_info('SQL_QUALIFIER_NAME_SEPARATOR');
+
 my $dbh = $schema->storage->dbh;
 
 # test RNO and name_sep detection
-my $name_sep = $dbh->get_info(41);
 
 is $schema->storage->sql_maker->name_sep, $name_sep,
   'name_sep detection';
@@ -158,6 +159,7 @@ done_testing;
 
 # clean up our mess
 END {
-    my $dbh = eval { $schema->storage->_dbh };
-    $dbh->do("DROP TABLE artist") if $dbh;
+  my $dbh = eval { $schema->storage->_dbh };
+  $dbh->do("DROP TABLE artist") if $dbh;
+  undef $schema;
 }

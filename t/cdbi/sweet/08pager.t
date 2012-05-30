@@ -3,17 +3,8 @@ use warnings;
 
 use Test::More;
 
-use lib 't/lib';
-use DBICTest;
-
-BEGIN {
-  eval "use DBIx::Class::CDBICompat;";
-  if ($@) {
-    plan (skip_all => 'Class::Trigger and DBIx::ContextualFetch required');
-    next;
-  }
-  plan tests => 9;
-}
+use lib 't/cdbi/testlib';
+use DBIC::Test::SQLite;
 
 DBICTest::Schema::CD->load_components(qw/CDBICompat CDBICompat::Pager/);
 
@@ -26,7 +17,7 @@ my ( $pager, $it ) = DBICTest::CD->page(
     { order_by => 'title',
       rows => 3,
       page => 1 } );
-      
+
 cmp_ok( $pager->entries_on_this_page, '==', 3, "entries_on_this_page ok" );
 
 cmp_ok( $pager->next_page, '==', 2, "next_page ok" );
@@ -57,7 +48,7 @@ is( $it->next, undef, "disable_sql_paging next past end of page ok" );
 # based on a failing criteria submitted by waswas
 ( $pager, $it ) = DBICTest::CD->page(
     { title => [
-        -and => 
+        -and =>
             {
                 -like => '%bees'
             },
@@ -69,3 +60,16 @@ is( $it->next, undef, "disable_sql_paging next past end of page ok" );
     { rows => 5 }
 );
 is( $it->count, 1, "complex abstract count ok" );
+
+# cleanup globals so we do not trigger the leaktest
+for ( map { DBICTest->schema->class($_) } DBICTest->schema->sources ) {
+  $_->class_resolver(undef);
+  $_->resultset_instance(undef);
+  $_->result_source_instance(undef);
+}
+{
+  no warnings qw/redefine once/;
+  *DBICTest::schema = sub {};
+}
+
+done_testing;

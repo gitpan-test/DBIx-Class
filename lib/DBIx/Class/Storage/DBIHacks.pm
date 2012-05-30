@@ -61,7 +61,7 @@ sub _prune_unused_joins {
 
 #
 # This is the code producing joined subqueries like:
-# SELECT me.*, other.* FROM ( SELECT me.* FROM ... ) JOIN other ON ... 
+# SELECT me.*, other.* FROM ( SELECT me.* FROM ... ) JOIN other ON ...
 #
 sub _adjust_select_args_for_complex_prefetch {
   my ($self, $from, $select, $where, $attrs) = @_;
@@ -72,29 +72,43 @@ sub _adjust_select_args_for_complex_prefetch {
   $self->throw_exception ('Complex prefetches are not supported on resultsets with a custom from attribute')
     if (ref $from ne 'ARRAY' || ref $from->[0] ne 'HASH' || ref $from->[1] ne 'ARRAY');
 
-
   # generate inner/outer attribute lists, remove stuff that doesn't apply
   my $outer_attrs = { %$attrs };
   delete $outer_attrs->{$_} for qw/where bind rows offset group_by having/;
 
   my $inner_attrs = { %$attrs };
-  delete $inner_attrs->{$_} for qw/for collapse _prefetch_selector_range _collapse_order_by select as/;
+  delete $inner_attrs->{$_} for qw/for collapse _prefetch_selector_range select as/;
 
-
-  # bring over all non-collapse-induced order_by into the inner query (if any)
-  # the outer one will have to keep them all
-  delete $inner_attrs->{order_by};
-  if (my $ord_cnt = @{$outer_attrs->{order_by}} - @{$outer_attrs->{_collapse_order_by}} ) {
-    $inner_attrs->{order_by} = [
-      @{$outer_attrs->{order_by}}[ 0 .. $ord_cnt - 1]
-    ];
-  }
+  # if the user did not request it, there is no point using it inside
+  delete $inner_attrs->{order_by} if delete $inner_attrs->{_order_is_artificial};
 
   # generate the inner/outer select lists
   # for inside we consider only stuff *not* brought in by the prefetch
   # on the outside we substitute any function for its alias
   my $outer_select = [ @$select ];
   my $inner_select = [];
+
+  my ($root_source, $root_source_offset);
+
+  for my $i (0 .. $#$from) {
+    my $node = $from->[$i];
+    my $h = (ref $node eq 'HASH')                                ? $node
+          : (ref $node  eq 'ARRAY' and ref $node->[0] eq 'HASH') ? $node->[0]
+          : next
+    ;
+
+    if ( ($h->{-alias}||'') eq $attrs->{alias} and $root_source = $h->{-rsrc} ) {
+      $root_source_offset = $i;
+      last;
+    }
+  }
+
+  $self->throw_exception ('Complex prefetches are not supported on resultsets with a custom from attribute')
+    unless $root_source;
+
+  # use the heavy duty resolver to take care of aliased/nonaliased naming
+  my $colinfo = $self->_resolve_column_info($from);
+  my $selected_root_columns;
 
   my ($p_start, $p_end) = @{$outer_attrs->{_prefetch_selector_range}};
   for my $i (0 .. $p_start - 1, $p_end + 1 .. $#$outer_select) {
@@ -104,10 +118,42 @@ sub _adjust_select_args_for_complex_prefetch {
       $sel->{-as} ||= $attrs->{as}[$i];
       $outer_select->[$i] = join ('.', $attrs->{alias}, ($sel->{-as} || "inner_column_$i") );
     }
+    elsif (! ref $sel and my $ci = $colinfo->{$sel}) {
+      $selected_root_columns->{$ci->{-colname}} = 1;
+    }
 
     push @$inner_select, $sel;
 
     push @{$inner_attrs->{as}}, $attrs->{as}[$i];
+  }
+
+  # We will need to fetch all native columns in the inner subquery, which may be a part
+  # of an *outer* join condition. We can not just fetch everything because a potential
+  # has_many restricting join collapse *will not work* on heavy data types.
+  # Time for more horrible SQL parsing, aughhhh
+
+  # MASSIVE FIXME - in fact when we are fully transitioned to DQ and the support is
+  # is sane - we will need to trim the select list to *only* fetch stuff that is
+  # necessary to build joins. In the current implementation if I am selecting a blob
+  # and the group_by kicks in - we are fucked, and all the user can do is not select
+  # that column. This is silly!
+
+  my $retardo_sqla_cache = {};
+  for my $cond ( map { $_->[1] } @{$from}[$root_source_offset + 1 .. $#$from] ) {
+    for my $col (@{$self->_extract_condition_columns($cond, $retardo_sqla_cache)}) {
+      my $ci = $colinfo->{$col};
+      if (
+        $ci
+          and
+        $ci->{-source_alias} eq $attrs->{alias}
+          and
+        ! $selected_root_columns->{$ci->{-colname}}++
+      ) {
+        # adding it to both to keep limits not supporting dark selectors happy
+        push @$inner_select, $ci->{-fq_colname};
+        push @{$inner_attrs->{as}}, $ci->{-fq_colname};
+      }
+    }
   }
 
   # construct the inner $from and lock it in a subquery
@@ -172,28 +218,35 @@ sub _adjust_select_args_for_complex_prefetch {
   # - it is part of the restrictions, in which case we need to collapse the outer
   #   result by tackling yet another group_by to the outside of the query
 
+  # work on a shallow copy
   $from = [ @$from ];
 
-  # so first generate the outer_from, up to the substitution point
   my @outer_from;
-  while (my $j = shift @$from) {
-    $j = [ $j ] unless ref $j eq 'ARRAY'; # promote the head-from to an AoH
 
-    if ($j->[0]{-alias} eq $attrs->{alias}) { # time to swap
+  # we may not be the head
+  if ($root_source_offset) {
+    # first generate the outer_from, up to the substitution point
+    @outer_from = splice @$from, 0, $root_source_offset;
 
-      push @outer_from, [
-        {
-          -alias => $attrs->{alias},
-          -rsrc => $j->[0]{-rsrc},
-          $attrs->{alias} => $inner_subq,
-        },
-        @{$j}[1 .. $#$j],
-      ];
-      last; # we'll take care of what's left in $from below
-    }
-    else {
-      push @outer_from, $j;
-    }
+    my $root_node = shift @$from;
+
+    push @outer_from, [
+      {
+        -alias => $attrs->{alias},
+        -rsrc => $root_node->[0]{-rsrc},
+        $attrs->{alias} => $inner_subq,
+      },
+      @{$root_node}[1 .. $#$root_node],
+    ];
+  }
+  else {
+    my $root_node = shift @$from;
+
+    @outer_from = {
+      -alias => $attrs->{alias},
+      -rsrc => $root_node->{-rsrc},
+      $attrs->{alias} => $inner_subq,
+    };
   }
 
   # scan the *remaining* from spec against different attributes, and see which joins are needed
@@ -223,9 +276,6 @@ sub _adjust_select_args_for_complex_prefetch {
       $need_outer_group_by ||= $outer_aliastypes->{multiplying}{$alias} ? 1 : 0;
     }
   }
-
-  # demote the outer_from head
-  $outer_from[0] = $outer_from[0][0];
 
   if ($need_outer_group_by and ! $outer_attrs->{group_by}) {
 
@@ -516,7 +566,11 @@ sub _resolve_column_info {
       },
       -result_source => $rsrc,
       -source_alias => $source_alias,
+      -fq_colname => $col eq $colname ? "$source_alias.$col" : $col,
+      -colname => $colname,
     };
+
+    $return{"$source_alias.$colname"} = $return{$col} if $col eq $colname;
   }
 
   return \%return;
@@ -569,7 +623,7 @@ sub _inner_join_to_node {
   # So it looks like we will have to switch some stuff around.
   # local() is useless here as we will be leaving the scope
   # anyway, and deep cloning is just too fucking expensive
-  # So replace the first hashref in the node arrayref manually 
+  # So replace the first hashref in the node arrayref manually
   my @new_from = ($from->[0]);
   my $sw_idx = { map { (values %$_), 1 } @$switch_branch }; #there's one k/v per join-path
 
@@ -595,11 +649,11 @@ sub _inner_join_to_node {
 # yet another atrocity: attempt to extract all columns from a
 # where condition by hooking _quote
 sub _extract_condition_columns {
-  my ($self, $cond, $sql_maker) = @_;
+  my ($self, $cond, $sql_maker_cache) = @_;
 
   return [] unless $cond;
 
-  $sql_maker ||= $self->{_sql_ident_capturer} ||= do {
+  my $sm = $sql_maker_cache->{condparser} ||= $self->{_sql_ident_capturer} ||= do {
     # FIXME - replace with a Moo trait
     my $orig_sm_class = ref $self->sql_maker;
     my $smic_class = "${orig_sm_class}::_IdentCapture_";
@@ -642,9 +696,9 @@ sub _extract_condition_columns {
     $smic_class->new();
   };
 
-  $sql_maker->_recurse_where($cond);
+  $sm->_recurse_where($cond);
 
-  return [ sort keys %{$sql_maker->_get_captured_idents} ];
+  return [ sort keys %{$sm->_get_captured_idents} ];
 }
 
 sub _extract_order_criteria {
@@ -674,6 +728,64 @@ sub _extract_order_criteria {
     local $sql_maker->{quote_char};
     return $parser->($sql_maker, $order_by);
   }
+}
+
+sub _order_by_is_stable {
+  my ($self, $ident, $order_by, $where) = @_;
+
+  my $colinfo = $self->_resolve_column_info($ident, [
+    (map { $_->[0] } $self->_extract_order_criteria($order_by)),
+    $where ? @{$self->_extract_fixed_condition_columns($where)} :(),
+  ]);
+
+  return undef unless keys %$colinfo;
+
+  my $cols_per_src;
+  $cols_per_src->{$_->{-source_alias}}{$_->{-colname}} = $_ for values %$colinfo;
+
+  for (values %$cols_per_src) {
+    my $src = (values %$_)[0]->{-result_source};
+    return 1 if $src->_identifying_column_set($_);
+  }
+
+  return undef;
+}
+
+# returns an arrayref of column names which *definitely* have som
+# sort of non-nullable equality requested in the given condition
+# specification. This is used to figure out if a resultset is
+# constrained to a column which is part of a unique constraint,
+# which in turn allows us to better predict how ordering will behave
+# etc.
+#
+# this is a rudimentary, incomplete, and error-prone extractor
+# however this is OK - it is conservative, and if we can not find
+# something that is in fact there - the stack will recover gracefully
+# Also - DQ and the mst it rode in on will save us all RSN!!!
+sub _extract_fixed_condition_columns {
+  my ($self, $where, $nested) = @_;
+
+  return unless ref $where eq 'HASH';
+
+  my @cols;
+  for my $lhs (keys %$where) {
+    if ($lhs =~ /^\-and$/i) {
+      push @cols, ref $where->{$lhs} eq 'ARRAY'
+        ? ( map { $self->_extract_fixed_condition_columns($_, 1) } @{$where->{$lhs}} )
+        : $self->_extract_fixed_condition_columns($where->{$lhs}, 1)
+      ;
+    }
+    elsif ($lhs !~ /^\-/) {
+      my $val = $where->{$lhs};
+
+      push @cols, $lhs if (defined $val and (
+        ! ref $val
+          or
+        (ref $val eq 'HASH' and keys %$val == 1 and defined $val->{'='})
+      ));
+    }
+  }
+  return $nested ? @cols : \@cols;
 }
 
 1;

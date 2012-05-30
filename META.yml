@@ -11,9 +11,10 @@ build_requires:
   Test::More: 0.94
   Test::Warn: 0.21
 configure_requires:
-  ExtUtils::MakeMaker: 6.42
+  ExtUtils::MakeMaker: 6.59
 distribution_type: module
-generated_by: 'Module::Install version 1.01'
+dynamic_config: 1
+generated_by: 'Module::Install version 1.06'
 license: perl
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
@@ -36,23 +37,27 @@ requires:
   Class::Accessor::Grouped: 0.10002
   Class::C3::Componentised: 1.0009
   Class::Inspector: 1.24
+  Class::Method::Modifiers: 1.06
   Config::Any: 0.20
   Context::Preserve: 0.01
   DBI: 1.57
   Data::Compare: 1.22
   Data::Dumper::Concise: 2.020
   Data::Page: 2.00
+  Devel::GlobalDestruction: 0
   File::Path: 2.07
   Hash::Merge: 0.12
   MRO::Compat: 0.09
   Module::Find: 0.06
+  Moo: 0.009100
   Path::Class: 0.18
-  SQL::Abstract: 1.72
+  SQL::Abstract: 1.73_01
   Scope::Guard: 0.03
   Sub::Name: 0.04
   Try::Tiny: 0.04
   namespace::clean: 0.20
   perl: 5.8.1
+  strictures: 1.003001
 resources:
   IRC: irc://irc.perl.org/#dbix-class
   MailingList: http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class
@@ -60,4 +65,4 @@ resources:
   homepage: http://www.dbix-class.org/
   license: http://dev.perl.org/licenses/
   repository: git://git.shadowcat.co.uk/dbsrgits/DBIx-Class.git
-version: 0.08196
+version: 0.08197_01

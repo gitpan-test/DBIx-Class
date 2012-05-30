@@ -15,8 +15,8 @@ use MooseX::Types::Moose qw/ClassName HashRef Object/;
 use Scalar::Util 'reftype';
 use Hash::Merge;
 use List::Util qw/min max reduce/;
+use Context::Preserve 'preserve_context';
 use Try::Tiny;
-use namespace::clean;
 
 use namespace::clean -except => 'meta';
 
@@ -56,9 +56,9 @@ be delegated to the replicants, while writes to the master.
 You can force a given query to use a particular storage using the search
 attribute 'force_pool'.  For example:
 
-  my $RS = $schema->resultset('Source')->search(undef, {force_pool=>'master'});
+  my $rs = $schema->resultset('Source')->search(undef, {force_pool=>'master'});
 
-Now $RS will force everything (both reads and writes) to use whatever was setup
+Now $rs will force everything (both reads and writes) to use whatever was setup
 as the master storage.  'master' is hardcoded to always point to the Master,
 but you can also use any Replicant name.  Please see:
 L<DBIx::Class::Storage::DBI::Replicated::Pool> and the replicants attribute for more.
@@ -68,8 +68,12 @@ force read traffic to the master.  In general, you should wrap your statements
 in a transaction when you are reading and writing to the same tables at the
 same time, since your replicants will often lag a bit behind the master.
 
-See L<DBIx::Class::Storage::DBI::Replicated::Instructions> for more help and
-walkthroughs.
+If you have a multi-statement read only transaction you can force it to select
+a random server in the pool by:
+
+  my $rs = $schema->resultset('Source')->search( undef,
+    { force_pool => $db->storage->read_handler->next_storage }
+  );
 
 =head1 DESCRIPTION
 
@@ -277,7 +281,6 @@ my $method_dispatch = {
     _prep_for_execute
     is_datatype_numeric
     _count_select
-    _subq_update_delete
     svp_rollback
     svp_begin
     svp_release
@@ -295,17 +298,14 @@ my $method_dispatch = {
     transaction_depth
     _dbh
     _select_args
-    _dbh_execute_array
+    _dbh_execute_for_fetch
     _sql_maker
-    _per_row_update_delete
     _dbh_execute_inserts_with_no_binds
     _select_args_to_query
     _gen_sql_bind
     _svp_generate_name
-    _multipk_update_delete
     _normalize_connect_info
     _parse_connect_do
-    _execute_array
     savepoints
     _sql_maker_opts
     _conn_pid
@@ -344,6 +344,10 @@ my $method_dispatch = {
     sql_name_sep
 
     _prefetch_autovalues
+    _perform_autoinc_retrieval
+    _autoinc_supplied_for_op
+
+    _resolve_bindattrs
 
     _max_column_bytesize
     _is_lob_type
@@ -474,24 +478,19 @@ around connect_info => sub {
 
   $self->_master_connect_info_opts(\%opts);
 
-  my @res;
-  if (wantarray) {
-    @res = $self->$next($info, @extra);
-  } else {
-    $res[0] = $self->$next($info, @extra);
-  }
+  return preserve_context {
+    $self->$next($info, @extra);
+  } after => sub {
+    # Make sure master is blessed into the correct class and apply role to it.
+    my $master = $self->master;
+    $master->_determine_driver;
+    Moose::Meta::Class->initialize(ref $master);
 
-  # Make sure master is blessed into the correct class and apply role to it.
-  my $master = $self->master;
-  $master->_determine_driver;
-  Moose::Meta::Class->initialize(ref $master);
+    DBIx::Class::Storage::DBI::Replicated::WithDSN->meta->apply($master);
 
-  DBIx::Class::Storage::DBI::Replicated::WithDSN->meta->apply($master);
-
-  # link pool back to master
-  $self->pool->master($master);
-
-  wantarray ? @res : $res[0];
+    # link pool back to master
+    $self->pool->master($master);
+  };
 };
 
 =head1 METHODS
@@ -672,41 +671,22 @@ inserted something and need to get a resultset including it, etc.
 =cut
 
 sub execute_reliably {
-  my ($self, $coderef, @args) = @_;
+  my $self = shift;
+  my $coderef = shift;
 
   unless( ref $coderef eq 'CODE') {
     $self->throw_exception('Second argument must be a coderef');
   }
 
-  ##Get copy of master storage
-  my $master = $self->master;
+  ## replace the current read handler for the remainder of the scope
+  local $self->{read_handler} = $self->master;
 
-  ##Get whatever the current read hander is
-  my $current = $self->read_handler;
-
-  ##Set the read handler to master
-  $self->read_handler($master);
-
-  ## do whatever the caller needs
-  my @result;
-  my $want_array = wantarray;
-
-  try {
-    if($want_array) {
-      @result = $coderef->(@args);
-    } elsif(defined $want_array) {
-      ($result[0]) = ($coderef->(@args));
-    } else {
-      $coderef->(@args);
-    }
+  my $args = \@_;
+  return try {
+    $coderef->(@$args);
   } catch {
     $self->throw_exception("coderef returned an error: $_");
-  } finally {
-    ##Reset to the original state
-    $self->read_handler($current);
   };
-
-  return wantarray ? @result : $result[0];
 }
 
 =head2 set_reliable_storage

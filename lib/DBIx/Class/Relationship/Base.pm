@@ -167,7 +167,7 @@ L<SQL::Abstract> and the resulting SQL will be used verbatim as the C<ON>
 clause of the C<JOIN> statement associated with this relationship.
 
 While every coderef-based condition must return a valid C<ON> clause, it may
-elect to additionally return a simplified join-free condition hashref when 
+elect to additionally return a simplified join-free condition hashref when
 invoked as C<< $row_object->relationship >>, as opposed to
 C<< $rs->related_resultset('relationship') >>. In this case C<$row_object> is
 passed to the coderef as C<< $args->{self_rowobj} >>, so a user can do the
@@ -249,6 +249,12 @@ command immediately before C<JOIN>.
 
 =item proxy =E<gt> $column | \@columns | \%column
 
+The 'proxy' attribute can be used to retrieve values, and to perform
+updates if the relationship has 'cascade_update' set. The 'might_have'
+and 'has_one' relationships have this set by default; if you want a proxy
+to update across a 'belongs_to' relationship, you must set the attribute
+yourself.
+
 =over 4
 
 =item \@columns
@@ -266,6 +272,14 @@ Then, assuming MyApp::Schema::LinerNotes has an accessor named notes, you can do
   my $cd = MyApp::Schema::CD->find(1);
   $cd->notes('Notes go here'); # set notes -- LinerNotes object is
                                # created if it doesn't exist
+
+For a 'belongs_to relationship, note the 'cascade_update':
+
+  MyApp::Schema::Track->belongs_to( cd => 'DBICTest::Schema::CD', 'cd,
+      { proxy => ['title'], cascade_update => 1 }
+  );
+  $track->title('New Title');
+  $track->update; # updates title in CD
 
 =item \%column
 
@@ -330,6 +344,10 @@ By default, DBIx::Class cascades updates across C<has_one> and
 C<might_have> relationships. You can disable this behaviour on a
 per-relationship basis by supplying C<< cascade_update => 0 >> in
 the relationship attributes.
+
+The C<belongs_to> relationship does not update across relationships
+by default, so if you have a 'proxy' attribute on a belongs_to and want to
+use 'update' on it, you muse set C<< cascade_update => 1 >>.
 
 This is not a RDMS style cascade update - it purely means that when
 an object has update called on it, all the related objects also
@@ -461,11 +479,9 @@ sub related_resultset {
         my $reverse = $source->reverse_relationship_info($rel);
         foreach my $rev_rel (keys %$reverse) {
           if ($reverse->{$rev_rel}{attrs}{accessor} && $reverse->{$rev_rel}{attrs}{accessor} eq 'multi') {
-            $attrs->{related_objects}{$rev_rel} = [ $self ];
-            weaken $attrs->{related_object}{$rev_rel}[0];
+            weaken($attrs->{related_objects}{$rev_rel}[0] = $self);
           } else {
-            $attrs->{related_objects}{$rev_rel} = $self;
-            weaken $attrs->{related_object}{$rev_rel};
+            weaken($attrs->{related_objects}{$rev_rel} = $self);
           }
         }
       }

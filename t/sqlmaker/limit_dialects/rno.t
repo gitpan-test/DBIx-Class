@@ -26,10 +26,10 @@ my $rs_selectas_col = $schema->resultset ('BooksInLibrary')->search ({}, {
 is_same_sql_bind(
   $rs_selectas_col->as_query,
   '(
-    SELECT  id, source, owner, title, price,
+    SELECT  me.id, me.source, me.owner, me.title, me.price,
             owner__name
       FROM (
-        SELECT  id, source, owner, title, price,
+        SELECT  me.id, me.source, me.owner, me.title, me.price,
                 owner__name,
                 ROW_NUMBER() OVER( ) AS rno__row__index
           FROM (
@@ -62,10 +62,10 @@ my $rs_selectas_rel = $schema->resultset ('BooksInLibrary')->search ({}, {
 is_same_sql_bind(
   $rs_selectas_rel->as_query,
   '(
-    SELECT  [id], [source], [owner], [title], [price],
+    SELECT  [me].[id], [me].[source], [me].[owner], [me].[title], [me].[price],
             [owner_name]
       FROM (
-        SELECT  [id], [source], [owner], [title], [price],
+        SELECT  [me].[id], [me].[source], [me].[owner], [me].[title], [me].[price],
                 [owner_name],
                 ROW_NUMBER() OVER( ) AS [rno__row__index]
           FROM (
@@ -98,6 +98,7 @@ my $rs_selectas_rel = $schema->resultset('BooksInLibrary')->search ({}, {
   ],
   join => 'owner',
   rows => 1,
+  order_by => 'me.id',
 });
 
 is_same_sql_bind(
@@ -105,13 +106,14 @@ is_same_sql_bind(
   '(
     SELECT [owner_name], [owner_books]
       FROM (
-        SELECT [owner_name], [owner_books], ROW_NUMBER() OVER( ) AS [rno__row__index]
+        SELECT [owner_name], [owner_books], ROW_NUMBER() OVER( ORDER BY [ORDER__BY__001] ) AS [rno__row__index]
           FROM (
             SELECT  [owner].[name] AS [owner_name],
               ( SELECT COUNT( * ) FROM [owners] [owner]
-                WHERE [count].[id] = [owner].[id] and [count].[name] = ? ) AS [owner_books]
-              FROM [books] [me]
-              JOIN [owners] [owner] ON [owner].[id] = [me].[owner]
+                WHERE [count].[id] = [owner].[id] and [count].[name] = ? ) AS [owner_books],
+              [me].[id] AS [ORDER__BY__001]
+                FROM [books] [me]
+                JOIN [owners] [owner] ON [owner].[id] = [me].[owner]
             WHERE ( [source] = ? )
           ) [me]
       ) [me]
@@ -190,8 +192,8 @@ my $rs_selectas_rel = $schema->resultset('BooksInLibrary')->search( { -exists =>
 is_same_sql_bind(
   $rs_selectas_rel->as_query,
   '(
- SELECT [id], [owner] FROM (
-   SELECT [id], [owner], ROW_NUMBER() OVER(  ) AS [rno__row__index] FROM (
+ SELECT [me].[id], [me].[owner] FROM (
+   SELECT [me].[id], [me].[owner], ROW_NUMBER() OVER(  ) AS [rno__row__index] FROM (
      SELECT [me].[id], [me].[owner]
      FROM [books] [me]
      WHERE ( ( (EXISTS (

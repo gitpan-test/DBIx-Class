@@ -2,7 +2,10 @@ package DBIx::Class::Storage::DBI::ODBC::Firebird;
 
 use strict;
 use warnings;
-use base 'DBIx::Class::Storage::DBI::Firebird::Common';
+use base qw/
+  DBIx::Class::Storage::DBI::ODBC
+  DBIx::Class::Storage::DBI::Firebird::Common
+/;
 use mro 'c3';
 use Try::Tiny;
 use namespace::clean;
@@ -29,6 +32,17 @@ makes it more suitable for long running processes such as under L<Catalyst>.
 =cut
 
 __PACKAGE__->datetime_parser_type ('DBIx::Class::Storage::DBI::ODBC::Firebird::DateTime::Format');
+
+# batch operations in DBD::ODBC 1.35 do not work with the official ODBC driver
+sub _run_connection_actions {
+  my $self = shift;
+
+  if ($self->_dbh_get_info('SQL_DRIVER_NAME') eq 'OdbcFb') {
+    $self->_disable_odbc_array_ops;
+  }
+
+  return $self->next::method(@_);
+}
 
 # releasing savepoints doesn't work for some reason, but that shouldn't matter
 sub _exec_svp_release { 1 }

@@ -4,16 +4,18 @@ use strict;
 use warnings;
 
 use base qw/
-    DBIx::Class::Storage::DBI::Sybase
-    DBIx::Class::Storage::DBI::AutoCast
+  DBIx::Class::Storage::DBI::Sybase
+  DBIx::Class::Storage::DBI::AutoCast
+  DBIx::Class::Storage::DBI::IdentityInsert
 /;
 use mro 'c3';
 use DBIx::Class::Carp;
-use Scalar::Util 'blessed';
+use Scalar::Util qw/blessed weaken/;
 use List::Util 'first';
 use Sub::Name();
 use Data::Dumper::Concise 'Dumper';
 use Try::Tiny;
+use Context::Preserve 'preserve_context';
 use namespace::clean;
 
 __PACKAGE__->sql_limit_dialect ('RowCountOrGenericSubQ');
@@ -23,10 +25,10 @@ __PACKAGE__->datetime_parser_type(
 );
 
 __PACKAGE__->mk_group_accessors('simple' =>
-    qw/_identity _blob_log_on_update _writer_storage _is_extra_storage
+    qw/_identity _identity_method _blob_log_on_update _parent_storage
+       _writer_storage _is_writer_storage
        _bulk_storage _is_bulk_storage _began_bulk_work
-       _bulk_disabled_due_to_coderef_connect_info_warned
-       _identity_method/
+    /
 );
 
 
@@ -71,7 +73,7 @@ sub _rebless {
 
   my $no_bind_vars = __PACKAGE__ . '::NoBindVars';
 
-  if ($self->using_freetds) {
+  if ($self->_using_freetds) {
     carp_once <<'EOF' unless $ENV{DBIC_SYBASE_FREETDS_NOWARN};
 
 You are using FreeTDS with Sybase.
@@ -116,18 +118,30 @@ EOF
 
 sub _init {
   my $self = shift;
+
+  $self->next::method(@_);
+
+  if ($self->_using_freetds && (my $ver = $self->_using_freetds_version||999) > 0.82) {
+    carp_once(
+      "Buggy FreeTDS version $ver detected, statement caching will not work and "
+    . 'will be disabled.'
+    );
+    $self->disable_sth_caching(1);
+  }
+
   $self->_set_max_connect(256);
 
 # create storage for insert/(update blob) transactions,
 # unless this is that storage
-  return if $self->_is_extra_storage;
+  return if $self->_parent_storage;
 
   my $writer_storage = (ref $self)->new;
 
-  $writer_storage->_is_extra_storage(1);
+  $writer_storage->_is_writer_storage(1); # just info
   $writer_storage->connect_info($self->connect_info);
   $writer_storage->auto_cast($self->auto_cast);
 
+  weaken ($writer_storage->{_parent_storage} = $self);
   $self->_writer_storage($writer_storage);
 
 # create a bulk storage unless connect_info is a coderef
@@ -135,13 +149,13 @@ sub _init {
 
   my $bulk_storage = (ref $self)->new;
 
-  $bulk_storage->_is_extra_storage(1);
   $bulk_storage->_is_bulk_storage(1); # for special ->disconnect acrobatics
   $bulk_storage->connect_info($self->connect_info);
 
 # this is why
   $bulk_storage->_dbi_connect_info->[0] .= ';bulkLogin=1';
 
+  weaken ($bulk_storage->{_parent_storage} = $self);
   $self->_bulk_storage($bulk_storage);
 }
 
@@ -199,7 +213,7 @@ sub _run_connection_actions {
   }
 
   $self->_dbh->{syb_chained_txn} = 1
-    unless $self->using_freetds;
+    unless $self->_using_freetds;
 
   $self->next::method(@_);
 }
@@ -241,68 +255,38 @@ sub _is_lob_column {
 
 sub _prep_for_execute {
   my $self = shift;
-  my ($op, $ident, $args) = @_;
+  my ($op, $ident) = @_;
+
+  #
+### This is commented out because all tests pass. However I am leaving it
+### here as it may prove necessary (can't think through all combinations)
+### BTW it doesn't currently work exactly - need better sensitivity to
+  # currently set value
+  #
+  # inherit these from the parent for the duration of _prep_for_execute
+  # Don't know how to make a localizing loop with if's, otherwise I would
+  #local $self->{_autoinc_supplied_for_op}
+  #  = $self->_parent_storage->_autoinc_supplied_for_op
+  #if ($op eq 'insert' or $op eq 'update') and $self->_parent_storage;
+  #local $self->{_perform_autoinc_retrieval}
+  #  = $self->_parent_storage->_perform_autoinc_retrieval
+  #if ($op eq 'insert' or $op eq 'update') and $self->_parent_storage;
 
   my ($sql, $bind) = $self->next::method (@_);
 
-  my $table = blessed $ident ? $ident->from : $ident;
-
-  my $bind_info = $self->_resolve_column_info(
-    $ident, [map { $_->[0]{dbic_colname} || () } @{$bind}]
-  );
-  my $bound_identity_col =
-    first { $bind_info->{$_}{is_auto_increment} }
-    keys %$bind_info
-  ;
-
-  my $columns_info = blessed $ident && $ident->columns_info;
-
-  my $identity_col =
-    $columns_info &&
-    first { $columns_info->{$_}{is_auto_increment} }
-      keys %$columns_info
-  ;
-
-  if (
-    ($bound_identity_col and $op eq 'insert')
-      or
-    (
-      $op eq 'update'
-        and
-      defined $identity_col
-        and
-      exists $args->[0]{$identity_col}
-    )
-  ) {
-    $sql = join ("\n",
-      $self->_set_table_identity_sql($op => $table, 'on'),
-      $sql,
-      $self->_set_table_identity_sql($op => $table, 'off'),
-    );
-  }
-
-  if (
-    (not $bound_identity_col)
-      and
-    $identity_col
-      and
-    (not $self->{insert_bulk})
-      and
-    $op eq 'insert'
-  ) {
-    $sql =
-      "$sql\n" .
-      $self->_fetch_identity_sql($ident, $identity_col);
+  if (my $identity_col = $self->_perform_autoinc_retrieval) {
+    $sql .= "\n" . $self->_fetch_identity_sql($ident, $identity_col)
   }
 
   return ($sql, $bind);
 }
 
-sub _set_table_identity_sql {
-  my ($self, $op, $table, $on_off) = @_;
+sub _fetch_identity_sql {
+  my ($self, $source, $col) = @_;
 
-  return sprintf 'SET IDENTITY_%s %s %s',
-    uc($op), $self->sql_maker->_quote($table), uc($on_off);
+  return sprintf ("SELECT MAX(%s) FROM %s",
+    map { $self->sql_maker->_quote ($_) } ($col, $source->from)
+  );
 }
 
 # Stolen from SQLT, with some modifications. This is a makeshift
@@ -335,13 +319,6 @@ sub _native_data_type {
   return uc($TYPE_MAPPING{$type} || $type);
 }
 
-sub _fetch_identity_sql {
-  my ($self, $source, $col) = @_;
-
-  return sprintf ("SELECT MAX(%s) FROM %s",
-    map { $self->sql_maker->_quote ($_) } ($col, $source->from)
-  );
-}
 
 sub _execute {
   my $self = shift;
@@ -349,10 +326,8 @@ sub _execute {
 
   my ($rv, $sth, @bind) = $self->next::method(@_);
 
-  if ($op eq 'insert') {
-    $self->_identity($sth->fetchrow_array);
-    $sth->finish;
-  }
+  $self->_identity( ($sth->fetchall_arrayref)->[0][0] )
+    if $self->_perform_autoinc_retrieval;
 
   return wantarray ? ($rv, $sth, @bind) : $rv;
 }
@@ -370,6 +345,18 @@ sub insert {
     (first { $columns_info->{$_}{is_auto_increment} }
       keys %$columns_info )
     || '';
+
+  # FIXME - this is duplication from DBI.pm. When refactored towards
+  # the LobWriter this can be folded back where it belongs.
+  local $self->{_autoinc_supplied_for_op} = exists $to_insert->{$identity_col}
+    ? 1
+    : 0
+  ;
+  local $self->{_perform_autoinc_retrieval} =
+    ($identity_col and ! exists $to_insert->{$identity_col})
+      ? $identity_col
+      : undef
+  ;
 
   # check for empty insert
   # INSERT INTO foo DEFAULT VALUES -- does not work with Sybase
@@ -393,17 +380,18 @@ sub insert {
   my $blob_cols = $self->_remove_blob_cols($source, $to_insert);
 
   # do we need the horrific SELECT MAX(COL) hack?
-  my $dumb_last_insert_id =
-       $identity_col
-    && (not exists $to_insert->{$identity_col})
-    && ($self->_identity_method||'') ne '@@IDENTITY';
+  my $need_dumb_last_insert_id = (
+    $self->_perform_autoinc_retrieval
+      &&
+    ($self->_identity_method||'') ne '@@IDENTITY'
+  );
 
   my $next = $self->next::can;
 
   # we are already in a transaction, or there are no blobs
   # and we don't need the PK - just (try to) do it
   if ($self->{transaction_depth}
-        || (!$blob_cols && !$dumb_last_insert_id)
+        || (!$blob_cols && !$need_dumb_last_insert_id)
   ) {
     return $self->_insert (
       $next, $source, $to_insert, $blob_cols, $identity_col
@@ -446,57 +434,59 @@ sub update {
   my $self = shift;
   my ($source, $fields, $where, @rest) = @_;
 
-  my $blob_cols = $self->_remove_blob_cols($source, $fields);
+  #
+  # When *updating* identities, ASE requires SET IDENTITY_UPDATE called
+  #
+  if (my $blob_cols = $self->_remove_blob_cols($source, $fields)) {
 
-  my $table = $source->name;
+    # If there are any blobs in $where, Sybase will return a descriptive error
+    # message.
+    # XXX blobs can still be used with a LIKE query, and this should be handled.
 
-  my $columns_info = $source->columns_info;
+    # update+blob update(s) done atomically on separate connection
+    $self = $self->_writer_storage;
 
-  my $identity_col =
-    first { $columns_info->{$_}{is_auto_increment} }
-      keys %$columns_info;
+    my $guard = $self->txn_scope_guard;
 
-  my $is_identity_update = $identity_col && defined $fields->{$identity_col};
+    # First update the blob columns to be updated to '' (taken from $fields, where
+    # it is originally put by _remove_blob_cols .)
+    my %blobs_to_empty = map { ($_ => delete $fields->{$_}) } keys %$blob_cols;
 
-  return $self->next::method(@_) unless $blob_cols;
+    # We can't only update NULL blobs, because blobs cannot be in the WHERE clause.
+    $self->next::method($source, \%blobs_to_empty, $where, @rest);
 
-# If there are any blobs in $where, Sybase will return a descriptive error
-# message.
-# XXX blobs can still be used with a LIKE query, and this should be handled.
+    # Now update the blobs before the other columns in case the update of other
+    # columns makes the search condition invalid.
+    my $rv = $self->_update_blobs($source, $blob_cols, $where);
 
-# update+blob update(s) done atomically on separate connection
-  $self = $self->_writer_storage;
+    if (keys %$fields) {
 
-  my $guard = $self->txn_scope_guard;
+      # Now set the identity update flags for the actual update
+      local $self->{_autoinc_supplied_for_op} = (first
+        { $_->{is_auto_increment} }
+        values %{ $source->columns_info([ keys %$fields ]) }
+      ) ? 1 : 0;
 
-# First update the blob columns to be updated to '' (taken from $fields, where
-# it is originally put by _remove_blob_cols .)
-  my %blobs_to_empty = map { ($_ => delete $fields->{$_}) } keys %$blob_cols;
-
-# We can't only update NULL blobs, because blobs cannot be in the WHERE clause.
-
-  $self->next::method($source, \%blobs_to_empty, $where, @rest);
-
-# Now update the blobs before the other columns in case the update of other
-# columns makes the search condition invalid.
-  $self->_update_blobs($source, $blob_cols, $where);
-
-  my @res;
-  if (%$fields) {
-    if (wantarray) {
-      @res    = $self->next::method(@_);
-    }
-    elsif (defined wantarray) {
-      $res[0] = $self->next::method(@_);
+      my $next = $self->next::can;
+      my $args = \@_;
+      return preserve_context {
+        $self->$next(@$args);
+      } after => sub { $guard->commit };
     }
     else {
-      $self->next::method(@_);
+      $guard->commit;
+      return $rv;
     }
   }
+  else {
+    # Set the identity update flags for the actual update
+    local $self->{_autoinc_supplied_for_op} = (first
+      { $_->{is_auto_increment} }
+      values %{ $source->columns_info([ keys %$fields ]) }
+    ) ? 1 : 0;
 
-  $guard->commit;
-
-  return wantarray ? @res : $res[0];
+    return $self->next::method(@_);
+  }
 }
 
 sub insert_bulk {
@@ -509,42 +499,39 @@ sub insert_bulk {
     first { $columns_info->{$_}{is_auto_increment} }
       keys %$columns_info;
 
-  my $is_identity_insert = (first { $_ eq $identity_col } @{$cols}) ? 1 : 0;
-
-  my @source_columns = $source->columns;
+  # FIXME - this is duplication from DBI.pm. When refactored towards
+  # the LobWriter this can be folded back where it belongs.
+  local $self->{_autoinc_supplied_for_op} =
+    (first { $_ eq $identity_col } @$cols)
+      ? 1
+      : 0
+  ;
 
   my $use_bulk_api =
     $self->_bulk_storage &&
     $self->_get_dbh->{syb_has_blk};
 
-  if ((not $use_bulk_api)
-        &&
-      (ref($self->_dbi_connect_info->[0]) eq 'CODE')
-        &&
-      (not $self->_bulk_disabled_due_to_coderef_connect_info_warned)) {
-    carp <<'EOF';
-Bulk API support disabled due to use of a CODEREF connect_info. Reverting to
-regular array inserts.
-EOF
-    $self->_bulk_disabled_due_to_coderef_connect_info_warned(1);
+  if (! $use_bulk_api and ref($self->_dbi_connect_info->[0]) eq 'CODE') {
+    carp_unique( join ' ',
+      'Bulk API support disabled due to use of a CODEREF connect_info.',
+      'Reverting to regular array inserts.',
+    );
   }
 
   if (not $use_bulk_api) {
     my $blob_cols = $self->_remove_blob_cols_array($source, $cols, $data);
 
-# _execute_array uses a txn anyway, but it ends too early in case we need to
+# next::method uses a txn anyway, but it ends too early in case we need to
 # select max(col) to get the identity for inserting blobs.
     ($self, my $guard) = $self->{transaction_depth} == 0 ?
       ($self->_writer_storage, $self->_writer_storage->txn_scope_guard)
       :
       ($self, undef);
 
-    local $self->{insert_bulk} = 1;
-
     $self->next::method(@_);
 
     if ($blob_cols) {
-      if ($is_identity_insert) {
+      if ($self->_autoinc_supplied_for_op) {
         $self->_insert_blobs_array ($source, $blob_cols, $cols, $data);
       }
       else {
@@ -575,27 +562,34 @@ EOF
 # otherwise, use the bulk API
 
 # rearrange @$data so that columns are in database order
-  my %orig_idx;
-  @orig_idx{@$cols} = 0..$#$cols;
+# and so we submit a full column list
+  my %orig_order = map { $cols->[$_] => $_ } 0..$#$cols;
 
-  my %new_idx;
-  @new_idx{@source_columns} = 0..$#source_columns;
+  my @source_columns = $source->columns;
+
+  # bcp identity index is 1-based
+  my $identity_idx = first { $source_columns[$_] eq $identity_col } (0..$#source_columns);
+  $identity_idx = defined $identity_idx ? $identity_idx + 1 : 0;
 
   my @new_data;
-  for my $datum (@$data) {
-    my $new_datum = [];
-    for my $col (@source_columns) {
-# identity data will be 'undef' if not $is_identity_insert
-# columns with defaults will also be 'undef'
-      $new_datum->[ $new_idx{$col} ] =
-        exists $orig_idx{$col} ? $datum->[ $orig_idx{$col} ] : undef;
-    }
-    push @new_data, $new_datum;
+  for my $slice_idx (0..$#$data) {
+    push @new_data, [map {
+      # identity data will be 'undef' if not _autoinc_supplied_for_op()
+      # columns with defaults will also be 'undef'
+      exists $orig_order{$_}
+        ? $data->[$slice_idx][$orig_order{$_}]
+        : undef
+    } @source_columns];
   }
 
-# bcp identity index is 1-based
-  my $identity_idx = exists $new_idx{$identity_col} ?
-    $new_idx{$identity_col} + 1 : 0;
+  my $proto_bind = $self->_resolve_bindattrs(
+    $source,
+    [map {
+      [ { dbic_colname => $source_columns[$_], _bind_data_slice_idx => $_ }
+        => $new_data[0][$_] ]
+    } (0 ..$#source_columns) ],
+    $columns_info
+  );
 
 ## Set a client-side conversion error handler, straight from DBD::Sybase docs.
 # This ignores any data conversion errors detected by the client side libs, as
@@ -621,11 +615,12 @@ EOF
 
     my $guard = $bulk->txn_scope_guard;
 
+## FIXME - once this is done - address the FIXME on finish() below
 ## XXX get this to work instead of our own $sth
 ## will require SQLA or *Hacks changes for ordered columns
 #    $bulk->next::method($source, \@source_columns, \@new_data, {
 #      syb_bcp_attribs => {
-#        identity_flag   => $is_identity_insert,
+#        identity_flag   => $self->_autoinc_supplied_for_op ? 1 : 0,
 #        identity_column => $identity_idx,
 #      }
 #    });
@@ -642,19 +637,25 @@ EOF
 #      'insert', # op
       {
         syb_bcp_attribs => {
-          identity_flag   => $is_identity_insert,
+          identity_flag   => $self->_autoinc_supplied_for_op ? 1 : 0,
           identity_column => $identity_idx,
         }
       }
     );
 
-    my @bind = map { [ $source_columns[$_] => $_ ] } (0 .. $#source_columns);
+    {
+      # FIXME the $sth->finish in _execute_array does a rollback for some
+      # reason. Disable it temporarily until we fix the SQLMaker thing above
+      no warnings 'redefine';
+      no strict 'refs';
+      local *{ref($sth).'::finish'} = sub {};
 
-    $self->_execute_array(
-      $source, $sth, \@bind, \@source_columns, \@new_data, sub {
-        $guard->commit
-      }
-    );
+      $self->_dbh_execute_for_fetch(
+        $source, $sth, $proto_bind, \@source_columns, \@new_data
+      );
+    }
+
+    $guard->commit;
 
     $bulk->_query_end($sql);
   } catch {
@@ -679,15 +680,6 @@ EOF
     $self->_bulk_storage->disconnect;
     $self->throw_exception($exception);
   }
-}
-
-sub _dbh_execute_array {
-  my ($self, $sth, $tuple_status, $cb) = @_;
-
-  my $rv = $self->next::method($sth, $tuple_status);
-  $cb->() if $cb;
-
-  return $rv;
 }
 
 # Make sure blobs are not bound as placeholders, and return any non-empty ones
@@ -823,7 +815,7 @@ sub _insert_blobs {
       $sth->func('ct_finish_send') or die $sth->errstr;
     }
     catch {
-      if ($self->using_freetds) {
+      if ($self->_using_freetds) {
         $self->throw_exception (
           "TEXT/IMAGE operation failed, probably because you are using FreeTDS: $_"
         );
@@ -977,7 +969,7 @@ L<http://www.isug.com/Sybase_FAQ/ASE/section7.html>.
 Sybase ASE for Linux (which comes with the Open Client libraries) may be
 downloaded here: L<http://response.sybase.com/forms/ASE_Linux_Download>.
 
-To see if you're using FreeTDS check C<< $schema->storage->using_freetds >>, or run:
+To see if you're using FreeTDS run:
 
   perl -MDBI -le 'my $dbh = DBI->connect($dsn, $user, $pass); print $dbh->{syb_oc_version}'
 
@@ -1075,6 +1067,18 @@ for information on changing the setting on the server side.
 
 See L</connect_call_datetime_setup> to setup date formats
 for L<DBIx::Class::InflateColumn::DateTime>.
+
+=head1 LIMITED QUERIES
+
+Because ASE does not have a good way to limit results in SQL that works for all
+types of queries, the limit dialect is set to
+L<GenericSubQ|SQL::Abstract::Limit/GenericSubQ>.
+
+Fortunately, ASE and L<DBD::Sybase> support cursors properly, so when
+L<GenericSubQ|SQL::Abstract::Limit/GenericSubQ> is too slow you can use
+the L<software_limit|DBIx::Class::ResultSet/software_limit>
+L<DBIx::Class::ResultSet> attribute to simulate limited queries by skipping over
+records.
 
 =head1 TEXT/IMAGE COLUMNS
 

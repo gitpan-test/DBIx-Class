@@ -5,6 +5,7 @@ use Test::Exception;
 use Test::More;
 use DBIx::Class::Optional::Dependencies ();
 use lib qw(t/lib);
+use DBICTest::RunMode;
 use DBIC::SqlMakerTest;
 
 use DBIx::Class::SQLMaker::LimitDialects;
@@ -38,6 +39,7 @@ BEGIN {
   );
 }
 
+use DBICTest;
 use DBICTest::Schema;
 
 my $schema = DBICTest::Schema->connect($dsn, $user, $pass);
@@ -323,7 +325,7 @@ do_creates($dbh);
     is_same_sql_bind (
       $rs->as_query,
       '(
-        SELECT artistid, name, rank, charfield, parentid
+        SELECT me.artistid, me.name, me.rank, me.charfield, me.parentid
           FROM (
             SELECT me.artistid, me.name, me.rank, me.charfield, me.parentid
               FROM artist me
@@ -350,24 +352,20 @@ do_creates($dbh);
       '(
         SELECT COUNT( * )
           FROM (
-            SELECT artistid
+            SELECT me.artistid
               FROM (
-                SELECT artistid, ROWNUM rownum__index
-                  FROM (
-                    SELECT me.artistid
-                      FROM artist me
-                    START WITH name = ?
-                    CONNECT BY parentid = PRIOR artistid
-                  ) me
+                SELECT me.artistid
+                  FROM artist me
+                START WITH name = ?
+                CONNECT BY parentid = PRIOR artistid
               ) me
-            WHERE rownum__index BETWEEN ? AND ?
+            WHERE ROWNUM <= ?
           ) me
       )',
       [
         [ { 'sqlt_datatype' => 'varchar', 'dbic_colname' => 'name', 'sqlt_size' => 100 }
             => 'root'],
-        [ $ROWS => 1 ],
-        [ $TOTAL => 2 ],
+        [ $ROWS => 2 ],
       ],
     );
 
@@ -557,13 +555,15 @@ sub do_creates {
 
 # clean up our mess
 END {
-  eval {
-    my $dbh = $schema->storage->dbh;
-    $dbh->do("DROP SEQUENCE artist_pk_seq");
-    $dbh->do("DROP SEQUENCE cd_seq");
-    $dbh->do("DROP SEQUENCE track_seq");
-    $dbh->do("DROP TABLE artist");
-    $dbh->do("DROP TABLE track");
-    $dbh->do("DROP TABLE cd");
+  if ($schema and my $dbh = $schema->storage->dbh) {
+    eval { $dbh->do($_) } for (
+      'DROP SEQUENCE artist_pk_seq',
+      'DROP SEQUENCE cd_seq',
+      'DROP SEQUENCE track_seq',
+      'DROP TABLE artist',
+      'DROP TABLE track',
+      'DROP TABLE cd',
+    );
   };
+  undef $schema;
 }

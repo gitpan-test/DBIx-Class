@@ -96,34 +96,35 @@ sub _RowNumberOver {
   my ($self, $sql, $rs_attrs, $rows, $offset ) = @_;
 
   # get selectors, and scan the order_by (if any)
-  my ($stripped_sql, $in_sel, $out_sel, $alias_map, $extra_order_sel)
-    = $self->_subqueried_limit_attrs ( $sql, $rs_attrs );
+  my $sq_attrs = $self->_subqueried_limit_attrs ( $sql, $rs_attrs );
 
   # make up an order if none exists
   my $requested_order = (delete $rs_attrs->{order_by}) || $self->_rno_default_order;
+
+  # the order binds (if any) will need to go at the end of the entire inner select
+  local $self->{order_bind};
   my $rno_ord = $self->_order_by ($requested_order);
+  push @{$self->{select_bind}}, @{$self->{order_bind}};
 
   # this is the order supplement magic
-  my $mid_sel = $out_sel;
-  if ($extra_order_sel) {
+  my $mid_sel = $sq_attrs->{selection_outer};
+  if (my $extra_order_sel = $sq_attrs->{order_supplement}) {
     for my $extra_col (sort
       { $extra_order_sel->{$a} cmp $extra_order_sel->{$b} }
       keys %$extra_order_sel
     ) {
-      $in_sel .= sprintf (', %s AS %s',
+      $sq_attrs->{selection_inner} .= sprintf (', %s AS %s',
         $extra_col,
         $extra_order_sel->{$extra_col},
       );
-
-      $mid_sel .= ', ' . $extra_order_sel->{$extra_col};
     }
   }
 
   # and this is order re-alias magic
-  for ($extra_order_sel, $alias_map) {
-    for my $col (keys %$_) {
+  for my $map ($sq_attrs->{order_supplement}, $sq_attrs->{outer_renames}) {
+    for my $col (sort { (length $b) <=> (length $a) } keys %{$map||{}} ) {
       my $re_col = quotemeta ($col);
-      $rno_ord =~ s/$re_col/$_->{$col}/;
+      $rno_ord =~ s/$re_col/$map->{$col}/;
     }
   }
 
@@ -137,9 +138,9 @@ sub _RowNumberOver {
 
   return <<EOS;
 
-SELECT $out_sel FROM (
+SELECT $sq_attrs->{selection_outer} FROM (
   SELECT $mid_sel, ROW_NUMBER() OVER( $rno_ord ) AS $idx_name FROM (
-    SELECT $in_sel ${stripped_sql}${group_having}
+    SELECT $sq_attrs->{selection_inner} $sq_attrs->{query_leftover}${group_having}
   ) $qalias
 ) $qalias WHERE $idx_name >= ? AND $idx_name <= ?
 
@@ -169,13 +170,13 @@ sub _SkipFirst {
   return sprintf ('SELECT %s%s%s%s',
     $offset
       ? do {
-         push @{$self->{limit_bind}}, [ $self->__offset_bindtype => $offset];
+         push @{$self->{pre_select_bind}}, [ $self->__offset_bindtype => $offset];
          'SKIP ? '
       }
       : ''
     ,
     do {
-       push @{$self->{limit_bind}}, [ $self->__rows_bindtype => $rows ];
+       push @{$self->{pre_select_bind}}, [ $self->__rows_bindtype => $rows ];
        'FIRST ? '
     },
     $sql,
@@ -199,12 +200,12 @@ sub _FirstSkip {
 
   return sprintf ('SELECT %s%s%s%s',
     do {
-       push @{$self->{limit_bind}}, [ $self->__rows_bindtype => $rows ];
+       push @{$self->{pre_select_bind}}, [ $self->__rows_bindtype => $rows ];
        'FIRST ? '
     },
     $offset
       ? do {
-         push @{$self->{limit_bind}}, [ $self->__offset_bindtype => $offset];
+         push @{$self->{pre_select_bind}}, [ $self->__offset_bindtype => $offset];
          'SKIP ? '
       }
       : ''
@@ -245,11 +246,23 @@ Supported by B<Oracle>.
 sub _RowNum {
   my ( $self, $sql, $rs_attrs, $rows, $offset ) = @_;
 
-  my ($stripped_sql, $insel, $outsel) = $self->_subqueried_limit_attrs ($sql, $rs_attrs);
+  my $sq_attrs = $self->_subqueried_limit_attrs ($sql, $rs_attrs);
 
   my $qalias = $self->_quote ($rs_attrs->{alias});
   my $idx_name = $self->_quote ('rownum__index');
   my $order_group_having = $self->_parse_rs_attrs($rs_attrs);
+
+
+  # if no offset (e.g. first page) - we can skip one of the subqueries
+  if (! $offset) {
+    push @{$self->{limit_bind}}, [ $self->__rows_bindtype => $rows ];
+
+    return <<EOS;
+SELECT $sq_attrs->{selection_outer} FROM (
+  SELECT $sq_attrs->{selection_inner} $sq_attrs->{query_leftover}${order_group_having}
+) $qalias WHERE ROWNUM <= ?
+EOS
+  }
 
   #
   # There are two ways to limit in Oracle, one vastly faster than the other
@@ -259,81 +272,37 @@ sub _RowNum {
   # ordered by a unique set of columns, it is not safe to use the faster
   # method, and the slower BETWEEN query is used instead
   #
-  # FIXME - this is quite expensive, and doe snot perform caching of any sort
+  # FIXME - this is quite expensive, and does not perform caching of any sort
   # as soon as some of the DQ work becomes viable consider switching this
   # over
-  if ( __order_by_is_unique($rs_attrs) ) {
+  if (
+    $rs_attrs->{order_by}
+      and
+    $rs_attrs->{_rsroot_rsrc}->storage->_order_by_is_stable(
+      @{$rs_attrs}{qw/from order_by where/}
+    )
+  ) {
+    push @{$self->{limit_bind}}, [ $self->__total_bindtype => $offset + $rows ], [ $self->__offset_bindtype => $offset + 1 ];
 
-    # if offset is 0 (first page) the we can skip a subquery
-    if (! $offset) {
-      push @{$self->{limit_bind}}, [ $self->__rows_bindtype => $rows ];
-
-      return <<EOS;
-SELECT $outsel FROM (
-  SELECT $insel ${stripped_sql}${order_group_having}
-) $qalias WHERE ROWNUM <= ?
-EOS
-    }
-    else {
-      push @{$self->{limit_bind}}, [ $self->__total_bindtype => $offset + $rows ], [ $self->__offset_bindtype => $offset + 1 ];
-
-      return <<EOS;
-SELECT $outsel FROM (
-  SELECT $outsel, ROWNUM $idx_name FROM (
-    SELECT $insel ${stripped_sql}${order_group_having}
+    return <<EOS;
+SELECT $sq_attrs->{selection_outer} FROM (
+  SELECT $sq_attrs->{selection_outer}, ROWNUM $idx_name FROM (
+    SELECT $sq_attrs->{selection_inner} $sq_attrs->{query_leftover}${order_group_having}
   ) $qalias WHERE ROWNUM <= ?
 ) $qalias WHERE $idx_name >= ?
 EOS
-    }
   }
   else {
     push @{$self->{limit_bind}}, [ $self->__offset_bindtype => $offset + 1 ], [ $self->__total_bindtype => $offset + $rows ];
 
     return <<EOS;
-SELECT $outsel FROM (
-  SELECT $outsel, ROWNUM $idx_name FROM (
-    SELECT $insel ${stripped_sql}${order_group_having}
+SELECT $sq_attrs->{selection_outer} FROM (
+  SELECT $sq_attrs->{selection_outer}, ROWNUM $idx_name FROM (
+    SELECT $sq_attrs->{selection_inner} $sq_attrs->{query_leftover}${order_group_having}
   ) $qalias
 ) $qalias WHERE $idx_name BETWEEN ? AND ?
 EOS
   }
-}
-
-# determine if the supplied order_by contains a unique column (set)
-sub __order_by_is_unique {
-  my $rs_attrs = shift;
-  my $rsrc = $rs_attrs->{_rsroot_rsrc};
-  my $order_by = $rs_attrs->{order_by}
-    || return 0;
-
-  my $storage = $rsrc->schema->storage;
-
-  my @order_by_cols = map { $_->[0] } $storage->_extract_order_criteria($order_by)
-    or return 0;
-
-  my $colinfo =
-    $storage->_resolve_column_info($rs_attrs->{from}, \@order_by_cols);
-
-  my $sources = {
-    map {( "$_" => $_ )} map { $_->{-result_source} } values %$colinfo
-  };
-
-  my $supplied_order = {
-    map { $_ => 1 }
-    grep { exists $colinfo->{$_} and ! $colinfo->{$_}{is_nullable} }
-    @order_by_cols
-  };
-
-  return 0 unless keys %$supplied_order;
-
-  for my $uks (
-    map { values %$_ } map { +{ $_->unique_constraints } } values %$sources
-  ) {
-    return 1
-      unless first { ! exists $supplied_order->{$_} } @$uks;
-  }
-
-  return 0;
 }
 
 # used by _Top and _FetchFirst below
@@ -341,26 +310,49 @@ sub _prep_for_skimming_limit {
   my ( $self, $sql, $rs_attrs ) = @_;
 
   # get selectors
-  my (%r, $alias_map, $extra_order_sel);
-  ($r{inner_sql}, $r{in_sel}, $r{out_sel}, $alias_map, $extra_order_sel)
-    = $self->_subqueried_limit_attrs ($sql, $rs_attrs);
+  my $sq_attrs = $self->_subqueried_limit_attrs ($sql, $rs_attrs);
 
   my $requested_order = delete $rs_attrs->{order_by};
-  $r{order_by_requested} = $self->_order_by ($requested_order);
+  $sq_attrs->{order_by_requested} = $self->_order_by ($requested_order);
+  $sq_attrs->{grpby_having} = $self->_parse_rs_attrs ($rs_attrs);
 
-  # make up an order unless supplied
-  my $inner_order = ($r{order_by_requested}
-    ? $requested_order
-    : [ map
-      { "$rs_attrs->{alias}.$_" }
-      ( $rs_attrs->{_rsroot_rsrc}->_pri_cols )
-    ]
-  );
+  # without an offset things are easy
+  if (! $rs_attrs->{offset}) {
+    $sq_attrs->{order_by_inner} = $sq_attrs->{order_by_requested};
+  }
+  else {
+    $sq_attrs->{quoted_rs_alias} = $self->_quote ($rs_attrs->{alias});
 
-  # localise as we already have all the bind values we need
-  {
+    # localise as we already have all the bind values we need
     local $self->{order_bind};
-    $r{order_by_inner} = $self->_order_by ($inner_order);
+
+    # make up an order unless supplied or sanity check what we are given
+    my $inner_order;
+    if ($sq_attrs->{order_by_requested}) {
+      $self->throw_exception (
+        'Unable to safely perform "skimming type" limit with supplied unstable order criteria'
+      ) unless ($rs_attrs->{_rsroot_rsrc}->schema->storage->_order_by_is_stable(
+        $rs_attrs->{from},
+        $requested_order,
+        $rs_attrs->{where},
+      ));
+
+      $inner_order = $requested_order;
+    }
+    else {
+      $inner_order = [ map
+        { "$rs_attrs->{alias}.$_" }
+        ( @{
+          $rs_attrs->{_rsroot_rsrc}->_identifying_column_set
+            ||
+          $self->throw_exception(sprintf(
+            'Unable to auto-construct stable order criteria for "skimming type" limit '
+          . "dialect based on source '%s'", $rs_attrs->{_rsroot_rsrc}->name) );
+        } )
+      ];
+    }
+
+    $sq_attrs->{order_by_inner} = $self->_order_by ($inner_order);
 
     my @out_chunks;
     for my $ch ($self->_order_by_chunks ($inner_order)) {
@@ -368,50 +360,42 @@ sub _prep_for_skimming_limit {
 
       $ch =~ s/\s+ ( ASC|DESC ) \s* $//ix;
       my $dir = uc ($1||'ASC');
-
       push @out_chunks, \join (' ', $ch, $dir eq 'ASC' ? 'DESC' : 'ASC' );
     }
 
-    $r{order_by_reversed} = $self->_order_by (\@out_chunks);
-  }
+    $sq_attrs->{order_by_middle} = $self->_order_by (\@out_chunks);
 
-  # this is the order supplement magic
-  $r{mid_sel} = $r{out_sel};
-  if ($extra_order_sel) {
-    for my $extra_col (sort
-      { $extra_order_sel->{$a} cmp $extra_order_sel->{$b} }
-      keys %$extra_order_sel
-    ) {
-      $r{in_sel} .= sprintf (', %s AS %s',
-        $extra_col,
-        $extra_order_sel->{$extra_col},
-      );
+    # this is the order supplement magic
+    $sq_attrs->{selection_middle} = $sq_attrs->{selection_outer};
+    if (my $extra_order_sel = $sq_attrs->{order_supplement}) {
+      for my $extra_col (sort
+        { $extra_order_sel->{$a} cmp $extra_order_sel->{$b} }
+        keys %$extra_order_sel
+      ) {
+        $sq_attrs->{selection_inner} .= sprintf (', %s AS %s',
+          $extra_col,
+          $extra_order_sel->{$extra_col},
+        );
 
-      $r{mid_sel} .= ', ' . $extra_order_sel->{$extra_col};
+        $sq_attrs->{selection_middle} .= ', ' . $extra_order_sel->{$extra_col};
+      }
+
+      # Whatever order bindvals there are, they will be realiased and
+      # reselected, and need to show up at end of the initial inner select
+      push @{$self->{select_bind}}, @{$self->{order_bind}};
     }
 
-    # since whatever order bindvals there are, they will be realiased
-    # and need to show up in front of the entire initial inner subquery
-    # *unshift* the selector bind stack to make this happen (horrible,
-    # horrible, but we don't have another mechanism yet)
-    unshift @{$self->{select_bind}}, @{$self->{order_bind}};
-  }
-
-  # and this is order re-alias magic
-  for my $map ($extra_order_sel, $alias_map) {
-    for my $col (keys %$map) {
-      my $re_col = quotemeta ($col);
-      $_ =~ s/$re_col/$map->{$col}/
-        for ($r{order_by_reversed}, $r{order_by_requested});
+    # and this is order re-alias magic
+    for my $map ($sq_attrs->{order_supplement}, $sq_attrs->{outer_renames}) {
+      for my $col (sort { (length $b) <=> (length $a) } keys %{$map||{}}) {
+        my $re_col = quotemeta ($col);
+        $_ =~ s/$re_col/$map->{$col}/
+          for ($sq_attrs->{order_by_middle}, $sq_attrs->{order_by_requested});
+      }
     }
   }
 
-  # generate the rest of the sql
-  $r{grpby_having} = $self->_parse_rs_attrs ($rs_attrs);
-
-  $r{quoted_rs_alias} = $self->_quote ($rs_attrs->{alias});
-
-  \%r;
+  $sq_attrs;
 }
 
 =head2 Top
@@ -436,31 +420,32 @@ when $limit+$offset > total amount of rows in the resultset.
 sub _Top {
   my ( $self, $sql, $rs_attrs, $rows, $offset ) = @_;
 
-  my %l = %{ $self->_prep_for_skimming_limit($sql, $rs_attrs) };
+  my $lim = $self->_prep_for_skimming_limit($sql, $rs_attrs);
 
   $sql = sprintf ('SELECT TOP %u %s %s %s %s',
     $rows + ($offset||0),
-    $l{in_sel},
-    $l{inner_sql},
-    $l{grpby_having},
-    $l{order_by_inner},
+    $offset ? $lim->{selection_inner} : $lim->{selection_original},
+    $lim->{query_leftover},
+    $lim->{grpby_having},
+    $lim->{order_by_inner},
   );
 
   $sql = sprintf ('SELECT TOP %u %s FROM ( %s ) %s %s',
     $rows,
-    $l{mid_sel},
+    $lim->{selection_middle},
     $sql,
-    $l{quoted_rs_alias},
-    $l{order_by_reversed},
+    $lim->{quoted_rs_alias},
+    $lim->{order_by_middle},
   ) if $offset;
 
-  $sql = sprintf ('SELECT TOP %u %s FROM ( %s ) %s %s',
-    $rows,
-    $l{out_sel},
+  $sql = sprintf ('SELECT %s FROM ( %s ) %s %s',
+    $lim->{selection_outer},
     $sql,
-    $l{quoted_rs_alias},
-    $l{order_by_requested},
-  ) if ( ($offset && $l{order_by_requested}) || ($l{mid_sel} ne $l{out_sel}) );
+    $lim->{quoted_rs_alias},
+    $lim->{order_by_requested},
+  ) if $offset and (
+    $lim->{order_by_requested} or $lim->{selection_middle} ne $lim->{selection_outer}
+  );
 
   return $sql;
 }
@@ -490,31 +475,33 @@ when $limit+$offset > total amount of rows in the resultset.
 sub _FetchFirst {
   my ( $self, $sql, $rs_attrs, $rows, $offset ) = @_;
 
-  my %l = %{ $self->_prep_for_skimming_limit($sql, $rs_attrs) };
+  my $lim = $self->_prep_for_skimming_limit($sql, $rs_attrs);
 
   $sql = sprintf ('SELECT %s %s %s %s FETCH FIRST %u ROWS ONLY',
-    $l{in_sel},
-    $l{inner_sql},
-    $l{grpby_having},
-    $l{order_by_inner},
+    $offset ? $lim->{selection_inner} : $lim->{selection_original},
+    $lim->{query_leftover},
+    $lim->{grpby_having},
+    $lim->{order_by_inner},
     $rows + ($offset||0),
   );
 
   $sql = sprintf ('SELECT %s FROM ( %s ) %s %s FETCH FIRST %u ROWS ONLY',
-    $l{mid_sel},
+    $lim->{selection_middle},
     $sql,
-    $l{quoted_rs_alias},
-    $l{order_by_reversed},
+    $lim->{quoted_rs_alias},
+    $lim->{order_by_middle},
     $rows,
   ) if $offset;
 
-  $sql = sprintf ('SELECT %s FROM ( %s ) %s %s FETCH FIRST %u ROWS ONLY',
-    $l{out_sel},
+
+  $sql = sprintf ('SELECT %s FROM ( %s ) %s %s',
+    $lim->{selection_outer},
     $sql,
-    $l{quoted_rs_alias},
-    $l{order_by_requested},
-    $rows,
-  ) if ( ($offset && $l{order_by_requested}) || ($l{mid_sel} ne $l{out_sel}) );
+    $lim->{quoted_rs_alias},
+    $lim->{order_by_requested},
+  ) if $offset and (
+    $lim->{order_by_requested} or $lim->{selection_middle} ne $lim->{selection_outer}
+  );
 
   return $sql;
 }
@@ -538,9 +525,9 @@ sub _RowCountOrGenericSubQ {
 
   return $self->_GenericSubQ(@_) if $offset;
 
-  return sprintf <<"EOF", $rows, $sql;
+  return sprintf <<"EOF", $rows, $sql, $self->_parse_rs_attrs( $rs_attrs );
 SET ROWCOUNT %d
-%s
+%s %s
 SET ROWCOUNT 0
 EOF
 }
@@ -558,8 +545,11 @@ This is the most evil limit "dialect" (more of a hack) for I<really> stupid
 databases. It works by ordering the set by some unique column, and calculating
 the amount of rows that have a less-er value (thus emulating a L</RowNum>-like
 index). Of course this implies the set can only be ordered by a single unique
-column. Also note that this technique can be and often is B<excruciatingly
-slow>.
+column.
+
+Also note that this technique can be and often is B<excruciatingly slow>. You
+may have much better luck using L<DBIx::Class::ResultSet/software_limit>
+instead.
 
 Currently used by B<Sybase ASE>, due to lack of any other option.
 
@@ -570,75 +560,52 @@ sub _GenericSubQ {
   my $root_rsrc = $rs_attrs->{_rsroot_rsrc};
   my $root_tbl_name = $root_rsrc->name;
 
-  my ($order_by, @rest) = do {
+  my ($first_order_by) = do {
     local $self->{quote_char};
-    $self->_order_by_chunks ($rs_attrs->{order_by})
-  };
-
-  unless (
-    $order_by
-      &&
-    ! @rest
-      &&
-    ( ! ref $order_by
-        ||
-      ( ref $order_by eq 'ARRAY' and @$order_by == 1 )
-    )
-  ) {
-    $self->throw_exception (
-      'Generic Subquery Limit does not work on resultsets without an order, or resultsets '
-    . 'with complex order criteria (multicolumn and/or functions). Provide a single, '
-    . 'unique-column order criteria.'
-    );
-  }
-
-  ($order_by) = @$order_by if ref $order_by;
-
-  $order_by =~ s/\s+ ( ASC|DESC ) \s* $//ix;
-  my $direction = lc ($1 || 'asc');
-
-  my ($unq_sort_col) = $order_by =~ /(?:^|\.)([^\.]+)$/;
-
-  my $inf = $root_rsrc->storage->_resolve_column_info (
-    $rs_attrs->{from}, [$order_by, $unq_sort_col]
+    local $self->{order_bind};
+    map { ref $_ ? $_->[0] : $_ } $self->_order_by_chunks ($rs_attrs->{order_by})
+  } or $self->throw_exception (
+    'Generic Subquery Limit does not work on resultsets without an order. Provide a single, '
+  . 'unique-column order criteria.'
   );
 
-  my $ord_colinfo = $inf->{$order_by} || $self->throw_exception("Unable to determine source of order-criteria '$order_by'");
+  $first_order_by =~ s/\s+ ( ASC|DESC ) \s* $//ix;
+  my $direction = lc ($1 || 'asc');
 
-  if ($ord_colinfo->{-result_source}->name ne $root_tbl_name) {
-    $self->throw_exception(sprintf
-      "Generic Subquery Limit order criteria can be only based on the root-source '%s'"
-    . " (aliased as '%s')", $root_rsrc->source_name, $rs_attrs->{alias},
-    );
-  }
+  my ($first_ord_alias, $first_ord_col) = $first_order_by =~ /^ (?: ([^\.]+) \. )? ([^\.]+) $/x;
 
-  # make sure order column is qualified
-  $order_by = "$rs_attrs->{alias}.$order_by"
-    unless $order_by =~ /^$rs_attrs->{alias}\./;
+  $self->throw_exception(sprintf
+    "Generic Subquery Limit order criteria can be only based on the root-source '%s'"
+  . " (aliased as '%s')", $root_rsrc->source_name, $rs_attrs->{alias},
+  ) if ($first_ord_alias and $first_ord_alias ne $rs_attrs->{alias});
 
-  my $is_u;
-  my $ucs = { $root_rsrc->unique_constraints };
-  for (values %$ucs ) {
-    if (@$_ == 1 && "$rs_attrs->{alias}.$_->[0]" eq $order_by) {
-      $is_u++;
-      last;
-    }
-  }
+  $first_ord_alias ||= $rs_attrs->{alias};
+
   $self->throw_exception(
-    "Generic Subquery Limit order criteria column '$order_by' must be unique (no unique constraint found)"
-  ) unless $is_u;
+    "Generic Subquery Limit first order criteria '$first_ord_col' must be unique"
+  ) unless $root_rsrc->_identifying_column_set([$first_ord_col]);
 
-  my ($stripped_sql, $in_sel, $out_sel, $alias_map, $extra_order_sel)
-    = $self->_subqueried_limit_attrs ($sql, $rs_attrs);
+  my $sq_attrs = do {
+    # perform the mangling only using the very first order crietria
+    # (the one we care about)
+    local $rs_attrs->{order_by} = $first_order_by;
+    $self->_subqueried_limit_attrs ($sql, $rs_attrs);
+  };
 
   my $cmp_op = $direction eq 'desc' ? '>' : '<';
   my $count_tbl_alias = 'rownum__emulation';
 
-  my $order_sql = $self->_order_by (delete $rs_attrs->{order_by});
+  my ($order_sql, @order_bind) = do {
+    local $self->{order_bind};
+    my $s = $self->_order_by (delete $rs_attrs->{order_by});
+    ($s, @{$self->{order_bind}});
+  };
   my $group_having_sql = $self->_parse_rs_attrs($rs_attrs);
 
+  my $in_sel = $sq_attrs->{selection_inner};
+
   # add the order supplement (if any) as this is what will be used for the outer WHERE
-  $in_sel .= ", $_" for keys %{$extra_order_sel||{}};
+  $in_sel .= ", $_" for keys %{$sq_attrs->{order_supplement}};
 
   my $rownum_cond;
   if ($offset) {
@@ -657,10 +624,15 @@ sub _GenericSubQ {
     ;
   }
 
+  # even though binds in order_by make no sense here (the rs needs to be
+  # ordered by a unique column first) - pass whatever there may be through
+  # anyway
+  push @{$self->{limit_bind}}, @order_bind;
+
   return sprintf ("
-SELECT $out_sel
+SELECT $sq_attrs->{selection_outer}
   FROM (
-    SELECT $in_sel ${stripped_sql}${group_having_sql}
+    SELECT $in_sel $sq_attrs->{query_leftover}${group_having_sql}
   ) %s
 WHERE ( SELECT COUNT(*) FROM %s %s WHERE %s $cmp_op %s ) $rownum_cond
 $order_sql
@@ -668,8 +640,8 @@ $order_sql
     $rs_attrs->{alias},
     $root_tbl_name,
     $count_tbl_alias,
-    "$count_tbl_alias.$unq_sort_col",
-    $order_by,
+    "$count_tbl_alias.$first_ord_col",
+    "$first_ord_alias.$first_ord_col",
   ));
 }
 
@@ -684,7 +656,7 @@ $order_sql
 #
 # Returns mangled proto-sql, inner/outer strings of SQL QUOTED selectors
 # with aliases (to be used in whatever select statement), and an alias
-# index hashref of QUOTED SEL => QUOTED ALIAS pairs (to maybe be used 
+# index hashref of QUOTED SEL => QUOTED ALIAS pairs (to maybe be used
 # for string-subst higher up).
 # If an order_by is supplied, the inner select needs to bring out columns
 # used in implicit (non-selected) orders, and the order condition itself
@@ -722,6 +694,7 @@ sub _subqueried_limit_attrs {
     my $sql_alias = (ref $s) eq 'HASH' ? $s->{-as} : undef;
 
     push @sel, {
+      arg => $s,
       sql => $sql_sel,
       unquoted_sql => do {
         local $self->{quote_char};
@@ -736,7 +709,9 @@ sub _subqueried_limit_attrs {
       ,
     };
 
-    $in_sel_index->{$sql_sel}++;
+    # anything with a placeholder in it needs re-selection
+    $in_sel_index->{$sql_sel}++ unless $sql_sel =~ / (?: ^ | \W ) \? (?: \W | $ ) /x;
+
     $in_sel_index->{$self->_quote ($sql_alias)}++ if $sql_alias;
 
     # record unqualified versions too, so we do not have
@@ -752,26 +727,32 @@ sub _subqueried_limit_attrs {
   # unless we are dealing with the current source alias
   # (which will transcend the subqueries as it is necessary
   # for possible further chaining)
-  my (@in_sel, @out_sel, %renamed);
+  # same for anything we do not recognize
+  my ($sel, $renamed);
   for my $node (@sel) {
+    push @{$sel->{original}}, $node->{sql};
+
     if (
+      ! $in_sel_index->{$node->{sql}}
+        or
       $node->{as} =~ / (?<! ^ $re_alias ) \. /x
         or
       $node->{unquoted_sql} =~ / (?<! ^ $re_alias ) $re_sep /x
     ) {
       $node->{as} = $self->_unqualify_colname($node->{as});
       my $quoted_as = $self->_quote($node->{as});
-      push @in_sel, sprintf '%s AS %s', $node->{sql}, $quoted_as;
-      push @out_sel, $quoted_as;
-      $renamed{$node->{sql}} = $quoted_as;
+      push @{$sel->{inner}}, sprintf '%s AS %s', $node->{sql}, $quoted_as;
+      push @{$sel->{outer}}, $quoted_as;
+      $renamed->{$node->{sql}} = $quoted_as;
     }
     else {
-      push @in_sel, $node->{sql};
-      push @out_sel, $self->_quote ($node->{as});
+      push @{$sel->{inner}}, $node->{sql};
+      push @{$sel->{outer}}, $self->_quote (ref $node->{arg} ? $node->{as} : $node->{arg});
     }
   }
+
   # see if the order gives us anything
-  my %extra_order_sel;
+  my $extra_order_sel;
   for my $chunk ($self->_order_by_chunks ($rs_attrs->{order_by})) {
     # order with bind
     $chunk = $chunk->[0] if (ref $chunk) eq 'ARRAY';
@@ -779,20 +760,17 @@ sub _subqueried_limit_attrs {
 
     next if $in_sel_index->{$chunk};
 
-    $extra_order_sel{$chunk} ||= $self->_quote (
-      'ORDER__BY__' . scalar keys %extra_order_sel
+    $extra_order_sel->{$chunk} ||= $self->_quote (
+      'ORDER__BY__' . sprintf '%03d', scalar keys %{$extra_order_sel||{}}
     );
   }
 
-  return (
-    $proto_sql,
-    (map { join (', ', @$_ ) } (
-      \@in_sel,
-      \@out_sel)
-    ),
-    \%renamed,
-    keys %extra_order_sel ? \%extra_order_sel : (),
-  );
+  return {
+    query_leftover => $proto_sql,
+    (map {( "selection_$_" => join (', ', @{$sel->{$_}} ) )} keys %$sel ),
+    outer_renames => $renamed,
+    order_supplement => $extra_order_sel,
+  };
 }
 
 sub _unqualify_colname {

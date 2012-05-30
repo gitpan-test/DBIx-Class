@@ -2,7 +2,10 @@ package DBIx::Class::Storage::DBI::ODBC::SQL_Anywhere;
 
 use strict;
 use warnings;
-use base qw/DBIx::Class::Storage::DBI::SQLAnywhere/;
+use base qw/
+  DBIx::Class::Storage::DBI::ODBC
+  DBIx::Class::Storage::DBI::SQLAnywhere
+/;
 use mro 'c3';
 
 1;
@@ -22,7 +25,7 @@ that module for details.
 =head2 uniqueidentifierstr data type
 
 If you use the C<uniqueidentifierstr> type with this driver, your queries may
-fail with: 
+fail with:
 
   Data truncated (SQL-01004)
 

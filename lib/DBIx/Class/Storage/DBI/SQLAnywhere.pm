@@ -6,7 +6,6 @@ use base qw/DBIx::Class::Storage::DBI::UniqueIdentifier/;
 use mro 'c3';
 use List::Util 'first';
 use Try::Tiny;
-use DBIx::Class::Storage::DBI::SQLAnywhere::Cursor ();
 use namespace::clean;
 
 __PACKAGE__->mk_group_accessors(simple => qw/_identity/);
@@ -56,6 +55,9 @@ sub _prefetch_autovalues {
     first { $colinfo->{$_}{is_auto_increment} } keys %$colinfo;
 
 # user might have an identity PK without is_auto_increment
+#
+# FIXME we probably should not have supported the above, see what
+# does it take to move away from it
   if (not $identity_col) {
     foreach my $pk_col ($source->primary_columns) {
       if (

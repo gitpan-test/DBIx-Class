@@ -183,7 +183,7 @@ my $reqs = {
 
   test_eol => {
     req => {
-      'Test::EOL'                 => '0.6',
+      'Test::EOL'                 => '1.0',
     },
   },
 
@@ -231,11 +231,10 @@ my $reqs = {
 
   test_cdbicompat => {
     req => {
-      'DBIx::ContextualFetch'     => '0',
+      'Class::DBI' => 0,
       'Class::DBI::Plugin::DeepAbstractSearch' => '0',
-      'Class::Trigger'            => '0',
+      %$datetime_basic,
       'Time::Piece::MySQL'        => '0',
-      'Clone'                     => '0',
       'Date::Simple'              => '3.03',
     },
   },
@@ -254,6 +253,7 @@ my $reqs = {
 
   rdbms_pg => {
     req => {
+      # when changing this list make sure to adjust xt/optional_deps.t
       %$rdbms_pg,
     },
     pod => {
@@ -370,7 +370,7 @@ my $reqs = {
       title => 'Informix support',
       desc => 'Modules required to connect to Informix',
     },
-  }, 
+  },
 
   rdbms_sqlanywhere => {
     req => {
@@ -380,7 +380,7 @@ my $reqs = {
       title => 'SQLAnywhere support',
       desc => 'Modules required to connect to SQLAnywhere',
     },
-  }, 
+  },
 
   rdbms_sqlanywhere_odbc => {
     req => {
@@ -390,7 +390,7 @@ my $reqs = {
       title => 'SQLAnywhere support via DBD::ODBC',
       desc => 'Modules required to connect to SQLAnywhere via DBD::ODBC',
     },
-  }, 
+  },
 
   rdbms_firebird => {
     req => {
@@ -400,7 +400,7 @@ my $reqs = {
       title => 'Firebird support',
       desc => 'Modules required to connect to Firebird',
     },
-  }, 
+  },
 
   rdbms_firebird_interbase => {
     req => {
@@ -410,7 +410,7 @@ my $reqs = {
       title => 'Firebird support via DBD::InterBase',
       desc => 'Modules required to connect to Firebird via DBD::InterBase',
     },
-  }, 
+  },
 
   rdbms_firebird_odbc => {
     req => {
@@ -420,7 +420,7 @@ my $reqs = {
       title => 'Firebird support via DBD::ODBC',
       desc => 'Modules required to connect to Firebird via DBD::ODBC',
     },
-  }, 
+  },
 
 # the order does matter because the rdbms support group might require
 # a different version that the test group
@@ -428,6 +428,7 @@ my $reqs = {
     req => {
       $ENV{DBICTEST_PG_DSN}
         ? (
+          # when changing this list make sure to adjust xt/optional_deps.t
           %$rdbms_pg,
           ($^O ne 'MSWin32' ? ('Sys::SigAction' => '0') : ()),
           'DBD::Pg'               => '2.009002',

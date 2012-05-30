@@ -8,15 +8,18 @@ use DBICTest;
 use DBIC::SqlMakerTest;
 use DBIx::Class::SQLMaker::LimitDialects;
 
-my ($TOTAL, $OFFSET) = (
+my ($TOTAL, $OFFSET, $ROWS) = (
    DBIx::Class::SQLMaker::LimitDialects->__total_bindtype,
    DBIx::Class::SQLMaker::LimitDialects->__offset_bindtype,
+   DBIx::Class::SQLMaker::LimitDialects->__rows_bindtype,
 );
 
 my $s = DBICTest->init_schema (no_deploy => 1, );
 $s->storage->sql_maker->limit_dialect ('RowNum');
 
-my $rs = $s->resultset ('CD');
+my $rs = $s->resultset ('CD')->search({ id => 1 });
+
+my $where_bind = [ { dbic_colname => 'id' }, 1 ];
 
 for my $test_set (
   {
@@ -36,11 +39,13 @@ for my $test_set (
         SELECT id, bar__id, bleh, ROWNUM rownum__index
         FROM (
           SELECT foo.id AS id, bar.id AS bar__id, TO_CHAR (foo.womble, "blah") AS bleh
-          FROM cd me
+            FROM cd me
+          WHERE id = ?
         ) me
       ) me WHERE rownum__index BETWEEN ? AND ?
     )',
     binds => [
+      $where_bind,
       [ $OFFSET => 4 ],
       [ $TOTAL => 4 ],
     ],
@@ -62,7 +67,8 @@ for my $test_set (
         SELECT id, bar__id, bleh, ROWNUM rownum__index
         FROM (
           SELECT foo.id AS id, bar.id AS bar__id, TO_CHAR(foo.womble, "blah") AS bleh
-          FROM cd me
+            FROM cd me
+          WHERE id = ?
           ORDER BY artist, title
         ) me
         WHERE ROWNUM <= ?
@@ -70,8 +76,40 @@ for my $test_set (
       WHERE rownum__index >= ?
     )',
     binds => [
+      $where_bind,
       [ $TOTAL => 4 ],
       [ $OFFSET => 4 ],
+    ],
+  },
+ {
+    name => 'Rownum subsel aliasing works correctly with non-unique order_by',
+    rs => $rs->search_rs(undef, {
+      rows => 1,
+      offset => 3,
+      columns => [
+        { id => 'foo.id' },
+        { 'bar.id' => 'bar.id' },
+        { bleh => \'TO_CHAR (foo.womble, "blah")' },
+      ],
+      order_by => 'artist',
+    }),
+    sql => '(
+      SELECT id, bar__id, bleh
+      FROM (
+        SELECT id, bar__id, bleh, ROWNUM rownum__index
+        FROM (
+          SELECT foo.id AS id, bar.id AS bar__id, TO_CHAR(foo.womble, "blah") AS bleh
+            FROM cd me
+          WHERE id = ?
+          ORDER BY artist
+        ) me
+      ) me
+      WHERE rownum__index BETWEEN ? and ?
+    )',
+    binds => [
+      $where_bind,
+      [ $OFFSET => 4 ],
+      [ $TOTAL => 4 ],
     ],
   }, {
     name => 'Rownum subsel aliasing #2 works correctly',
@@ -89,11 +127,13 @@ for my $test_set (
         SELECT id, ends_with_me__id, ROWNUM rownum__index
         FROM (
           SELECT foo.id AS id, ends_with_me.id AS ends_with_me__id
-          FROM cd me
+            FROM cd me
+          WHERE id = ?
         ) me
       ) me WHERE rownum__index BETWEEN ? AND ?
     )',
     binds => [
+      $where_bind,
       [ $OFFSET => 4 ],
       [ $TOTAL => 5 ],
     ],
@@ -106,7 +146,7 @@ for my $test_set (
         { id => 'foo.id' },
         { 'ends_with_me.id' => 'ends_with_me.id' },
       ],
-      order_by => [qw( artist title )],
+      order_by => [qw( year artist title )],
     }),
     sql => '(
       SELECT id, ends_with_me__id
@@ -114,14 +154,16 @@ for my $test_set (
         SELECT id, ends_with_me__id, ROWNUM rownum__index
         FROM (
           SELECT foo.id AS id, ends_with_me.id AS ends_with_me__id
-          FROM cd me
-          ORDER BY artist, title
+            FROM cd me
+          WHERE id = ?
+          ORDER BY year, artist, title
         ) me
         WHERE ROWNUM <= ?
       ) me
       WHERE rownum__index >= ?
     )',
     binds => [
+      $where_bind,
       [ $TOTAL => 5 ],
       [ $OFFSET => 4 ],
     ],
@@ -202,21 +244,18 @@ my $rs_selectas_rel = $s->resultset('BooksInLibrary')->search( { -exists => $sub
 is_same_sql_bind(
   $rs_selectas_rel->as_query,
   '(
-    SELECT id, owner FROM (
-      SELECT id, owner, ROWNUM rownum__index FROM (
-        SELECT me.id, me.owner  FROM books me WHERE ( ( (EXISTS (SELECT COUNT( * ) FROM owners owner WHERE ( books.owner = owner.id ))) AND source = ? ) )
-      ) me
-    ) me WHERE rownum__index BETWEEN ? AND ?
+    SELECT me.id, me.owner FROM (
+      SELECT me.id, me.owner  FROM books me WHERE ( ( (EXISTS (SELECT COUNT( * ) FROM owners owner WHERE ( books.owner = owner.id ))) AND source = ? ) )
+    ) me
+    WHERE ROWNUM <= ?
   )',
   [
     [ { sqlt_datatype => 'varchar', sqlt_size => 100, dbic_colname => 'source' } => 'Library' ],
-    [ $OFFSET => 1 ],
-    [ $TOTAL => 1 ],
+    [ $ROWS => 1 ],
   ],
   'Pagination with sub-query in WHERE works'
 );
 
 }
-
 
 done_testing;

@@ -73,7 +73,7 @@ for my $connect_info (@connect_info) {
     }
   }
 
-  my $guard = Scope::Guard->new(\&cleanup);
+  my $guard = Scope::Guard->new(sub{ cleanup($schema) });
 
   # $^W because DBD::ADO is a piece of crap
   try { local $^W = 0; $schema->storage->dbh->do("DROP TABLE track") };
@@ -90,6 +90,18 @@ SQL
 CREATE TABLE event_small_dt (
  id INT IDENTITY PRIMARY KEY,
  small_dt SMALLDATETIME,
+)
+SQL
+  try { local $^W = 0; $schema->storage->dbh->do("DROP TABLE event") };
+  $schema->storage->dbh->do(<<"SQL");
+CREATE TABLE event (
+   id int IDENTITY(1,1) NOT NULL,
+   starts_at smalldatetime NULL,
+   created_on datetime NULL,
+   varchar_date varchar(20) NULL,
+   varchar_datetime varchar(20) NULL,
+   skip_inflation datetime NULL,
+   ts_without_tz datetime NULL
 )
 SQL
 
@@ -145,14 +157,30 @@ SQL
       'DateTime fractional portion roundtrip' )
       if exists $sample_dt->{nanosecond};
   }
+
+  # Check for bulk insert SQL_DATE funtimes when using DBD::ODBC and sqlncli
+  # dbi:ODBC:driver=SQL Server Native Client 10.0;server=10.6.0.9;database=odbctest;
+  lives_ok {
+    $schema->resultset('Event')->populate([{
+      id => 1,
+      starts_at => undef,
+    },{
+      id => 2,
+      starts_at => '2011-03-22',
+    }])
+  } 'populate with datetime does not throw';
+  ok ( my $row = $schema->resultset('Event')->find(2), 'SQL_DATE bulk insert check' );
 }
+
 
 done_testing;
 
 # clean up our mess
 sub cleanup {
+  my $schema = shift;
   if (my $dbh = eval { $schema->storage->dbh }) {
     $dbh->do('DROP TABLE track');
     $dbh->do('DROP TABLE event_small_dt');
+    $dbh->do('DROP TABLE event');
   }
 }

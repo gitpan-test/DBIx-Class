@@ -1,13 +1,6 @@
 use strict;
 use Test::More;
 
-BEGIN {
-  eval "use DBIx::Class::CDBICompat;";
-  plan skip_all => "Class::Trigger and DBIx::ContextualFetch required: $@"
-    if $@;
-  plan tests => 6;
-}
-
 use lib 't/cdbi/testlib';
 require Film;
 
@@ -27,7 +20,7 @@ my $bt;
 eval {
   my $data = $data;
   $data->{sheep} = 1;
-  ok $bt = Film->insert($data), "Modified accessor - with  
+  ok $bt = Film->insert($data), "Modified accessor - with
 accessor";
   isa_ok $bt, "Film";
 };
@@ -39,3 +32,4 @@ eval {
 };
 is $@, '', "No errors";
 
+done_testing;

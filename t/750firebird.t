@@ -4,9 +4,10 @@ use warnings;
 use Test::More;
 use Test::Exception;
 use DBIx::Class::Optional::Dependencies ();
+use Scope::Guard ();
+use Try::Tiny;
 use lib qw(t/lib);
 use DBICTest;
-use Scope::Guard ();
 
 my $env2optdep = {
   DBICTEST_FIREBIRD => 'test_rdbms_firebird',
@@ -46,13 +47,12 @@ for my $prefix (keys %$env2optdep) { SKIP: {
 
   $schema = DBICTest::Schema->connect($dsn, $user, $pass, {
     auto_savepoint  => 1,
-    quote_char      => q["],
-    name_sep        => q[.],
+    quote_names     => 1,
     ($dsn !~ /ODBC/ ? (on_connect_call => 'use_softcommit') : ()),
   });
   my $dbh = $schema->storage->dbh;
 
-  my $sg = Scope::Guard->new(\&cleanup);
+  my $sg = Scope::Guard->new(sub { cleanup($schema) });
 
   eval { $dbh->do(q[DROP TABLE "artist"]) };
   $dbh->do(<<EOF);
@@ -206,6 +206,24 @@ EOF
   is( eval { $lim->next->artistid }, 102, "iterator->next ok" );
   is( $lim->next, undef, "next past end of resultset ok" );
 
+# test bug in paging
+  my $paged = $ars->search({ name => { -like => 'Artist%' } }, {
+    page => 1,
+    rows => 2,
+    order_by => 'artistid',
+  });
+
+  my $row;
+  lives_ok {
+    $row = $paged->next;
+  } 'paged query survived';
+
+  is try { $row->artistid }, 5, 'correct row from paged query';
+
+  # DBD bug - if any unfinished statements are present during
+  # DDL manipulation (test blobs below)- a segfault will occur
+  $paged->reset;
+
 # test nested cursors
   {
     my $rs1 = $ars->search({}, { order_by => { -asc  => 'artistid' }});
@@ -287,6 +305,8 @@ done_testing;
 # clean up our mess
 
 sub cleanup {
+  my $schema = shift;
+
   my $dbh;
   eval {
     $schema->storage->disconnect; # to avoid object FOO is in use errors
@@ -307,8 +327,11 @@ sub cleanup {
     diag $@ if $@;
   }
 
-  foreach my $table (qw/artist bindtype_test sequence_test/) {
+  foreach my $table (qw/artist sequence_test/) {
     eval { $dbh->do(qq[DROP TABLE "$table"]) };
     diag $@ if $@;
   }
+
+  eval { $dbh->do(q{DROP TABLE "bindtype_test"}) };
+  diag $@ if $@;
 }

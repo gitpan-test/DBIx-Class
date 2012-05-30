@@ -2,7 +2,6 @@ use strict;
 use warnings;
 
 use Test::More;
-use Test::Exception;
 use lib qw(t/lib);
 use DBICTest;
 use DBIC::SqlMakerTest;
@@ -46,7 +45,7 @@ is_same_sql_bind(
       LEFT JOIN track tracks
         ON tracks.cd = me.cdid
     WHERE me.artist != ?
-    ORDER BY tracks.cd
+    ORDER BY me.cdid
   )',
   [
 
@@ -118,7 +117,7 @@ is_same_sql_bind(
       LEFT JOIN track tracks
         ON tracks.cd = me.cdid
     WHERE me.artist != ?
-    ORDER BY tracks.cd
+    ORDER BY me.cdid
   )',
   [
 

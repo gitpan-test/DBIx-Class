@@ -35,6 +35,9 @@ use warnings;
 
 use Test::More;
 
+use lib 't/lib';
+use DBICTest;
+
 use File::Find;
 use File::Spec;
 use B qw/svref_2object/;
@@ -45,7 +48,7 @@ use DBIx::Class;
 use DBIx::Class::Carp;
 
 my @modules = grep {
-  my $mod = $_;
+  my ($mod) = $_ =~ /(.+)/;
 
   # not all modules are loadable at all times
   do {
@@ -115,7 +118,11 @@ for my $mod (@modules) {
       my $origin = $gv->STASH->NAME;
 
       TODO: {
-        local $TODO = 'CAG does not clean its BEGIN constants' if $name =~ /^__CAG_/;
+        local $TODO;
+        if ($name =~ /^__CAG_/) {
+          $TODO = 'CAG does not clean its BEGIN constants';
+        }
+
         is ($gv->NAME, $name, "Properly named $name method at $origin" . ($origin eq $mod
           ? ''
           : " (inherited by $mod)"

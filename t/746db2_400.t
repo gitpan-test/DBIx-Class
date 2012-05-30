@@ -76,7 +76,7 @@ my $test_type_info = {
     'charfield' => {
         'data_type' => 'CHAR',
         'is_nullable' => 1,
-        'size' => 10 
+        'size' => 10
     },
 };
 
@@ -86,6 +86,7 @@ is_deeply($type_info, $test_type_info, 'columns_info_for - column data types');
 
 # clean up our mess
 END {
-    my $dbh = eval { $schema->storage->_dbh };
-    $dbh->do("DROP TABLE artist") if $dbh;
+  my $dbh = eval { $schema->storage->_dbh };
+  $dbh->do("DROP TABLE artist") if $dbh;
+  undef $schema;
 }

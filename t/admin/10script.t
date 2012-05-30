@@ -5,9 +5,7 @@ use warnings;
 use Test::More;
 use Config;
 use lib qw(t/lib);
-$ENV{PERL5LIB} = join ($Config{path_sep}, @INC);
 use DBICTest;
-
 
 BEGIN {
     require DBIx::Class;
@@ -15,26 +13,39 @@ BEGIN {
       unless DBIx::Class::Optional::Dependencies->req_ok_for('admin_script');
 }
 
-my @json_backends = qw/XS JSON DWIW/;
-my $tests_per_run = 5;
-plan tests => ($tests_per_run * @json_backends) + 1;
+$ENV{PATH} = '';
+$ENV{PERL5LIB} = join ($Config{path_sep}, @INC);
 
+my @json_backends = qw/XS JSON DWIW/;
 
 # test the script is setting @INC properly
-test_exec (qw| -It/lib/testinclude --schema=DBICTestAdminInc --insert --connect=[] |);
+test_exec (qw|-It/lib/testinclude --schema=DBICTestAdminInc --connect=[] --insert|);
 cmp_ok ( $? >> 8, '==', 70, 'Correct exit code from connecting a custom INC schema' );
+
+# test that config works properly
+{
+  no warnings 'qw';
+  test_exec(qw|-It/lib/testinclude --schema=DBICTestConfig --create --connect=["klaatu","barada","nikto"]|);
+  cmp_ok( $? >> 8, '==', 71, 'Correct schema loaded via config' ) || exit;
+}
+
+# test that config-file works properly
+test_exec(qw|-It/lib/testinclude --schema=DBICTestConfig --config=t/lib/admincfgtest.json --config-stanza=Model::Gort --deploy|);
+cmp_ok ($? >> 8, '==', 71, 'Correct schema loaded via testconfig');
 
 for my $js (@json_backends) {
 
     eval {JSON::Any->import ($js) };
     SKIP: {
-        skip ("JSON backend $js is not available, skip testing", $tests_per_run) if $@;
+        skip ("JSON backend $js is not available, skip testing", 1) if $@;
 
         $ENV{JSON_ANY_ORDER} = $js;
         eval { test_dbicadmin () };
         diag $@ if $@;
     }
 }
+
+done_testing();
 
 sub test_dbicadmin {
     my $schema = DBICTest->init_schema( sqlite_use_file => 1 );  # reinit a fresh db for every run
@@ -56,7 +67,9 @@ sub test_dbicadmin {
     SKIP: {
         skip ("MSWin32 doesn't support -| either", 1) if $^O eq 'MSWin32';
 
-        open(my $fh, "-|",  ( $^X, 'script/dbicadmin', default_args(), qw|--op=select --attrs={"order_by":"name"}| ) ) or die $!;
+        my ($perl) = $^X =~ /(.*)/;
+
+        open(my $fh, "-|",  ( $perl, '-MDBICTest::RunMode', 'script/dbicadmin', default_args(), qw|--op=select --attrs={"order_by":"name"}| ) ) or die $!;
         my $data = do { local $/; <$fh> };
         close($fh);
         if (!ok( ($data=~/Aran.*Trout/s), "$ENV{JSON_ANY_ORDER}: select with attrs" )) {
@@ -69,9 +82,10 @@ sub test_dbicadmin {
 }
 
 sub default_args {
+  my $dbname = DBICTest->_sqlite_dbfilename;
   return (
     qw|--quiet --schema=DBICTest::Schema --class=Employee|,
-    q|--connect=["dbi:SQLite:dbname=t/var/DBIxClass.db","","",{"AutoCommit":1}]|,
+    qq|--connect=["dbi:SQLite:dbname=$dbname","","",{"AutoCommit":1}]|,
     qw|--force -I testincludenoniterference|,
   );
 }
@@ -83,7 +97,7 @@ sub default_args {
 # calls it. Bleh.
 #
 sub test_exec {
-  my $perl = $^X;
+  my ($perl) = $^X =~ /(.*)/;
 
   my @args = ('script/dbicadmin', @_);
 
@@ -94,5 +108,5 @@ sub test_exec {
     }
   }
 
-  system ($perl, @args);
+  system ($perl, '-MDBICTest::RunMode', @args);
 }

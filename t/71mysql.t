@@ -52,7 +52,7 @@ $dbh->do("CREATE TABLE books (id INTEGER NOT NULL AUTO_INCREMENT PRIMARY KEY, so
 
 #'dbi:mysql:host=localhost;database=dbic_test', 'dbic_test', '');
 
-# make sure sqlt_type overrides work (::Storage::DBI::mysql does this) 
+# make sure sqlt_type overrides work (::Storage::DBI::mysql does this)
 {
   my $schema = DBICTest::Schema->connect($dsn, $user, $pass);
 
@@ -144,7 +144,7 @@ $schema->populate ('BooksInLibrary', [
 ]);
 
 #
-# try a distinct + prefetch on tables with identically named columns 
+# try a distinct + prefetch on tables with identically named columns
 # (mysql doesn't seem to like subqueries with equally named columns)
 #
 
@@ -173,15 +173,10 @@ $schema->populate ('BooksInLibrary', [
 }
 
 SKIP: {
-    my $mysql_version = $dbh->get_info( $GetInfoType{SQL_DBMS_VER} );
-    skip "Cannot determine MySQL server version", 1 if !$mysql_version;
+    my $norm_version = $schema->storage->_server_info->{normalized_dbms_version}
+      or skip "Cannot determine MySQL server version", 1;
 
-    my ($v1, $v2, $v3) = $mysql_version =~ /^(\d+)\.(\d+)(?:\.(\d+))?/;
-    skip "Cannot determine MySQL server version", 1 if !$v1 || !defined($v2);
-
-    $v3 ||= 0;
-
-    if( ($v1 < 5) || ($v1 == 5 && $v2 == 0 && $v3 <= 3) ) {
+    if ($norm_version < 5.000003_01) {
         $test_type_info->{charfield}->{data_type} = 'VARCHAR';
     }
 
@@ -299,8 +294,6 @@ NULLINSEARCH: {
       join => 'books', group_by => [ 'me.id', 'books.id' ]
     })->count();
   }, 'count on grouped columns with the same name does not throw');
-
-
 }
 
 ZEROINSEARCH: {
@@ -338,7 +331,7 @@ ZEROINSEARCH: {
     'Zero-year groups successfully',
   );
 
-  # convoluted search taken verbatim from list 
+  # convoluted search taken verbatim from list
   my $restrict_rs = $rs->search({ -and => [
     year => { '!=', 0 },
     year => { '!=', undef }
@@ -376,11 +369,15 @@ ZEROINSEARCH: {
 
   my $rs = $schema_autorecon->resultset('Artist');
 
+  my ($parent_in, $child_out);
+  pipe( $parent_in, $child_out ) or die "Pipe open failed: $!";
   my $pid = fork();
   if (! defined $pid ) {
     die "fork() failed: $!"
   }
   elsif ($pid) {
+    close $child_out;
+
     # sanity check
     $schema_autorecon->storage->dbh_do(sub {
       is ($_[1], $orig_dbh, 'Storage holds correct $dbh in parent');
@@ -397,17 +394,21 @@ ZEROINSEARCH: {
     }
   }
   else {
+    close $parent_in;
+
+    #simulate a  subtest to not confuse the parent TAP emission
+    my $tb = Test::More->builder;
+    $tb->reset;
+    for (qw/output failure_output todo_output/) {
+      close $tb->$_;
+      open ($tb->$_, '>&', $child_out);
+    }
+
     # wait for parent to kill its $dbh
     sleep 1;
 
-    #simulate a  subtest to not confuse the parent TAP emission
-    Test::More->builder->reset;
-    Test::More->builder->plan('no_plan');
-    Test::More->builder->_indent(' ' x 4);
-
     # try to do something dbic-esque
     $rs->create({ name => "Hardcore Forker $$" });
-
 
     TODO: {
       local $TODO = "Perl $] is known to leak like a sieve"
@@ -416,9 +417,13 @@ ZEROINSEARCH: {
       ok (! defined $orig_dbh, 'DBIC operation triggered reconnect - old $dbh is gone');
     }
 
+    done_testing;
     exit 0;
   }
 
+  while (my $ln = <$parent_in>) {
+    print "   $ln";
+  }
   wait;
   ok(!$?, 'Child subtests passed');
 

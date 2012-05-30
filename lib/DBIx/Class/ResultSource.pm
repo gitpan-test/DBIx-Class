@@ -3,17 +3,19 @@ package DBIx::Class::ResultSource;
 use strict;
 use warnings;
 
+use base qw/DBIx::Class::ResultSource::RowParser DBIx::Class/;
+
 use DBIx::Class::ResultSet;
 use DBIx::Class::ResultSourceHandle;
 
 use DBIx::Class::Exception;
 use DBIx::Class::Carp;
+use Devel::GlobalDestruction;
 use Try::Tiny;
 use List::Util 'first';
 use Scalar::Util qw/blessed weaken isweak/;
-use namespace::clean;
 
-use base qw/DBIx::Class/;
+use namespace::clean;
 
 __PACKAGE__->mk_group_accessors(simple => qw/
   source_name name source_info
@@ -1448,6 +1450,32 @@ sub _compare_relationship_keys {
   ;
 }
 
+# optionally takes either an arrayref of column names, or a hashref of already
+# retrieved colinfos
+# returns an arrayref of column names of the shortest unique constraint
+# (matching some of the input if any), giving preference to the PK
+sub _identifying_column_set {
+  my ($self, $cols) = @_;
+
+  my %unique = $self->unique_constraints;
+  my $colinfos = ref $cols eq 'HASH' ? $cols : $self->columns_info($cols||());
+
+  # always prefer the PK first, and then shortest constraints first
+  USET:
+  for my $set (delete $unique{primary}, sort { @$a <=> @$b } (values %unique) ) {
+    next unless $set && @$set;
+
+    for (@$set) {
+      next USET unless ($colinfos->{$_} && !$colinfos->{$_}{is_nullable} );
+    }
+
+    # copy so we can mangle it at will
+    return [ @$set ];
+  }
+
+  return undef;
+}
+
 # Returns the {from} structure used to express JOIN conditions
 sub _resolve_join {
   my ($self, $join, $alias, $seen, $jpath, $parent_force_left) = @_;
@@ -1517,8 +1545,8 @@ sub _resolve_join {
                 ,
                -join_path => [@$jpath, { $join => $as } ],
                -is_single => (
-                  $rel_info->{attrs}{accessor}
-                    &&
+                  (! $rel_info->{attrs}{accessor})
+                    or
                   first { $rel_info->{attrs}{accessor} eq $_ } (qw/single filter/)
                 ),
                -alias => $as,
@@ -1719,114 +1747,6 @@ sub _resolve_condition {
   }
 }
 
-# Accepts one or more relationships for the current source and returns an
-# array of column names for each of those relationships. Column names are
-# prefixed relative to the current source, in accordance with where they appear
-# in the supplied relationships.
-
-sub _resolve_prefetch {
-  my ($self, $pre, $alias, $alias_map, $order, $collapse, $pref_path) = @_;
-  $pref_path ||= [];
-
-  if (not defined $pre or not length $pre) {
-    return ();
-  }
-  elsif( ref $pre eq 'ARRAY' ) {
-    return
-      map { $self->_resolve_prefetch( $_, $alias, $alias_map, $order, $collapse, [ @$pref_path ] ) }
-        @$pre;
-  }
-  elsif( ref $pre eq 'HASH' ) {
-    my @ret =
-    map {
-      $self->_resolve_prefetch($_, $alias, $alias_map, $order, $collapse, [ @$pref_path ] ),
-      $self->related_source($_)->_resolve_prefetch(
-               $pre->{$_}, "${alias}.$_", $alias_map, $order, $collapse, [ @$pref_path, $_] )
-    } keys %$pre;
-    return @ret;
-  }
-  elsif( ref $pre ) {
-    $self->throw_exception(
-      "don't know how to resolve prefetch reftype ".ref($pre));
-  }
-  else {
-    my $p = $alias_map;
-    $p = $p->{$_} for (@$pref_path, $pre);
-
-    $self->throw_exception (
-      "Unable to resolve prefetch '$pre' - join alias map does not contain an entry for path: "
-      . join (' -> ', @$pref_path, $pre)
-    ) if (ref $p->{-join_aliases} ne 'ARRAY' or not @{$p->{-join_aliases}} );
-
-    my $as = shift @{$p->{-join_aliases}};
-
-    my $rel_info = $self->relationship_info( $pre );
-    $self->throw_exception( $self->source_name . " has no such relationship '$pre'" )
-      unless $rel_info;
-    my $as_prefix = ($alias =~ /^.*?\.(.+)$/ ? $1.'.' : '');
-    my $rel_source = $self->related_source($pre);
-
-    if ($rel_info->{attrs}{accessor} && $rel_info->{attrs}{accessor} eq 'multi') {
-      $self->throw_exception(
-        "Can't prefetch has_many ${pre} (join cond too complex)")
-        unless ref($rel_info->{cond}) eq 'HASH';
-      my $dots = @{[$as_prefix =~ m/\./g]} + 1; # +1 to match the ".${as_prefix}"
-
-      if (my ($fail) = grep { @{[$_ =~ m/\./g]} == $dots }
-                         keys %{$collapse}) {
-        my ($last) = ($fail =~ /([^\.]+)$/);
-        carp (
-          "Prefetching multiple has_many rels ${last} and ${pre} "
-          .(length($as_prefix)
-            ? "at the same level (${as_prefix}) "
-            : "at top level "
-          )
-          . 'will explode the number of row objects retrievable via ->next or ->all. '
-          . 'Use at your own risk.'
-        );
-      }
-
-      #my @col = map { (/^self\.(.+)$/ ? ("${as_prefix}.$1") : ()); }
-      #              values %{$rel_info->{cond}};
-      $collapse->{".${as_prefix}${pre}"} = [ $rel_source->_pri_cols ];
-        # action at a distance. prepending the '.' allows simpler code
-        # in ResultSet->_collapse_result
-      my @key = map { (/^foreign\.(.+)$/ ? ($1) : ()); }
-                    keys %{$rel_info->{cond}};
-      push @$order, map { "${as}.$_" } @key;
-
-      if (my $rel_order = $rel_info->{attrs}{order_by}) {
-        # this is kludgy and incomplete, I am well aware
-        # but the parent method is going away entirely anyway
-        # so sod it
-        my $sql_maker = $self->storage->sql_maker;
-        my ($orig_ql, $orig_qr) = $sql_maker->_quote_chars;
-        my $sep = $sql_maker->name_sep;
-
-        # install our own quoter, so we can catch unqualified stuff
-        local $sql_maker->{quote_char} = ["\x00", "\xFF"];
-
-        my $quoted_prefix = "\x00${as}\xFF";
-
-        for my $chunk ( $sql_maker->_order_by_chunks ($rel_order) ) {
-          my @bind;
-          ($chunk, @bind) = @$chunk if ref $chunk;
-
-          $chunk = "${quoted_prefix}${sep}${chunk}"
-            unless $chunk =~ /\Q$sep/;
-
-          $chunk =~ s/\x00/$orig_ql/g;
-          $chunk =~ s/\xFF/$orig_qr/g;
-          push @$order, \[$chunk, @bind];
-        }
-      }
-    }
-
-    return map { [ "${as}.$_", "${as_prefix}${pre}.$_", ] }
-      $rel_source->columns;
-  }
-}
-
 =head2 related_source
 
 =over 4
@@ -1911,16 +1831,9 @@ sub handle {
   });
 }
 
-{
-  my $global_phase_destroy;
-
-  # SpeedyCGI runs END blocks every cycle but keeps object instances
-  # hence we have to disable the globaldestroy hatch, and rely on the
-  # eval trap below (which appears to work, but is risky done so late)
-  END { $global_phase_destroy = 1 unless $CGI::SpeedyCGI::i_am_speedy }
-
-  sub DESTROY {
-    return if $global_phase_destroy;
+my $global_phase_destroy;
+sub DESTROY {
+  return if $global_phase_destroy ||= in_global_destruction;
 
 ######
 # !!! ACHTUNG !!!!
@@ -1932,25 +1845,21 @@ sub handle {
 # we are trying to save to reattach back to the source we are destroying.
 # The relevant code checking refcounts is in ::Schema::DESTROY()
 
-    # if we are not a schema instance holder - we don't matter
-    return if(
-      ! ref $_[0]->{schema}
-        or
-      isweak $_[0]->{schema}
-    );
+  # if we are not a schema instance holder - we don't matter
+  return if(
+    ! ref $_[0]->{schema}
+      or
+    isweak $_[0]->{schema}
+  );
 
-    # weaken our schema hold forcing the schema to find somewhere else to live
-    # during global destruction (if we have not yet bailed out) this will throw
-    # which will serve as a signal to not try doing anything else
-    local $@;
-    eval {
-      weaken $_[0]->{schema};
-      1;
-    } or do {
-      $global_phase_destroy = 1;
-      return;
-    };
-
+  # weaken our schema hold forcing the schema to find somewhere else to live
+  # during global destruction (if we have not yet bailed out) this will throw
+  # which will serve as a signal to not try doing anything else
+  # however beware - on older perls the exception seems randomly untrappable
+  # due to some weird race condition during thread joining :(((
+  local $@;
+  eval {
+    weaken $_[0]->{schema};
 
     # if schema is still there reintroduce ourselves with strong refs back to us
     if ($_[0]->{schema}) {
@@ -1960,7 +1869,13 @@ sub handle {
         $srcregs->{$_} = $_[0] if $srcregs->{$_} == $_[0];
       }
     }
-  }
+
+    1;
+  } or do {
+    $global_phase_destroy = 1;
+  };
+
+  return;
 }
 
 sub STORABLE_freeze { Storable::nfreeze($_[0]->handle) }

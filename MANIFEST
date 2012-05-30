@@ -1,4 +1,7 @@
 Changes
+examples/Benchmarks/benchmark_datafetch.pl
+examples/Benchmarks/benchmark_hashrefinflator.pl
+examples/MiscTools/determine_cpan_joint_deps.pl
 examples/Schema/db/example.sql
 examples/Schema/insertdb.pl
 examples/Schema/MyDatabase/Main.pm
@@ -8,7 +11,6 @@ examples/Schema/MyDatabase/Main/Result/Track.pm
 examples/Schema/testdb.pl
 inc/Module/AutoInstall.pm
 inc/Module/Install.pm
-inc/Module/Install/AuthorTests.pm
 inc/Module/Install/AutoInstall.pm
 inc/Module/Install/Base.pm
 inc/Module/Install/Can.pm
@@ -103,6 +105,7 @@ lib/DBIx/Class/ResultSetColumn.pm
 lib/DBIx/Class/ResultSetManager.pm
 lib/DBIx/Class/ResultSetProxy.pm
 lib/DBIx/Class/ResultSource.pm
+lib/DBIx/Class/ResultSource/RowParser.pm
 lib/DBIx/Class/ResultSource/Table.pm
 lib/DBIx/Class/ResultSource/View.pm
 lib/DBIx/Class/ResultSourceHandle.pm
@@ -128,10 +131,13 @@ lib/DBIx/Class/SQLMaker/OracleJoins.pm
 lib/DBIx/Class/SQLMaker/SQLite.pm
 lib/DBIx/Class/StartupCheck.pm
 lib/DBIx/Class/Storage.pm
+lib/DBIx/Class/Storage/BlockRunner.pm
 lib/DBIx/Class/Storage/DBI.pm
 lib/DBIx/Class/Storage/DBI/ACCESS.pm
 lib/DBIx/Class/Storage/DBI/ADO.pm
+lib/DBIx/Class/Storage/DBI/ADO/CursorUtils.pm
 lib/DBIx/Class/Storage/DBI/ADO/Microsoft_SQL_Server.pm
+lib/DBIx/Class/Storage/DBI/ADO/Microsoft_SQL_Server/Cursor.pm
 lib/DBIx/Class/Storage/DBI/ADO/MS_Jet.pm
 lib/DBIx/Class/Storage/DBI/ADO/MS_Jet/Cursor.pm
 lib/DBIx/Class/Storage/DBI/AutoCast.pm
@@ -139,10 +145,10 @@ lib/DBIx/Class/Storage/DBI/Cursor.pm
 lib/DBIx/Class/Storage/DBI/DB2.pm
 lib/DBIx/Class/Storage/DBI/Firebird.pm
 lib/DBIx/Class/Storage/DBI/Firebird/Common.pm
+lib/DBIx/Class/Storage/DBI/IdentityInsert.pm
 lib/DBIx/Class/Storage/DBI/Informix.pm
 lib/DBIx/Class/Storage/DBI/InterBase.pm
 lib/DBIx/Class/Storage/DBI/MSSQL.pm
-lib/DBIx/Class/Storage/DBI/MultiColumnIn.pm
 lib/DBIx/Class/Storage/DBI/mysql.pm
 lib/DBIx/Class/Storage/DBI/NoBindVars.pm
 lib/DBIx/Class/Storage/DBI/ODBC.pm
@@ -181,6 +187,18 @@ lib/DBIx/Class/Storage/TxnScopeGuard.pm
 lib/DBIx/Class/UTF8Columns.pm
 lib/SQL/Translator/Parser/DBIx/Class.pm
 lib/SQL/Translator/Producer/DBIx/Class/File.pm
+maint/gen_pod_index
+maint/gen_schema
+maint/Makefile.PL.inc/01_adjust_INC.pl
+maint/Makefile.PL.inc/11_authortests.pl
+maint/Makefile.PL.inc/12_authordeps.pl
+maint/Makefile.PL.inc/21_meta_noindex.pl
+maint/Makefile.PL.inc/29_handle_version.pl
+maint/Makefile.PL.inc/51_autogen_README.pl
+maint/Makefile.PL.inc/52_inject_dbicadmin_pod.pl
+maint/Makefile.PL.inc/53_autogen_optdeps_pod.pl
+maint/Makefile.PL.inc/54_autogen_inherited_pod.pl
+maint/Makefile.PL.inc/59_autogen_MANIFEST.pl
 Makefile.PL
 MANIFEST			This list of files
 META.yml
@@ -196,6 +214,7 @@ t/102load_classes.t
 t/103many_to_many_warning.t
 t/104view.t
 t/105view_deps.t
+t/106dbic_carp.t
 t/18insert_default.t
 t/19retrieve_on_insert.t
 t/20setuperrors.t
@@ -213,6 +232,7 @@ t/40compose_connection.t
 t/40resultsetmanager.t
 t/46where_attribute.t
 t/50fork.t
+t/51threadnodb.t
 t/51threads.t
 t/51threadtxn.t
 t/52leaks.t
@@ -233,6 +253,7 @@ t/71mysql.t
 t/72pg.t
 t/72pg_bytea.t
 t/73oracle.t
+t/73oracle_blob.t
 t/73oracle_hq.t
 t/745db2.t
 t/746db2_400.t
@@ -245,7 +266,6 @@ t/74mssql.t
 t/750firebird.t
 t/751msaccess.t
 t/752sqlite.t
-t/75limit.t
 t/76joins.t
 t/76select.t
 t/77join_count.t
@@ -364,6 +384,7 @@ t/inflate/datetime_sybase.t
 t/inflate/file_column.t
 t/inflate/hri.t
 t/inflate/serialize.t
+t/lib/admincfgtest.json
 t/lib/awesome.json
 t/lib/DBIC/DebugObj.pm
 t/lib/DBIC/SqlMakerTest.pm
@@ -392,6 +413,7 @@ t/lib/DBICNSTest/RtBug41083/Schema_A/A/Sub.pm
 t/lib/DBICTest.pm
 t/lib/DBICTest/BaseResult.pm
 t/lib/DBICTest/BaseResultSet.pm
+t/lib/DBICTest/BaseSchema.pm
 t/lib/DBICTest/Cursor.pm
 t/lib/DBICTest/DeployComponent.pm
 t/lib/DBICTest/ErrorComponent.pm
@@ -454,6 +476,7 @@ t/lib/DBICTest/Schema/TreeLike.pm
 t/lib/DBICTest/Schema/TwoKeys.pm
 t/lib/DBICTest/Schema/TwoKeyTreeLike.pm
 t/lib/DBICTest/Schema/TypedObject.pm
+t/lib/DBICTest/Schema/VaryingMAX.pm
 t/lib/DBICTest/Schema/Year1999CDs.pm
 t/lib/DBICTest/Schema/Year2000CDs.pm
 t/lib/DBICTest/Stats.pm
@@ -463,6 +486,7 @@ t/lib/DBICTest/SyntaxErrorComponent3.pm
 t/lib/DBICTest/Taint/Classes/Auto.pm
 t/lib/DBICTest/Taint/Classes/Manual.pm
 t/lib/DBICTest/Taint/Namespaces/Result/Test.pm
+t/lib/DBICTest/Util.pm
 t/lib/DBICTest/Util/OverrideRequire.pm
 t/lib/DBICVersion_v1.pm
 t/lib/DBICVersion_v2.pm
@@ -470,6 +494,7 @@ t/lib/DBICVersion_v3.pm
 t/lib/sqlite.sql
 t/lib/test_deploy/DBICTest-Schema-1.x-SQLite.sql
 t/lib/testinclude/DBICTestAdminInc.pm
+t/lib/testinclude/DBICTestConfig.pm
 t/lib/ViewDeps.pm
 t/lib/ViewDeps/Result/AbaNameArtists.pm
 t/lib/ViewDeps/Result/AbaNameArtistsAnd2010CDsWithManyTracks.pm
@@ -514,7 +539,10 @@ t/prefetch/double_prefetch.t
 t/prefetch/grouped.t
 t/prefetch/incomplete.t
 t/prefetch/join_type.t
+t/prefetch/lazy_cursor.t
+t/prefetch/manual.t
 t/prefetch/multiple_hasmany.t
+t/prefetch/multiple_hasmany_torture.t
 t/prefetch/o2m_o2m_order_by_with_limit.t
 t/prefetch/one_to_many_to_one.t
 t/prefetch/standard.t
@@ -533,10 +561,12 @@ t/relationship/update_or_create_single.t
 t/resultset/as_query.t
 t/resultset/as_subselect_rs.t
 t/resultset/bind_attr.t
+t/resultset/inflate_result_api.t
 t/resultset/is_ordered.t
 t/resultset/is_paged.t
 t/resultset/nulls_only.t
 t/resultset/plus_select.t
+t/resultset/rowparser_internals.t
 t/resultset/update_delete.t
 t/resultset_class.t
 t/resultset_overload.t
@@ -557,12 +587,16 @@ t/search/void.t
 t/sqlmaker/bind_transport.t
 t/sqlmaker/core.t
 t/sqlmaker/core_quoted.t
+t/sqlmaker/limit_dialects/basic.t
 t/sqlmaker/limit_dialects/custom.t
 t/sqlmaker/limit_dialects/fetch_first.t
+t/sqlmaker/limit_dialects/first_skip.t
 t/sqlmaker/limit_dialects/generic_subq.t
 t/sqlmaker/limit_dialects/rno.t
 t/sqlmaker/limit_dialects/rownum.t
+t/sqlmaker/limit_dialects/skip_first.t
 t/sqlmaker/limit_dialects/toplimit.t
+t/sqlmaker/limit_dialects/torture.t
 t/sqlmaker/literal_with_bind.t
 t/sqlmaker/msaccess.t
 t/sqlmaker/nest_deprec.t

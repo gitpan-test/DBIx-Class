@@ -2,7 +2,6 @@ use strict;
 use warnings;
 
 use Test::More;
-use Test::Exception;
 use lib qw(t/lib);
 use DBICTest;
 use Storable qw/dclone/;
@@ -112,7 +111,7 @@ $it = $rs->search({}, {
 });
 
 my $row = $rs->search({}, {
-    order_by => 'cdid', 
+    order_by => 'cdid',
     offset => 3,
     rows => 1
 })->single;

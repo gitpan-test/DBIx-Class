@@ -6,9 +6,10 @@ use warnings;
 use DBIx::Class::Exception;
 use DBIx::Class::Carp;
 use Try::Tiny;
-use Scalar::Util 'weaken';
+use Scalar::Util qw/weaken blessed/;
 use Sub::Name 'subname';
 use B 'svref_2object';
+use Devel::GlobalDestruction;
 use namespace::clean;
 
 use base qw/DBIx::Class/;
@@ -167,12 +168,9 @@ sub _findallmod {
   my $ns = shift || ref $proto || $proto;
 
   require Module::Find;
-  my @mods = Module::Find::findallmod($ns);
 
-  # try to untaint module names. mods where this fails
-  # are left alone so we don't have to change the old behavior
-  no locale; # localized \w doesn't untaint expression
-  return map { $_ =~ m/^( (?:\w+::)* \w+ )$/x ? $1 : $_ } @mods;
+  # untaint result
+  return map { $_ =~ /(.+)/ } Module::Find::findallmod($ns);
 }
 
 # returns a hash of $shortname => $fullname for every package
@@ -1034,18 +1032,33 @@ sub clone {
   };
   bless $clone, (ref $self || $self);
 
-  $clone->class_mappings({ %{$clone->class_mappings} });
-  $clone->source_registrations({ %{$clone->source_registrations} });
-  foreach my $moniker ($self->sources) {
-    my $source = $self->source($moniker);
+  $clone->$_(undef) for qw/class_mappings source_registrations storage/;
+
+  $clone->_copy_state_from($self);
+
+  return $clone;
+}
+
+# Needed in Schema::Loader - if you refactor, please make a compatibility shim
+# -- Caelum
+sub _copy_state_from {
+  my ($self, $from) = @_;
+
+  $self->class_mappings({ %{$from->class_mappings} });
+  $self->source_registrations({ %{$from->source_registrations} });
+
+  foreach my $moniker ($from->sources) {
+    my $source = $from->source($moniker);
     my $new = $source->new($source);
     # we use extra here as we want to leave the class_mappings as they are
     # but overwrite the source_registrations entry with the new source
-    $clone->register_extra_source($moniker => $new);
+    $self->register_extra_source($moniker => $new);
   }
-  $clone->storage->set_schema($clone) if $clone->storage;
 
-  return $clone;
+  if ($from->storage) {
+    $self->storage($from->storage);
+    $self->storage->set_schema($self);
+  }
 }
 
 =head2 throw_exception
@@ -1206,12 +1219,12 @@ sub ddl_filename {
 
   require File::Spec;
 
-  my $filename = ref($self);
-  $filename =~ s/::/-/g;
-  $filename = File::Spec->catfile($dir, "$filename-$version-$type.sql");
-  $filename =~ s/$version/$preversion-$version/ if($preversion);
+  $version = "$preversion-$version" if $preversion;
 
-  return $filename;
+  my $class = blessed($self) || $self;
+  $class =~ s/::/-/g;
+
+  return File::Spec->catfile($dir, "$class-$version-$type.sql");
 }
 
 =head2 thaw
@@ -1398,39 +1411,32 @@ sub _register_source {
   return $source;
 }
 
-{
-  my $global_phase_destroy;
+my $global_phase_destroy;
+sub DESTROY {
+  return if $global_phase_destroy ||= in_global_destruction;
 
-  # SpeedyCGI runs END blocks every cycle but keeps object instances
-  # hence we have to disable the globaldestroy hatch, and rely on the
-  # eval trap below (which appears to work, but is risky done so late)
-  END { $global_phase_destroy = 1 unless $CGI::SpeedyCGI::i_am_speedy }
+  my $self = shift;
+  my $srcs = $self->source_registrations;
 
-  sub DESTROY {
-    return if $global_phase_destroy;
-
-    my $self = shift;
-    my $srcs = $self->source_registrations;
-
-    for my $moniker (keys %$srcs) {
-      # find first source that is not about to be GCed (someone other than $self
-      # holds a reference to it) and reattach to it, weakening our own link
-      #
-      # during global destruction (if we have not yet bailed out) this will throw
-      # which will serve as a signal to not try doing anything else
-      if (ref $srcs->{$moniker} and svref_2object($srcs->{$moniker})->REFCNT > 1) {
-        local $@;
-        eval {
-          $srcs->{$moniker}->schema($self);
-          1;
-        } or do {
-          $global_phase_destroy = 1;
-          last;
-        };
-
+  for my $moniker (keys %$srcs) {
+    # find first source that is not about to be GCed (someone other than $self
+    # holds a reference to it) and reattach to it, weakening our own link
+    #
+    # during global destruction (if we have not yet bailed out) this should throw
+    # which will serve as a signal to not try doing anything else
+    # however beware - on older perls the exception seems randomly untrappable
+    # due to some weird race condition during thread joining :(((
+    if (ref $srcs->{$moniker} and svref_2object($srcs->{$moniker})->REFCNT > 1) {
+      local $@;
+      eval {
+        $srcs->{$moniker}->schema($self);
         weaken $srcs->{$moniker};
-        last;
-      }
+        1;
+      } or do {
+        $global_phase_destroy = 1;
+      };
+
+      last;
     }
   }
 }

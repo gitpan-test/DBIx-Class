@@ -7,7 +7,7 @@ use mro 'c3';
 sub _rebless {
   my ($self) = @_;
 
-  if (my $dbtype = $self->_dbh_get_info(17)) {
+  if (my $dbtype = $self->_dbh_get_info('SQL_DBMS_NAME')) {
     # Translate the backend name into a perl identifier
     $dbtype =~ s/\W/_/gi;
     my $subclass = "DBIx::Class::Storage::DBI::ODBC::${dbtype}";
@@ -25,6 +25,41 @@ sub _rebless {
   }
   else {
     warn "Could not determine your database type, using generic support.\n";
+  }
+}
+
+# Whether or not we are connecting via the freetds ODBC driver.
+sub _using_freetds {
+  my $self = shift;
+
+  my $dsn = $self->_dbi_connect_info->[0];
+
+  return 1 if (
+    ( (! ref $dsn) and $dsn =~ /driver=FreeTDS/i)
+      or
+    ( ($self->_dbh_get_info('SQL_DRIVER_NAME')||'') =~ /tdsodbc/i )
+  );
+
+  return 0;
+}
+
+# Either returns the FreeTDS version via which we are connecting, 0 if can't
+# be determined, or undef otherwise
+sub _using_freetds_version {
+  my $self = shift;
+  return undef unless $self->_using_freetds;
+  return $self->_dbh_get_info('SQL_DRIVER_VER') || 0;
+}
+
+sub _disable_odbc_array_ops {
+  my $self = shift;
+  my $dbh  = $self->_get_dbh;
+
+  if (eval { DBD::ODBC->VERSION('1.35_01') }) {
+    $dbh->{odbc_array_operations} = 0;
+  }
+  elsif (eval { DBD::ODBC->VERSION('1.33_01') }) {
+    $dbh->{odbc_disable_array_operations} = 1;
   }
 }
 

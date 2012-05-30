@@ -91,14 +91,12 @@ DBICTest::Schema->load_classes( map {s/.+:://;$_} @test_classes ) if @test_class
 
 # check if we indeed do support stuff
 my $test_server_supports_insert_returning = do {
-  my $v = DBICTest::Schema->connect($dsn, $user, $pass)
-                   ->storage
-                    ->_get_dbh
-                     ->get_info(18);
-  $v =~ /^(\d+)\.(\d+)/
-    or die "Unparseable Pg server version: $v\n";
 
-  ( sprintf ('%d.%d', $1, $2) >= 8.2 ) ? 1 : 0;
+  my $si = DBICTest::Schema->connect($dsn, $user, $pass)->storage->_server_info;
+  die "Unparseable Pg server version: $si->{dbms_version}\n"
+    unless $si->{normalized_dbms_version};
+
+  $si->{normalized_dbms_version} < 8.002 ? 0 : 1;
 };
 is (
   DBICTest::Schema->connect($dsn, $user, $pass)->storage->_use_insert_returning,
@@ -112,9 +110,10 @@ for my $use_insert_returning ($test_server_supports_insert_returning
   : (0)
 ) {
 
-  no warnings qw/once/;
+  no warnings qw/once redefine/;
+  my $old_connection = DBICTest::Schema->can('connection');
   local *DBICTest::Schema::connection = subname 'DBICTest::Schema::connection' => sub {
-    my $s = shift->next::method (@_);
+    my $s = shift->$old_connection(@_);
     $s->storage->_use_insert_returning ($use_insert_returning);
     $s;
   };
@@ -435,7 +434,7 @@ lives_ok { $cds->update({ year => '2010' }) } 'Update on prefetched rs';
   } 'with_deferred_fk_checks code survived';
 
   is eval { $schema->resultset('Track')->find(999)->title }, 'deferred FK track',
-     'code in with_deferred_fk_checks worked'; 
+     'code in with_deferred_fk_checks worked';
 
   throws_ok {
     $schema->resultset('Track')->create({
@@ -449,7 +448,8 @@ done_testing;
 END {
     return unless $schema;
     drop_test_schema($schema);
-    eapk_drop_all( $schema)
+    eapk_drop_all($schema);
+    undef $schema;
 };
 
 

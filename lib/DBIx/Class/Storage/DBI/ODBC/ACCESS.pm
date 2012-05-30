@@ -65,6 +65,9 @@ sub _run_connection_actions {
     $self->_dbh->{LongReadLen} = $long_read_len * 2 + 1;
   }
 
+  # batch operations do not work
+  $self->_disable_odbc_array_ops;
+
   return $self->next::method(@_);
 }
 

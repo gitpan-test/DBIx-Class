@@ -87,7 +87,7 @@ sub check_cols_of {
             my @dbic_reltable = $dbic_obj->$col;
             my @hashref_reltable = @{$datahashref->{$col}};
 
-            is (scalar @dbic_reltable, scalar @hashref_reltable, 'number of related entries');
+            is (scalar @hashref_reltable, scalar @dbic_reltable, 'number of related entries');
 
             # for my $index (0..scalar @hashref_reltable) {
             for my $index (0..scalar @dbic_reltable) {
@@ -130,7 +130,7 @@ for my $index (0 .. $#hashrefinf) {
 }
 
 # sometimes for ultra-mega-speed you want to fetch columns in esoteric ways
-# check the inflator over a non-fetching join 
+# check the inflator over a non-fetching join
 $rs_dbic = $schema->resultset ('Artist')->search ({ 'me.artistid' => 1}, {
     prefetch => { cds => 'tracks' },
     order_by => [qw/cds.cdid tracks.trackid/],

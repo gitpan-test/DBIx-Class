@@ -43,10 +43,9 @@ my $schema = DBICTest::Schema->connect($dsn, $user, $pass);
 isa_ok( $schema->storage, 'DBIx::Class::Storage::DBI::ODBC::Microsoft_SQL_Server' );
 
 {
-  my $schema2 = $schema->connect ($schema->storage->connect_info);
+  my $schema2 = $schema->connect (@{$schema->storage->connect_info});
   ok (! $schema2->storage->connected, 'a re-connected cloned schema starts unconnected');
 }
-
 $schema->storage->_dbh->disconnect;
 
 lives_ok {
@@ -57,10 +56,12 @@ my %opts = (
   use_mars =>
     { opts => { on_connect_call => 'use_mars' } },
   use_dynamic_cursors =>
-    { opts => { on_connect_call => 'use_dynamic_cursors' }, required => 1 },
+    { opts => { on_connect_call => 'use_dynamic_cursors' },
+      required => $schema->storage->_using_freetds ? 0 : 1,
+    },
   use_server_cursors =>
     { opts => { on_connect_call => 'use_server_cursors' } },
-  NO_OPTION =>
+  plain =>
     { opts => {}, required => 1 },
 );
 
@@ -78,8 +79,9 @@ for my $opts_name (keys %opts) {
       }
       else {
         skip
-"on_connect_call option '$opts_name' not functional in this configuration: $_",
-1;
+          "on_connect_call option '$opts_name' not functional in this configuration: $_",
+          1
+        ;
       }
     };
 
@@ -109,30 +111,40 @@ SQL
       skip 'not a multiple active statements configuration', 1
         if $opts_name eq 'plain';
 
-      my $artist_rs = $schema->resultset('Artist');
+      $schema->storage->ensure_connected;
 
-      $artist_rs->delete;
+      lives_ok {
 
-      $artist_rs->create({ name => "Artist$_" }) for (1..3);
+        no warnings 'redefine';
+        local *DBI::connect = sub { die "NO RECONNECTS!!!" };
 
-      my $forward  = $artist_rs->search({},
-        { order_by => { -asc  => 'artistid' } });
-      my $backward = $artist_rs->search({},
-        { order_by => { -desc => 'artistid' } });
+        my $artist_rs = $schema->resultset('Artist');
 
-      my @map = (
-        [qw/Artist1 Artist3/], [qw/Artist2 Artist2/], [qw/Artist3 Artist1/]
-      );
-      my @result;
+        $artist_rs->delete;
 
-      while (my $forward_row = $forward->next) {
-        my $backward_row = $backward->next;
-        push @result, [$forward_row->name, $backward_row->name];
-      }
+        $artist_rs->create({ name => "Artist$_" }) for (1..3);
 
-      is_deeply \@result, \@map, "multiple active statements in $opts_name";
+        my $forward  = $artist_rs->search({},
+          { order_by => { -asc  => 'artistid' } });
+        my $backward = $artist_rs->search({},
+          { order_by => { -desc => 'artistid' } });
 
-      $artist_rs->delete;
+        my @map = (
+          [qw/Artist1 Artist3/], [qw/Artist2 Artist2/], [qw/Artist3 Artist1/]
+        );
+        my @result;
+
+        while (my $forward_row = $forward->next) {
+          my $backward_row = $backward->next;
+          push @result, [$forward_row->name, $backward_row->name];
+        }
+
+        is_deeply \@result, \@map, "multiple active statements in $opts_name";
+
+        $artist_rs->delete;
+
+        is($artist_rs->count, 0, '$dbh still viable');
+      } "Multiple active statements survive $opts_name";
     }
 
 # Test populate
@@ -278,35 +290,6 @@ SQL
           );
         }
 
-        {
-          my $book_owner_ids = $schema->resultset ('BooksInLibrary')->search ({}, {
-            rows => 6,
-            offset => 2,
-            join => 'owner',
-            distinct => 1,
-            order_by => 'owner.name',
-            unsafe_subselect_ok => 1
-          })->get_column ('owner');
-
-          my @ids = $book_owner_ids->all;
-
-          is (@ids, 6, 'Limit works');
-
-          my $book_owners = $schema->resultset ('Owners')->search ({
-            id => { -in => $book_owner_ids->as_query }
-          });
-
-          TODO: {
-            local $TODO = "Correlated limited IN subqueries will probably never preserve order";
-
-            is_deeply (
-              [ map { $_->id } ($book_owners->all) ],
-              [ $book_owner_ids->all ],
-              "$test_type: Sort is preserved across IN subqueries",
-            );
-          }
-        }
-
         # still even with lost order of IN, we should be getting correct
         # sets
         {
@@ -382,7 +365,7 @@ SQL
           },
           {
             prefetch => 'books',
-            order_by => { -asc => \['name + ?', [ test => 'xxx' ]] }, # test bindvar propagation
+            order_by => [ { -asc => \['name + ?', [ test => 'xxx' ]] }, 'me.id' ], # test bindvar propagation
             group_by => [ map { "me.$_" } $schema->source('Owners')->columns ], # the literal order_by requires an explicit group_by
             rows     => 3,  # 8 results total
             unsafe_subselect_ok => 1,
@@ -390,15 +373,20 @@ SQL
         );
 
         my ($sql, @bind) = @${$owners->page(3)->as_query};
+        # not testing the SQL as it is quite different between top/rno
         is_same_bind (
           \@bind,
           [
-            ($dialect eq 'Top' ? [ { dbic_colname => 'test' } => 'xxx' ] : ()), # the extra re-order bind
-            [ { sqlt_datatype => 'varchar', sqlt_size => 100, dbic_colname => 'me.name' }
-              => 'somebogusstring' ],
             [ { dbic_colname => 'test' }
               => 'xxx' ],
-            ($dialect ne 'Top' ? ( [ $OFFSET => 7 ], [ $TOTAL => 9 ] ) : ()), # parameterised RNO
+            [ { sqlt_datatype => 'varchar', sqlt_size => 100, dbic_colname => 'me.name' }
+              => 'somebogusstring' ],
+
+            ($dialect eq 'Top'
+              ? [ { dbic_colname => 'test' } => 'xxx' ]  # the extra re-order bind
+              : ([ $OFFSET => 7 ], [ $TOTAL => 9 ]) # parameterised RNO
+            ),
+
             [ { sqlt_datatype => 'varchar', sqlt_size => 100, dbic_colname => 'me.name' }
               => 'somebogusstring' ],
             [ { dbic_colname => 'test' }
@@ -428,12 +416,13 @@ SQL
             having => \['1 = ?', [ test => 1 ] ], #test having propagation
             prefetch => 'owner',
             rows     => 2,  # 3 results total
-            order_by => { -desc => 'me.owner' },
+            order_by => [{ -desc => 'me.owner' }, 'me.id'],
             unsafe_subselect_ok => 1,
           },
         );
 
         ($sql, @bind) = @${$books->page(3)->as_query};
+        # not testing the SQL as it is quite different between top/rno
         is_same_bind (
           \@bind,
           [
@@ -536,9 +525,9 @@ SQL
       TODO: {
         my $freetds_and_dynamic_cursors = 1
           if $opts_name eq 'use_dynamic_cursors' &&
-            $schema->storage->using_freetds;
+            $schema->storage->_using_freetds;
 
-        local $TODO = 
+        local $TODO =
 'these tests fail on freetds with dynamic cursors for some reason'
           if $freetds_and_dynamic_cursors;
         local $ENV{DBIC_NULLABLE_KEY_NOWARN} = 1
@@ -580,5 +569,6 @@ END {
     eval { $dbh->do("DROP TABLE $_") }
       for qw/artist artist_guid money_test books owners/;
   }
+  undef $schema;
 }
 # vim:sw=2 sts=2

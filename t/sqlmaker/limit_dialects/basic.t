@@ -1,7 +1,8 @@
 use strict;
-use warnings;  
+use warnings;
 
 use Test::More;
+use Test::Exception;
 use lib qw(t/lib);
 use DBICTest;
 
@@ -46,6 +47,12 @@ is( $it->next, undef, "software next past end of resultset ok" );
 );
 is( $cds[0]->title, "Spoonful of bees", "software offset ok" );
 
+throws_ok {
+  $schema->resultset("CD")->search({}, {
+    rows => 2,
+    software_limit => 1,
+  })->as_query;
+} qr/Unable to generate limited query representation with 'software_limit' enabled/;
 
 @cds = $schema->resultset("CD")->search( {},
     {
@@ -54,12 +61,9 @@ is( $cds[0]->title, "Spoonful of bees", "software offset ok" );
 );
 is( $cds[0]->title, "Spoonful of bees", "offset with no limit" );
 
-
-# based on a failing criteria submitted by waswas
-# requires SQL::Abstract >= 1.20
 $it = $schema->resultset("CD")->search(
     { title => [
-        -and => 
+        -and =>
             {
                 -like => '%bees'
             },

@@ -2,7 +2,10 @@ package DBIx::Class::Storage::DBI::ODBC::Microsoft_SQL_Server;
 use strict;
 use warnings;
 
-use base qw/DBIx::Class::Storage::DBI::MSSQL/;
+use base qw/
+  DBIx::Class::Storage::DBI::ODBC
+  DBIx::Class::Storage::DBI::MSSQL
+/;
 use mro 'c3';
 use Scalar::Util 'reftype';
 use Try::Tiny;
@@ -75,6 +78,10 @@ The following options are alternative ways to enable concurrent executing
 statement support. Each has its own advantages and drawbacks and works on
 different platforms. Read each section carefully.
 
+For more details about using MAS in MSSQL over DBD::ODBC see this excellent
+document provided by EasySoft:
+L<http://www.easysoft.com/developer/languages/perl/multiple-active-statements.html>.
+
 In order of preference, they are:
 
 =over 8
@@ -124,7 +131,7 @@ sub connect_call_use_mars {
   }
 
   if ($dsn !~ /MARS_Connection=/) {
-    if ($self->using_freetds) {
+    if ($self->_using_freetds) {
       $self->throw_exception('FreeTDS does not support MARS at the time of '
                             .'writing.');
     }
@@ -177,6 +184,11 @@ insert trigger that inserts into another table with an C<IDENTITY> column.
 B<WARNING:> on FreeTDS, changes made in one statement (e.g. an insert) may not
 be visible from a following statement (e.g. a select.)
 
+B<WARNING:> FreeTDS versions > 0.82 seem to have completely broken the ODBC
+protocol. DBIC will not allow dynamic cursor support with such versions to
+protect your data. Please hassle the authors of FreeTDS to act on the bugs that
+make their driver not overly usable with DBD::ODBC.
+
 =cut
 
 sub connect_call_use_dynamic_cursors {
@@ -203,6 +215,8 @@ sub connect_call_use_dynamic_cursors {
 sub _run_connection_actions {
   my $self = shift;
 
+  $self->next::method (@_);
+
   # keep the dynamic_cursors_support and driver-state in sync
   # on every reconnect
   my $use_dyncursors = ($self->_dbic_connect_attributes->{odbc_cursortype} || 0) > 1;
@@ -221,7 +235,7 @@ sub _run_connection_actions {
         $self->throw_exception (
           'Your drivers do not seem to support dynamic cursors (odbc_cursortype => 2).'
          . (
-          $self->using_freetds
+          $self->_using_freetds
             ? ' If you are using FreeTDS, make sure to set tds_version to 8.0 or greater.'
             : ''
           )
@@ -237,7 +251,28 @@ sub _run_connection_actions {
     }
   }
 
-  $self->next::method (@_);
+  $self->_no_scope_identity_query($self->_using_dynamic_cursors
+    ? $self->_using_freetds
+    : undef
+  );
+
+  # freetds is too damn broken, some fixups
+  if ($self->_using_freetds) {
+
+    # no dynamic cursors starting from 0.83
+    if ($self->_using_dynamic_cursors) {
+      my $fv = $self->_using_freetds_version || 999;  # assume large if can't be determined
+      $self->throw_exception(
+        'Dynamic cursors (odbc_cursortype => 2) are not supported with FreeTDS > 0.82 '
+      . "(you have $fv). Please hassle FreeTDS authors to fix the outstanding bugs in "
+      . 'their driver.'
+      ) if $fv > 0.82
+    }
+
+    # FreeTDS is too broken wrt execute_for_fetch batching
+    # just disable it outright until things quiet down
+    $self->_disable_odbc_array_ops;
+  }
 }
 
 =head2 connect_call_use_server_cursors
@@ -270,26 +305,6 @@ sub connect_call_use_server_cursors {
   }
 
   $self->_get_dbh->{odbc_SQL_ROWSET_SIZE} = $sql_rowset_size;
-}
-
-=head2 using_freetds
-
-Tries to determine, to the best of our ability, whether or not you are using the
-FreeTDS driver with L<DBD::ODBC>.
-
-=cut
-
-sub using_freetds {
-  my $self = shift;
-
-  my $dsn = $self->_dbi_connect_info->[0];
-
-  $dsn = '' if ref $dsn eq 'CODE';
-
-  return 1 if $dsn =~ /driver=FreeTDS/i
-              || ($self->_dbh_get_info(6)||'') =~ /tdsodbc/i;
-
-  return 0;
 }
 
 1;

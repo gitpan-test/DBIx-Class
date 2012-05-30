@@ -1,6 +1,6 @@
 -- 
 -- Created by SQL::Translator::Producer::SQLite
--- Created on Sat Jun 11 00:39:51 2011
+-- Created on Fri Mar  2 18:22:33 2012
 -- 
 
 --
@@ -126,6 +126,8 @@ CREATE TABLE owners (
   id INTEGER PRIMARY KEY NOT NULL,
   name varchar(100) NOT NULL
 );
+
+CREATE UNIQUE INDEX owners_name ON owners (name);
 
 --
 -- Table: producer

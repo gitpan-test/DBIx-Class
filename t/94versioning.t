@@ -10,7 +10,7 @@ use File::Copy;
 use Time::HiRes qw/time sleep/;
 
 use lib qw(t/lib);
-use DBICTest; # do not remove even though it is not used
+use DBICTest;
 
 my ($dsn, $user, $pass);
 
@@ -30,13 +30,18 @@ BEGIN {
     unless DBIx::Class::Optional::Dependencies->req_ok_for ('test_rdbms_mysql');
 }
 
+# this is just to grab a lock
+{
+  my $s = DBICTest::Schema->connect($dsn, $user, $pass);
+}
+
 use_ok('DBICVersion_v1');
 
 my $version_table_name = 'dbix_class_schema_versions';
 my $old_table_name = 'SchemaVersions';
 
-my $ddl_dir = dir ('t', 'var');
-mkdir ($ddl_dir) unless -d $ddl_dir;
+my $ddl_dir = dir(qw/t var/, "versioning_ddl-$$");
+$ddl_dir->mkpath unless -d $ddl_dir;
 
 my $fn = {
     v1 => $ddl_dir->file ('DBICVersion-Schema-1.0-MySQL.sql'),
@@ -180,7 +185,11 @@ my $schema_v3 = DBICVersion::Schema->connect($dsn, $user, $pass, { ignore_versio
 }
 
 # add a "harmless" comment before one of the statements.
-system( qq($^X -pi.bak -e "s/ALTER/-- this is a comment\nALTER/" $fn->{trans_v23}) );
+{
+  my ($perl) = $^X =~ /(.+)/;
+  local $ENV{PATH};
+  system( qq($perl -pi.bak -e "s/ALTER/-- this is a comment\nALTER/" $fn->{trans_v23}) );
+}
 
 # Then attempt v1 -> v3 upgrade
 {
@@ -259,11 +268,11 @@ system( qq($^X -pi.bak -e "s/ALTER/-- this is a comment\nALTER/" $fn->{trans_v23
 
   DBICVersion::Schema->connect({
     dsn => $dsn,
-    user => $user, 
+    user => $user,
     pass => $pass,
     ignore_version => 1
   });
-  
+
   ok($get_db_version_run == 0, "attributes pulled from hashref connect_info");
   $get_db_version_run = 0;
 
@@ -271,8 +280,10 @@ system( qq($^X -pi.bak -e "s/ALTER/-- this is a comment\nALTER/" $fn->{trans_v23
   ok($get_db_version_run == 0, "attributes pulled from list connect_info");
 }
 
-unless ($ENV{DBICTEST_KEEP_VERSIONING_DDL}) {
-    unlink $_ for (values %$fn);
+END {
+  unless ($ENV{DBICTEST_KEEP_VERSIONING_DDL}) {
+    $ddl_dir->rmtree;
+  }
 }
 
 done_testing;

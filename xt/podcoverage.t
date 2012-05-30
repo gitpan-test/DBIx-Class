@@ -7,15 +7,10 @@ use lib qw(t/lib);
 use DBICTest;
 use namespace::clean;
 
-# Don't run tests for installs
-if ( DBICTest::RunMode->is_plain ) {
-  plan( skip_all => "Author tests not required for installation" );
-}
-
 require DBIx::Class;
 unless ( DBIx::Class::Optional::Dependencies->req_ok_for ('test_podcoverage') ) {
   my $missing = DBIx::Class::Optional::Dependencies->req_missing_for ('test_podcoverage');
-  $ENV{RELEASE_TESTING} || DBICTest::RunMode->is_author
+  $ENV{RELEASE_TESTING}
     ? die ("Failed to load release-testing module requirements: $missing")
     : plan skip_all => "Test needs: $missing"
 }
@@ -130,6 +125,8 @@ my $exceptions = {
     'DBIx::Class::ResultSource::*'                  => { skip => 1 },
     'DBIx::Class::Storage::Statistics'              => { skip => 1 },
     'DBIx::Class::Storage::DBI::Replicated::Types'  => { skip => 1 },
+    'DBIx::Class::GlobalDestruction'                => { skip => 1 },
+    'DBIx::Class::Storage::BlockRunner'             => { skip => 1 }, # temporary
 
 # test some specific components whose parents are exempt below
     'DBIx::Class::Relationship::Base'               => {},

@@ -4,14 +4,6 @@ use Scalar::Util 'refaddr';
 use namespace::clean;
 $| = 1;
 
-BEGIN {
-  eval "use DBIx::Class::CDBICompat;";
-  if ($@) {
-    plan (skip_all => 'Class::Trigger and DBIx::ContextualFetch required');
-  }
-  plan tests => 98;
-}
-
 INIT {
   use lib 't/cdbi/testlib';
   use Film;
@@ -35,7 +27,7 @@ is(Film->__driver, "SQLite", "Driver set correctly");
   eval { my $id = Film->title };
   #like $@, qr/class method/, "Can't get title with no object";
   ok $@, "Can't get title with no object";
-} 
+}
 
 eval { my $duh = Film->insert; };
 like $@, qr/create needs a hashref/, "needs a hashref";
@@ -229,7 +221,7 @@ ok(
 
 # Test that a disconnect doesnt harm anything.
 {
-    # SQLite is loud on disconnect/reconnect. 
+    # SQLite is loud on disconnect/reconnect.
     # This is solved in DBIC but not in ContextualFetch
     local $SIG{__WARN__} = sub {
       warn @_ unless $_[0] =~
@@ -400,7 +392,7 @@ SKIP: {
   my $btaste4 = Film->retrieve('Bad Taste');
   isnt refaddr $btaste2, refaddr $btaste4,
     "Clearing cache and retrieving again gives new object";
- 
+
   $btaste=Film->insert({
     Title             => 'Bad Taste 2',
     Director          => 'Peter Jackson',
@@ -410,5 +402,7 @@ SKIP: {
   $btaste2 = Film->retrieve('Bad Taste 2');
   is refaddr $btaste, refaddr $btaste2,
     "Creating and retrieving gives ref to same object";
- 
+
 }
+
+done_testing;

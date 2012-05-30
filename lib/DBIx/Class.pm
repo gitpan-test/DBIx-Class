@@ -11,7 +11,7 @@ our $VERSION;
 # $VERSION declaration must stay up here, ahead of any other package
 # declarations, as to not confuse various modules attempting to determine
 # this ones version, whether that be s.c.o. or Module::Metadata, etc
-$VERSION = '0.08196';
+$VERSION = '0.08197_01';
 
 $VERSION = eval $VERSION if $VERSION =~ /_/; # numify for warning-free dev releases
 
@@ -71,7 +71,7 @@ use base qw/DBIx::Class::Componentised DBIx::Class::AccessorGroup/;
 use DBIx::Class::StartupCheck;
 
 __PACKAGE__->mk_group_accessors(inherited => '_skip_namespace_frames');
-__PACKAGE__->_skip_namespace_frames('^DBIx::Class|^SQL::Abstract|^Try::Tiny|^Class::Accessor::Grouped$');
+__PACKAGE__->_skip_namespace_frames('^DBIx::Class|^SQL::Abstract|^Try::Tiny|^Class::Accessor::Grouped|^Context::Preserve');
 
 sub mk_classdata {
   shift->mk_classaccessor(@_);
@@ -252,7 +252,7 @@ handle as requested in order to minimise memory usage. It has auto-increment
 support for SQLite, MySQL, PostgreSQL, Oracle, SQL Server and DB2 and is
 known to be used in production on at least the first four, and is fork-
 and thread-safe out of the box (although
-L<your DBD may not be|DBI/Threads_and_Thread_Safety>).
+L<your DBD may not be|DBI/Threads and Thread Safety>).
 
 This project is still under rapid development, so large new features may be
 marked EXPERIMENTAL - such APIs are still usable but may have edge bugs.
@@ -316,6 +316,8 @@ bphillips: Brian Phillips <bphillips@cpan.org>
 
 boghead: Bryan Beeley <cpan@beeley.org>
 
+brd: Brad Davis <brd@FreeBSD.org>
+
 bricas: Brian Cassidy <bricas@cpan.org>
 
 brunov: Bruno Vecchi <vecchi.b@gmail.com>
@@ -345,6 +347,8 @@ dpetrov: Dimitar Petrov <mitakaa@gmail.com>
 dwc: Daniel Westermann-Clark <danieltwc@cpan.org>
 
 dyfrgi: Michael Leuchtenburg <michael@slashhome.org>
+
+edenc: Eden Cardim <edencardim@gmail.com>
 
 felliott: Fitz Elliott <fitz.elliott@gmail.com>
 
@@ -472,6 +476,8 @@ scotty: Scotty Allen <scotty@scottyallen.com>
 
 semifor: Marc Mims <marc@questright.com>
 
+SineSwiper: Brendan Byrd <bbyrd@cpan.org>
+
 solomon: Jared Johnson <jaredj@nmgi.com>
 
 spb: Stephen Bennett <stephen@freenode.net>
@@ -500,9 +506,13 @@ victori: Victor Igumnov <victori@cpan.org>
 
 wdh: Will Hawes
 
+wesm: Wes Malone <wes@mitsi.com>
+
 willert: Sebastian Willert <willert@cpan.org>
 
 wreis: Wallace Reis <wreis@cpan.org>
+
+xenoterracide: Caleb Cushing <xenoterracide@gmail.com>
 
 yrlnry: Mark Jason Dominus <mjd@plover.com>
 

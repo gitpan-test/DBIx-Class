@@ -2,8 +2,13 @@ use strict;
 use warnings;
 
 use Test::More;
+use Test::Warn;
+use Try::Tiny;
 use lib qw(t/lib);
 use DBICTest;
+
+# so user's env doesn't screw us
+delete $ENV{DBIC_DT_SEARCH_OK};
 
 my $schema = DBICTest->init_schema();
 
@@ -19,15 +24,35 @@ isa_ok($event->starts_at, 'DateTime', 'DateTime returned');
 my $starts = $event->starts_at;
 is("$starts", '2006-04-25T22:24:33', 'Correct date/time');
 
+my $dt_warn_re = qr/DateTime objects.+not supported properly/;
+
+my $row;
+
+{
+  local $ENV{DBIC_DT_SEARCH_OK} = 1;
+  local $SIG{__WARN__} = sub {
+    fail('Disabled warning still issued') if $_[0] =~ $dt_warn_re;
+    warn @_;
+  };
+  $row = $schema->resultset('Event')->search({ starts_at => $starts })->single
+}
+
+warnings_exist {
+  $row = $schema->resultset('Event')->search({ starts_at => $starts })->single
+} [$dt_warn_re],
+  'using a DateTime object in ->search generates a warning';
+
 TODO: {
   local $TODO = "We can't do this yet before 0.09" if DBIx::Class->VERSION < 0.09;
 
-  ok(my $row =
-    $schema->resultset('Event')->search({ starts_at => $starts })->single);
   is(eval { $row->id }, 1, 'DT in search');
 
+  local $ENV{DBIC_DT_SEARCH_OK} = 1;
+
   ok($row =
-    $schema->resultset('Event')->search({ starts_at => { '>=' => $starts } })->single);
+    $schema->resultset('Event')->search({ starts_at => { '>=' => $starts } })
+    ->single);
+
   is(eval { $row->id }, 1, 'DT in search with condition');
 }
 
