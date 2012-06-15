@@ -1,11 +1,5 @@
 Revision history for DBIx::Class
 
-0.08197_03 2012-06-01 13:10 (UTC)
-   New dev rel because M::I
-
-0.08197_02 2012-05-31 02:30 (UTC)
-   New dev rel because M::I
-
 0.08197_01 2012-05-30 02:15 (UTC)
     * New Features / Changes
         - Issue a warning when DateTime objects are passed to ->search
