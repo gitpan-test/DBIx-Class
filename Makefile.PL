@@ -17,6 +17,7 @@ BEGIN {
 name     'DBIx-Class';
 perl_version '5.008001';
 all_from 'lib/DBIx/Class.pm';
+Meta->{values}{x_authority} = 'cpan:RIBASUSHI';
 
 tests_recursive (qw|
     t
@@ -69,7 +70,7 @@ my $runtime_requires = {
   'namespace::clean'         => '0.20',
   'Path::Class'              => '0.18',
   'Scope::Guard'             => '0.03',
-  'SQL::Abstract'            => '1.73_01',
+  'SQL::Abstract'            => '1.73',
   'Try::Tiny'                => '0.04',
 
   # dual-life corelibs needing a specific bugfixed version
