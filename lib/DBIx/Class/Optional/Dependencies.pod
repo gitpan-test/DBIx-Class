@@ -18,7 +18,7 @@ Somewhere in your build-file (e.g. L<Module::Install>'s Makefile.PL):
 
   ...
 
-  configure_requires 'DBIx::Class' => '0.08198';
+  configure_requires 'DBIx::Class' => '0.0819801';
 
   require DBIx::Class::Optional::Dependencies;
 
