@@ -625,9 +625,7 @@ SQL::Abstract and DBI.
 
 =head1 AUTHORS
 
-Matt S. Trout <mst@shadowcatsystems.co.uk>
-
-Andy Grundman <andy@hybridized.org>
+See L<DBIx::Class/CONTRIBUTORS>
 
 =head1 LICENSE
 

@@ -167,7 +167,7 @@ Relationships between tables (has_a, has_many...) must be declared after all tab
 
 =head1 AUTHORS
 
-Matt S. Trout <mst@shadowcatsystems.co.uk>
+See L<DBIx::Class/CONTRIBUTORS>
 
 =head1 LICENSE
 

@@ -12,7 +12,7 @@ postamble <<"EOP";
 create_distdir : dbic_clonedir_gen_optdeps_pod
 
 dbic_clonedir_gen_optdeps_pod :
-\t\$(ABSPERL) -Ilib -MDBIx::Class::Optional::Dependencies -e 'DBIx::Class::Optional::Dependencies->_gen_pod($ver)'
+\t\$(ABSPERL) -Ilib -MDBIx::Class::Optional::Dependencies -e "DBIx::Class::Optional::Dependencies->_gen_pod($ver)"
 
 EOP
 

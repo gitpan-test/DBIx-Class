@@ -85,7 +85,7 @@ sub rethrow {
 
 =head1 AUTHORS
 
-Brandon L. Black <blblack@gmail.com>
+See L<DBIx::Class/CONTRIBUTORS>
 
 =head1 LICENSE
 

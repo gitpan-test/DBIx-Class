@@ -11,7 +11,7 @@ our $VERSION;
 # $VERSION declaration must stay up here, ahead of any other package
 # declarations, as to not confuse various modules attempting to determine
 # this ones version, whether that be s.c.o. or Module::Metadata, etc
-$VERSION = '0.08199';
+$VERSION = '0.08199_01';
 
 $VERSION = eval $VERSION if $VERSION =~ /_/; # numify for warning-free dev releases
 
@@ -222,7 +222,7 @@ Then you can use these classes in your application's code:
   my $cd = $millennium_cds_rs->next; # SELECT ... FROM cds JOIN artists ...
   my $cd_artist_name = $cd->artist->name; # Already has the data so no 2nd query
 
-  # new() makes a DBIx::Class::Row object but doesnt insert it into the DB.
+  # new() makes a Result object but doesnt insert it into the DB.
   # create() is the same as new() then insert().
   my $new_cd = $schema->resultset('CD')->new({ title => 'Spoon' });
   $new_cd->artist($cd->artist);

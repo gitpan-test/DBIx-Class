@@ -107,7 +107,9 @@ my $rdbms_firebird_odbc = {
 
 my $reqs = {
   dist => {
-    #'Module::Install::Pod::Inherit' => '0.01',
+    req => {
+      'Pod::Inherit' => '0.14',
+    },
   },
 
   replicated => {
@@ -797,7 +799,7 @@ EOD
     '=head2 req_group_list',
     '=over',
     '=item Arguments: none',
-    '=item Returns: \%list_of_requirement_groups',
+    '=item Return Value: \%list_of_requirement_groups',
     '=back',
     <<'EOD',
 This method should be used by DBIx::Class packagers, to get a hashref of all
@@ -808,7 +810,7 @@ EOD
     '=head2 req_list_for',
     '=over',
     '=item Arguments: $group_name',
-    '=item Returns: \%list_of_module_version_pairs',
+    '=item Return Value: \%list_of_module_version_pairs',
     '=back',
     <<'EOD',
 This method should be used by DBIx::Class extension authors, to determine the
@@ -820,7 +822,7 @@ EOD
     '=head2 req_ok_for',
     '=over',
     '=item Arguments: $group_name',
-    '=item Returns: 1|0',
+    '=item Return Value: 1|0',
     '=back',
     <<'EOD',
 Returns true or false depending on whether all modules required by
@@ -830,7 +832,7 @@ EOD
     '=head2 req_missing_for',
     '=over',
     '=item Arguments: $group_name',
-    '=item Returns: $error_message_string',
+    '=item Return Value: $error_message_string',
     '=back',
     <<"EOD",
 Returns a single line string suitable for inclusion in larger error messages.
@@ -850,7 +852,7 @@ EOD
     '=head2 req_errorlist_for',
     '=over',
     '=item Arguments: $group_name',
-    '=item Returns: \%list_of_loaderrors_per_module',
+    '=item Return Value: \%list_of_loaderrors_per_module',
     '=back',
     <<'EOD',
 Returns a hashref containing the actual errors that occured while attempting
@@ -865,6 +867,141 @@ EOD
   open (my $fh, '>', $podfn) or Carp::croak "Unable to write to $podfn: $!";
   print $fh join ("\n\n", @chunks);
   close ($fh);
+
+  # We'll also autogen the ResultClass.pod file to keep it out of git's hair
+  # and prevent any complications with P:I's further mangling.
+  $podfn =~ s/Optional.Dependencies/ResultClass/;
+
+  open ($fh, '>', $podfn) or Carp::croak "Unable to write to $podfn: $!";
+  # (The first line is required, so that P:I isn't afraid of touching it.)
+  print $fh <<'EOF';
+=for comment POD_DERIVED_INDEX_GENERATED
+#########################################################################
+#####################  A U T O G E N E R A T E D ########################
+#########################################################################
+#
+# The contents of this POD file are auto-generated.  Any changes you make
+# will be lost. If you need to change the generated text edit _gen_pod()
+# at the end of $modfn
+#
+
+=cut
+
+=head1 NAME
+
+DBIx::Class::ResultClass - Represents a single result (row) from a DB query.
+
+=head1 SYNOPSIS
+
+  package My::Schema::Result::Track;
+
+EOF
+  print $fh <<EOF;
+  use base 'DBIx::Class::Core';
+
+  __PACKAGE__->table('tracks');
+
+  __PACKAGE__->add_columns({
+    id => {
+      data_type => 'int',
+      is_auto_increment => 1,
+    },
+    cd_id => {
+      data_type => 'int',
+    },
+    title => {
+      data_type => 'varchar',
+      size => 50,
+    },
+    rank => {
+      data_type => 'int',
+      is_nullable => 1,
+    },
+  });
+
+  __PACKAGE__->set_primary_key('id');
+  __PACKAGE__->add_unique_constraint(u_title => ['cd_id', 'title']);
+
+EOF
+  print $fh <<'EOF';
+=head1 DESCRIPTION
+
+In L<DBIx::Class>, a user normally receives query results as instances of a
+certain C<Result Class>, depending on the main query source.  Besides being
+the primary "toolset" for interaction with your data, a C<Result Class> also
+serves to establish source metadata, which is then used during initialization
+of your <DBIx::Class::Schema> instance.
+
+Because of these multiple seemingly conflicting purposes, it is hard to
+aggregate the documentation of various methods available on a typical
+C<Result Class>. This document serves as a general overview of C<Result Class>
+declaration best practices, and offers an index of the available methods
+(and the Components/Roles which provide them).
+
+=head1 NOTE
+
+There is no such thing as DBIx::Class::ResultClass.  Do not try to use it!
+
+=head1 AUTHORS
+
+See L<DBIx::Class/CONTRIBUTORS>.
+
+=head1 LICENSE
+
+You may distribute this code under the same terms as Perl itself.
+EOF
+  close ($fh);
+}
+
+# To keep the Makefile command small, this is also included to be called by the author only
+sub _gen_inherit_pods {
+  require Pod::Inherit;
+
+  # Takes long enough to warrant a status message
+  print "Regenerating new PODs via Pod::Inherit\n";
+
+  Pod::Inherit->new({
+     input_files       => 'lib',
+     out_dir           => 'lib',
+     force_permissions => 1,
+     class_map         => {
+        "DBIx::Class::Relationship::HasMany"    => "DBIx::Class::Relationship",
+        "DBIx::Class::Relationship::HasOne"     => "DBIx::Class::Relationship",
+        "DBIx::Class::Relationship::BelongsTo"  => "DBIx::Class::Relationship",
+        "DBIx::Class::Relationship::ManyToMany" => "DBIx::Class::Relationship",
+        "DBIx::Class::ResultSourceProxy"        => "DBIx::Class::ResultSource",
+        "DBIx::Class::ResultSourceProxy::Table" => "DBIx::Class::ResultSource",
+     },
+     # skip the deprecated classes that give out *DEPRECATED* warnings
+     skip_classes      => [ qw(
+        lib/DBIx/Class/Storage/DBI/Sybase/MSSQL.pm
+        lib/DBIx/Class/Serialize/Storable.pm
+        lib/DBIx/Class/ResultSetManager.pm
+        lib/DBIx/Class/InflateColumn/File.pm
+        lib/DBIx/Class/DB.pm
+        lib/DBIx/Class/CDBICompat/
+        lib/DBIx/Class/CDBICompat.pm
+     ),
+        'lib/DBIx/Class/Storage/DBI/Replicated/Pool.pm',  # this one just errors out with: The 'add_attribute' method cannot be called on an immutable instance
+        'lib/DBIx/Class/Relationship.pm',                 # it already documents its own inheritors
+        'lib/DBIx/Class/Core.pm',                         # we actually don't want this populated in favor of redirecting users to the ResultClass docs
+        'lib/DBIx/Class/Optional/Dependencies.pm'         # this module, since the POD is already auto-generated
+     ],
+     # these appear everywhere, and are typically lower-level methods not used by the general user
+     skip_inherits     => [ qw/
+        DBIx::Class
+        DBIx::Class::Componentised
+        Class::C3::Componentised
+        DBIx::Class::AccessorGroup
+        Class::Accessor::Grouped
+        Moose::Object
+        Exporter
+     / ],
+     force_inherits    => {
+        'DBIx::Class::ResultClass' => 'DBIx::Class::Core',  # this forces the contents of ::Core to be dumped into the POD doc for ::ResultClass
+     },
+     method_format     => 'L<%m|%c/%m>',
+  })->write_pod;
 }
 
 1;

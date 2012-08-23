@@ -1,0 +1,664 @@
+=for comment POD_DERIVED_INDEX_GENERATED
+The following documentation is automatically generated.  Please do not edit
+this file, but rather the original, inline with DBIx::Class::Storage::DBI
+at lib/DBIx/Class/Storage/DBI.pm
+(on the system that originally ran this).
+If you do edit this file, and don't want your changes to be removed, make
+sure you change the first line.
+
+=cut
+
+=head1 NAME
+
+DBIx::Class::Storage::DBI - DBI storage handler
+
+=head1 SYNOPSIS
+
+  my $schema = MySchema->connect('dbi:SQLite:my.db');
+
+  $schema->storage->debug(1);
+
+  my @stuff = $schema->storage->dbh_do(
+    sub {
+      my ($storage, $dbh, @args) = @_;
+      $dbh->do("DROP TABLE authors");
+    },
+    @column_list
+  );
+
+  $schema->resultset('Book')->search({
+     written_on => $schema->storage->datetime_parser->format_datetime(DateTime->now)
+  });
+
+=head1 DESCRIPTION
+
+This class represents the connection to an RDBMS via L<DBI>.  See
+L<DBIx::Class::Storage> for general information.  This pod only
+documents DBI-specific methods and behaviors.
+
+=head1 METHODS
+
+=head2 connect_info
+
+This method is normally called by L<DBIx::Class::Schema/connection>, which
+encapsulates its argument list in an arrayref before passing them here.
+
+The argument list may contain:
+
+=over 4
+
+=item *
+
+The same 4-element argument set one would normally pass to
+L<DBI/connect>, optionally followed by
+L<extra attributes|/DBIx::Class specific connection attributes>
+recognized by DBIx::Class:
+
+  $connect_info_args = [ $dsn, $user, $password, \%dbi_attributes?, \%extra_attributes? ];
+
+=item *
+
+A single code reference which returns a connected
+L<DBI database handle|DBI/connect> optionally followed by
+L<extra attributes|/DBIx::Class specific connection attributes> recognized
+by DBIx::Class:
+
+  $connect_info_args = [ sub { DBI->connect (...) }, \%extra_attributes? ];
+
+=item *
+
+A single hashref with all the attributes and the dsn/user/password
+mixed together:
+
+  $connect_info_args = [{
+    dsn => $dsn,
+    user => $user,
+    password => $pass,
+    %dbi_attributes,
+    %extra_attributes,
+  }];
+
+  $connect_info_args = [{
+    dbh_maker => sub { DBI->connect (...) },
+    %dbi_attributes,
+    %extra_attributes,
+  }];
+
+This is particularly useful for L<Catalyst> based applications, allowing the
+following config (L<Config::General> style):
+
+  <Model::DB>
+    schema_class   App::DB
+    <connect_info>
+      dsn          dbi:mysql:database=test
+      user         testuser
+      password     TestPass
+      AutoCommit   1
+    </connect_info>
+  </Model::DB>
+
+The C<dsn>/C<user>/C<password> combination can be substituted by the
+C<dbh_maker> key whose value is a coderef that returns a connected
+L<DBI database handle|DBI/connect>
+
+=back
+
+Please note that the L<DBI> docs recommend that you always explicitly
+set C<AutoCommit> to either I<0> or I<1>.  L<DBIx::Class> further
+recommends that it be set to I<1>, and that you perform transactions
+via our L<DBIx::Class::Schema/txn_do> method.  L<DBIx::Class> will set it
+to I<1> if you do not do explicitly set it to zero.  This is the default
+for most DBDs. See L</DBIx::Class and AutoCommit> for details.
+
+=head3 DBIx::Class specific connection attributes
+
+In addition to the standard L<DBI|DBI/ATTRIBUTES COMMON TO ALL HANDLES>
+L<connection|DBI/Database Handle Attributes> attributes, DBIx::Class recognizes
+the following connection options. These options can be mixed in with your other
+L<DBI> connection attributes, or placed in a separate hashref
+(C<\%extra_attributes>) as shown above.
+
+Every time C<connect_info> is invoked, any previous settings for
+these options will be cleared before setting the new ones, regardless of
+whether any options are specified in the new C<connect_info>.
+
+=over 4
+
+=item on_connect_do
+
+Specifies things to do immediately after connecting or re-connecting to
+the database.  Its value may contain:
+
+=over 4
+
+=item a scalar
+
+This contains one SQL statement to execute.
+
+=item an array reference
+
+This contains SQL statements to execute in order.  Each element contains
+a string or a code reference that returns a string.
+
+=item a code reference
+
+This contains some code to execute.  Unlike code references within an
+array reference, its return value is ignored.
+
+=back
+
+=item on_disconnect_do
+
+Takes arguments in the same form as L</on_connect_do> and executes them
+immediately before disconnecting from the database.
+
+Note, this only runs if you explicitly call L</disconnect> on the
+storage object.
+
+=item on_connect_call
+
+A more generalized form of L</on_connect_do> that calls the specified
+C<connect_call_METHOD> methods in your storage driver.
+
+  on_connect_do => 'select 1'
+
+is equivalent to:
+
+  on_connect_call => [ [ do_sql => 'select 1' ] ]
+
+Its values may contain:
+
+=over 4
+
+=item a scalar
+
+Will call the C<connect_call_METHOD> method.
+
+=item a code reference
+
+Will execute C<< $code->($storage) >>
+
+=item an array reference
+
+Each value can be a method name or code reference.
+
+=item an array of arrays
+
+For each array, the first item is taken to be the C<connect_call_> method name
+or code reference, and the rest are parameters to it.
+
+=back
+
+Some predefined storage methods you may use:
+
+=over 4
+
+=item do_sql
+
+Executes a SQL string or a code reference that returns a SQL string. This is
+what L</on_connect_do> and L</on_disconnect_do> use.
+
+It can take:
+
+=over 4
+
+=item a scalar
+
+Will execute the scalar as SQL.
+
+=item an arrayref
+
+Taken to be arguments to L<DBI/do>, the SQL string optionally followed by the
+attributes hashref and bind values.
+
+=item a code reference
+
+Will execute C<< $code->($storage) >> and execute the return array refs as
+above.
+
+=back
+
+=item datetime_setup
+
+Execute any statements necessary to initialize the database session to return
+and accept datetime/timestamp values used with
+L<DBIx::Class::InflateColumn::DateTime>.
+
+Only necessary for some databases, see your specific storage driver for
+implementation details.
+
+=back
+
+=item on_disconnect_call
+
+Takes arguments in the same form as L</on_connect_call> and executes them
+immediately before disconnecting from the database.
+
+Calls the C<disconnect_call_METHOD> methods as opposed to the
+C<connect_call_METHOD> methods called by L</on_connect_call>.
+
+Note, this only runs if you explicitly call L</disconnect> on the
+storage object.
+
+=item disable_sth_caching
+
+If set to a true value, this option will disable the caching of
+statement handles via L<DBI/prepare_cached>.
+
+=item limit_dialect
+
+Sets a specific SQL::Abstract::Limit-style limit dialect, overriding the
+default L</sql_limit_dialect> setting of the storage (if any). For a list
+of available limit dialects see L<DBIx::Class::SQLMaker::LimitDialects>.
+
+=item quote_names
+
+When true automatically sets L</quote_char> and L</name_sep> to the characters
+appropriate for your particular RDBMS. This option is preferred over specifying
+L</quote_char> directly.
+
+=item quote_char
+
+Specifies what characters to use to quote table and column names.
+
+C<quote_char> expects either a single character, in which case is it
+is placed on either side of the table/column name, or an arrayref of length
+2 in which case the table/column name is placed between the elements.
+
+For example under MySQL you should use C<< quote_char => '`' >>, and for
+SQL Server you should use C<< quote_char => [qw/[ ]/] >>.
+
+=item name_sep
+
+This parameter is only useful in conjunction with C<quote_char>, and is used to
+specify the character that separates elements (schemas, tables, columns) from
+each other. If unspecified it defaults to the most commonly used C<.>.
+
+=item unsafe
+
+This Storage driver normally installs its own C<HandleError>, sets
+C<RaiseError> and C<ShowErrorStatement> on, and sets C<PrintError> off on
+all database handles, including those supplied by a coderef.  It does this
+so that it can have consistent and useful error behavior.
+
+If you set this option to a true value, Storage will not do its usual
+modifications to the database handle's attributes, and instead relies on
+the settings in your connect_info DBI options (or the values you set in
+your connection coderef, in the case that you are connecting via coderef).
+
+Note that your custom settings can cause Storage to malfunction,
+especially if you set a C<HandleError> handler that suppresses exceptions
+and/or disable C<RaiseError>.
+
+=item auto_savepoint
+
+If this option is true, L<DBIx::Class> will use savepoints when nesting
+transactions, making it possible to recover from failure in the inner
+transaction without having to abort all outer transactions.
+
+=item cursor_class
+
+Use this argument to supply a cursor class other than the default
+L<DBIx::Class::Storage::DBI::Cursor>.
+
+=back
+
+Some real-life examples of arguments to L</connect_info> and
+L<DBIx::Class::Schema/connect>
+
+  # Simple SQLite connection
+  ->connect_info([ 'dbi:SQLite:./foo.db' ]);
+
+  # Connect via subref
+  ->connect_info([ sub { DBI->connect(...) } ]);
+
+  # Connect via subref in hashref
+  ->connect_info([{
+    dbh_maker => sub { DBI->connect(...) },
+    on_connect_do => 'alter session ...',
+  }]);
+
+  # A bit more complicated
+  ->connect_info(
+    [
+      'dbi:Pg:dbname=foo',
+      'postgres',
+      'my_pg_password',
+      { AutoCommit => 1 },
+      { quote_char => q{"} },
+    ]
+  );
+
+  # Equivalent to the previous example
+  ->connect_info(
+    [
+      'dbi:Pg:dbname=foo',
+      'postgres',
+      'my_pg_password',
+      { AutoCommit => 1, quote_char => q{"}, name_sep => q{.} },
+    ]
+  );
+
+  # Same, but with hashref as argument
+  # See parse_connect_info for explanation
+  ->connect_info(
+    [{
+      dsn         => 'dbi:Pg:dbname=foo',
+      user        => 'postgres',
+      password    => 'my_pg_password',
+      AutoCommit  => 1,
+      quote_char  => q{"},
+      name_sep    => q{.},
+    }]
+  );
+
+  # Subref + DBIx::Class-specific connection options
+  ->connect_info(
+    [
+      sub { DBI->connect(...) },
+      {
+          quote_char => q{`},
+          name_sep => q{@},
+          on_connect_do => ['SET search_path TO myschema,otherschema,public'],
+          disable_sth_caching => 1,
+      },
+    ]
+  );
+
+=head2 on_connect_do
+
+This method is deprecated in favour of setting via L</connect_info>.
+
+=head2 on_disconnect_do
+
+This method is deprecated in favour of setting via L</connect_info>.
+
+=head2 dbh_do
+
+Arguments: ($subref | $method_name), @extra_coderef_args?
+
+Execute the given $subref or $method_name using the new exception-based
+connection management.
+
+The first two arguments will be the storage object that C<dbh_do> was called
+on and a database handle to use.  Any additional arguments will be passed
+verbatim to the called subref as arguments 2 and onwards.
+
+Using this (instead of $self->_dbh or $self->dbh) ensures correct
+exception handling and reconnection (or failover in future subclasses).
+
+Your subref should have no side-effects outside of the database, as
+there is the potential for your subref to be partially double-executed
+if the database connection was stale/dysfunctional.
+
+Example:
+
+  my @stuff = $schema->storage->dbh_do(
+    sub {
+      my ($storage, $dbh, @cols) = @_;
+      my $cols = join(q{, }, @cols);
+      $dbh->selectrow_array("SELECT $cols FROM foo");
+    },
+    @column_list
+  );
+
+=head2 disconnect
+
+Our C<disconnect> method also performs a rollback first if the
+database is not in C<AutoCommit> mode.
+
+=head2 with_deferred_fk_checks
+
+=over 4
+
+=item Arguments: C<$coderef>
+
+=item Return Value: The return value of $coderef
+
+=back
+
+Storage specific method to run the code ref with FK checks deferred or
+in MySQL's case disabled entirely.
+
+=head2 connected
+
+=over 4
+
+=item Arguments: none
+
+=item Return Value: 1|0
+
+=back
+
+Verifies that the current database handle is active and ready to execute
+an SQL statement (e.g. the connection did not get stale, server is still
+answering, etc.) This method is used internally by L</dbh>.
+
+=head2 dbh
+
+Returns a C<$dbh> - a data base handle of class L<DBI>. The returned handle
+is guaranteed to be healthy by implicitly calling L</connected>, and if
+necessary performing a reconnection before returning. Keep in mind that this
+is very B<expensive> on some database engines. Consider using L</dbh_do>
+instead.
+
+=head2 select
+
+=over 4
+
+=item Arguments: $ident, $select, $condition, $attrs
+
+=back
+
+Handle a SQL select statement.
+
+=head2 sql_limit_dialect
+
+This is an accessor for the default SQL limit dialect used by a particular
+storage driver. Can be overridden by supplying an explicit L</limit_dialect>
+to L<DBIx::Class::Schema/connect>. For a list of available limit dialects
+see L<DBIx::Class::SQLMaker::LimitDialects>.
+
+=head2 last_insert_id
+
+Return the row id of the last insert.
+
+=head2 _native_data_type
+
+=over 4
+
+=item Arguments: $type_name
+
+=back
+
+This API is B<EXPERIMENTAL>, will almost definitely change in the future, and
+currently only used by L<::AutoCast|DBIx::Class::Storage::DBI::AutoCast> and
+L<::Sybase::ASE|DBIx::Class::Storage::DBI::Sybase::ASE>.
+
+The default implementation returns C<undef>, implement in your Storage driver if
+you need this functionality.
+
+Should map types from other databases to the native RDBMS type, for example
+C<VARCHAR2> to C<VARCHAR>.
+
+Types with modifiers should map to the underlying data type. For example,
+C<INTEGER AUTO_INCREMENT> should become C<INTEGER>.
+
+Composite types should map to the container type, for example
+C<ENUM(foo,bar,baz)> becomes C<ENUM>.
+
+=head2 sqlt_type
+
+Returns the database driver name.
+
+=head2 bind_attribute_by_data_type
+
+Given a datatype from column info, returns a database specific bind
+attribute for C<< $dbh->bind_param($val,$attribute) >> or nothing if we will
+let the database planner just handle it.
+
+Generally only needed for special case column types, like bytea in postgres.
+
+=head2 is_datatype_numeric
+
+Given a datatype from column_info, returns a boolean value indicating if
+the current RDBMS considers it a numeric value. This controls how
+L<DBIx::Class::Row/set_column> decides whether to mark the column as
+dirty - when the datatype is deemed numeric a C<!=> comparison will
+be performed instead of the usual C<eq>.
+
+=head2 create_ddl_dir
+
+=over 4
+
+=item Arguments: $schema, \@databases, $version, $directory, $preversion, \%sqlt_args
+
+=back
+
+Creates a SQL file based on the Schema, for each of the specified
+database engines in C<\@databases> in the given directory.
+(note: specify L<SQL::Translator> names, not L<DBI> driver names).
+
+Given a previous version number, this will also create a file containing
+the ALTER TABLE statements to transform the previous schema into the
+current one. Note that these statements may contain C<DROP TABLE> or
+C<DROP COLUMN> statements that can potentially destroy data.
+
+The file names are created using the C<ddl_filename> method below, please
+override this method in your schema if you would like a different file
+name format. For the ALTER file, the same format is used, replacing
+$version in the name with "$preversion-$version".
+
+See L<SQL::Translator/METHODS> for a list of values for C<\%sqlt_args>.
+The most common value for this would be C<< { add_drop_table => 1 } >>
+to have the SQL produced include a C<DROP TABLE> statement for each table
+created. For quoting purposes supply C<quote_table_names> and
+C<quote_field_names>.
+
+If no arguments are passed, then the following default values are assumed:
+
+=over 4
+
+=item databases  - ['MySQL', 'SQLite', 'PostgreSQL']
+
+=item version    - $schema->schema_version
+
+=item directory  - './'
+
+=item preversion - <none>
+
+=back
+
+By default, C<\%sqlt_args> will have
+
+ { add_drop_table => 1, ignore_constraint_names => 1, ignore_index_names => 1 }
+
+merged with the hash passed in. To disable any of those features, pass in a
+hashref like the following
+
+ { ignore_constraint_names => 0, # ... other options }
+
+WARNING: You are strongly advised to check all SQL files created, before applying
+them.
+
+=head2 deployment_statements
+
+=over 4
+
+=item Arguments: $schema, $type, $version, $directory, $sqlt_args
+
+=back
+
+Returns the statements used by L</deploy> and L<DBIx::Class::Schema/deploy>.
+
+The L<SQL::Translator> (not L<DBI>) database driver name can be explicitly
+provided in C<$type>, otherwise the result of L</sqlt_type> is used as default.
+
+C<$directory> is used to return statements from files in a previously created
+L</create_ddl_dir> directory and is optional. The filenames are constructed
+from L<DBIx::Class::Schema/ddl_filename>, the schema name and the C<$version>.
+
+If no C<$directory> is specified then the statements are constructed on the
+fly using L<SQL::Translator> and C<$version> is ignored.
+
+See L<SQL::Translator/METHODS> for a list of values for C<$sqlt_args>.
+
+=head2 datetime_parser
+
+Returns the datetime parser class
+
+=head2 datetime_parser_type
+
+Defines the datetime parser class - currently defaults to L<DateTime::Format::MySQL>
+
+=head2 build_datetime_parser
+
+See L</datetime_parser>
+
+=head2 is_replicating
+
+A boolean that reports if a particular L<DBIx::Class::Storage::DBI> is set to
+replicate from a master database.  Default is undef, which is the result
+returned by databases that don't support replication.
+
+=head2 lag_behind_master
+
+Returns a number that represents a certain amount of lag behind a master db
+when a given storage is replicating.  The number is database dependent, but
+starts at zero and increases with the amount of lag. Default in undef
+
+=head2 relname_to_table_alias
+
+=over 4
+
+=item Arguments: $relname, $join_count
+
+=item Return Value: $alias
+
+=back
+
+L<DBIx::Class> uses L<DBIx::Class::Relationship> names as table aliases in
+queries.
+
+This hook is to allow specific L<DBIx::Class::Storage> drivers to change the
+way these aliases are named.
+
+The default behavior is C<< "$relname_$join_count" if $join_count > 1 >>,
+otherwise C<"$relname">.
+
+=head1 USAGE NOTES
+
+=head2 DBIx::Class and AutoCommit
+
+DBIx::Class can do some wonderful magic with handling exceptions,
+disconnections, and transactions when you use C<< AutoCommit => 1 >>
+(the default) combined with L<txn_do|DBIx::Class::Storage/txn_do> for
+transaction support.
+
+If you set C<< AutoCommit => 0 >> in your connect info, then you are always
+in an assumed transaction between commits, and you're telling us you'd
+like to manage that manually.  A lot of the magic protections offered by
+this module will go away.  We can't protect you from exceptions due to database
+disconnects because we don't know anything about how to restart your
+transactions.  You're on your own for handling all sorts of exceptional
+cases if you choose the C<< AutoCommit => 0 >> path, just as you would
+be with raw DBI.
+
+=head1 INHERITED METHODS
+
+=over 4
+
+=item L<DBIx::Class::Storage>
+
+L<cursor|DBIx::Class::Storage/cursor>, L<cursor_class|DBIx::Class::Storage/cursor_class>, L<debug|DBIx::Class::Storage/debug>, L<debugcb|DBIx::Class::Storage/debugcb>, L<debugfh|DBIx::Class::Storage/debugfh>, L<debugobj|DBIx::Class::Storage/debugobj>, L<savepoints|DBIx::Class::Storage/savepoints>, L<schema|DBIx::Class::Storage/schema>, L<set_schema|DBIx::Class::Storage/set_schema>, L<throw_exception|DBIx::Class::Storage/throw_exception>, L<transaction_depth|DBIx::Class::Storage/transaction_depth>, L<txn_scope_guard|DBIx::Class::Storage/txn_scope_guard>
+
+=back
+
+=head1 AUTHORS
+
+See L<DBIx::Class/CONTRIBUTORS>
+
+=head1 LICENSE
+
+You may distribute this code under the same terms as Perl itself.
+

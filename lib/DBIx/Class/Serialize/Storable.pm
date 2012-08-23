@@ -52,8 +52,8 @@ in its current implementation. Do not use!
 
 =head1 DESCRIPTION
 
-This component adds hooks for Storable so that row objects can be
-serialized. It assumes that your row object class (C<result_class>) is
+This component adds hooks for Storable so that result objects can be
+serialized. It assumes that your result object class (C<result_class>) is
 the same as your table class, which is the normal situation.
 
 =head1 HOOKS
@@ -74,7 +74,7 @@ The deserializing hook called on the object during deserialization.
 
 =head1 AUTHORS
 
-David Kamholz <dkamholz@cpan.org>
+See L<DBIx::Class/CONTRIBUTORS>
 
 =head1 LICENSE
 

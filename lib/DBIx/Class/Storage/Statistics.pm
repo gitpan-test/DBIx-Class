@@ -204,10 +204,10 @@ sub query_end {
 
 =head1 AUTHORS
 
-Cory G. Watson <gphat@cpan.org>
+See L<DBIx::Class/CONTRIBUTORS>
 
 =head1 LICENSE
 
-You may distribute this code under the same license as Perl itself.
+You may distribute this code under the same terms as Perl itself.
 
 =cut

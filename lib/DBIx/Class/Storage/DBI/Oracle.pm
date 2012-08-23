@@ -42,7 +42,7 @@ to your Schema class.
 
 =head1 AUTHORS
 
-David Jack Olrik C<< <djo@cpan.org> >>
+See L<DBIx::Class/CONTRIBUTORS>
 
 =head1 LICENSE
 

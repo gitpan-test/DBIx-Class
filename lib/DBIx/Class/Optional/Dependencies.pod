@@ -18,7 +18,7 @@ Somewhere in your build-file (e.g. L<Module::Install>'s Makefile.PL):
 
   ...
 
-  configure_requires 'DBIx::Class' => '0.08199';
+  configure_requires 'DBIx::Class' => '0.0819901';
 
   require DBIx::Class::Optional::Dependencies;
 
@@ -355,7 +355,7 @@ Requirement group: B<replicated>
 
 =item Arguments: none
 
-=item Returns: \%list_of_requirement_groups
+=item Return Value: \%list_of_requirement_groups
 
 =back
 
@@ -370,7 +370,7 @@ to one of the group-specific methods below.
 
 =item Arguments: $group_name
 
-=item Returns: \%list_of_module_version_pairs
+=item Return Value: \%list_of_module_version_pairs
 
 =back
 
@@ -386,7 +386,7 @@ example.
 
 =item Arguments: $group_name
 
-=item Returns: 1|0
+=item Return Value: 1|0
 
 =back
 
@@ -400,7 +400,7 @@ C<$group_name> are present on the system and loadable.
 
 =item Arguments: $group_name
 
-=item Returns: $error_message_string
+=item Return Value: $error_message_string
 
 =back
 
@@ -424,7 +424,7 @@ returning the actual error seen by the user.
 
 =item Arguments: $group_name
 
-=item Returns: \%list_of_loaderrors_per_module
+=item Return Value: \%list_of_loaderrors_per_module
 
 =back
 
