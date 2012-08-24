@@ -168,8 +168,8 @@ clause of the C<JOIN> statement associated with this relationship.
 
 While every coderef-based condition must return a valid C<ON> clause, it may
 elect to additionally return a simplified join-free condition hashref when
-invoked as C<< $result->relationship >>, as opposed to
-C<< $rs->related_resultset('relationship') >>. In this case C<$result> is
+invoked as C<< $row_object->relationship >>, as opposed to
+C<< $rs->related_resultset('relationship') >>. In this case C<$row_object> is
 passed to the coderef as C<< $args->{self_rowobj} >>, so a user can do the
 following:
 
@@ -219,7 +219,7 @@ clause, the C<$args> hashref passed to the subroutine contains some extra
 metadata. Currently the supplied coderef is executed as:
 
   $relationship_info->{cond}->({
-    self_alias        => The alias of the invoking resultset ('me' in case of a result object),
+    self_alias        => The alias of the invoking resultset ('me' in case of a row object),
     foreign_alias     => The alias of the to-be-joined resultset (often matches relname),
     self_resultsource => The invocant's resultsource,
     foreign_relname   => The relationship name (does *not* always match foreign_alias),
@@ -290,7 +290,7 @@ and its value is the name of the original in the fireign class.
       proxy => { cd_title => 'title' },
   });
 
-This will create an accessor named C<cd_title> on the C<$track> result object.
+This will create an accessor named C<cd_title> on the C<$track> row object.
 
 =back
 
@@ -386,7 +386,7 @@ L<DBIx::Class::Schema/create_ddl_dir>. Default is on, set to 0 to disable.
 
 =over 4
 
-=item Arguments: $rel_name, $rel_info
+=item Arguments: $relname, $rel_info
 
 =back
 
@@ -401,41 +401,16 @@ sub register_relationship { }
 
 =over 4
 
-=item Arguments: $rel_name
+=item Arguments: $relationship_name
 
-=item Return Value: L<$related_resultset|DBIx::Class::ResultSet>
+=item Return Value: $related_resultset
 
 =back
 
   $rs = $cd->related_resultset('artist');
 
 Returns a L<DBIx::Class::ResultSet> for the relationship named
-$rel_name.
-
-=head2 $relationship_accessor
-
-=over 4
-
-=item Arguments: none
-
-=item Return Value: L<$result|DBIx::Class::ResultClass> | L<$related_resultset|DBIx::Class::ResultSet> | undef
-
-=back
-
-  # These pairs do the same thing
-  $row = $cd->related_resultset('artist')->single;  # has_one relationship
-  $row = $cd->artist;
-  $rs = $cd->related_resultset('tracks');           # has_many relationship
-  $rs = $cd->tracks;
-
-This is the recommended way to transverse through relationships, based
-on the L</accessor> name given in the relationship definition.
-
-This will return either a L<Result|DBIx::Class::ResultClass> or a
-L<ResultSet|DBIx::Class::ResultSet>, depending on if the relationship is
-C<single> (returns only one row) or C<multi> (returns many rows).  The
-method may also return C<undef> if the relationship doesn't exist for
-this instance (like in the case of C<might_have> relationships).
+$relationship_name.
 
 =cut
 
@@ -540,21 +515,12 @@ sub related_resultset {
 
 =head2 search_related
 
-=over 4
-
-=item Arguments: $rel_name, $cond?, L<\%attrs?|DBIx::Class::ResultSet/ATTRIBUTES>
-
-=item Return Value: L<$resultset|DBIx::Class::ResultSet> (scalar context) | L<@result_objs|DBIx::Class::ResultClass> (list context)
-
-=back
+  @objects = $rs->search_related('relname', $cond, $attrs);
+  $objects_rs = $rs->search_related('relname', $cond, $attrs);
 
 Run a search on a related resultset. The search will be restricted to the
 item or items represented by the L<DBIx::Class::ResultSet> it was called
-upon. This method can be called on a L<ResultSource|DBIx::Class::ResultSource>,
-L<ResultSet|DBIx::Class::ResultSet>, or a L<Result|DBIx::Class::ResultClass>
-class.
-
-See L<DBIx::Class::ResultSet/search_related> for more information.
+upon. This method can be called on a ResultSet, a Row or a ResultSource class.
 
 =cut
 
@@ -563,6 +529,8 @@ sub search_related {
 }
 
 =head2 search_related_rs
+
+  ( $objects_rs ) = $rs->search_related_rs('relname', $cond, $attrs);
 
 This method works exactly the same as search_related, except that
 it guarantees a resultset, even in list context.
@@ -575,18 +543,12 @@ sub search_related_rs {
 
 =head2 count_related
 
-=over 4
-
-=item Arguments: $rel_name, $cond?, L<\%attrs?|DBIx::Class::ResultSet/ATTRIBUTES>
-
-=item Return Value: $count
-
-=back
+  $obj->count_related('relname', $cond, $attrs);
 
 Returns the count of all the items in the related resultset, restricted by the
-current item or where conditions. This method can be called on a L<ResultSource|DBIx::Class::ResultSource>,
-L<ResultSet|DBIx::Class::ResultSet>, or a L<Result|DBIx::Class::ResultClass>
-class.
+current item or where conditions. Can be called on a
+L<DBIx::Class::Manual::Glossary/"ResultSet"> or a
+L<DBIx::Class::Manual::Glossary/"Row"> object.
 
 =cut
 
@@ -597,18 +559,14 @@ sub count_related {
 
 =head2 new_related
 
-=over 4
+  my $new_obj = $obj->new_related('relname', \%col_data);
 
-=item Arguments: $rel_name, \%col_data, L<\%attrs?|DBIx::Class::ResultSet/ATTRIBUTES>
-
-=item Return Value: L<$result|DBIx::Class::ResultClass>
-
-=back
-
-Create a new item of the related foreign class.  It will magically set
-any foreign key columns of the new object to the related primary key columns
-of the source object for you.  The newly created item will not be saved into
-your storage until you call L<DBIx::Class::Row/insert> on it.
+Create a new item of the related foreign class. If called on a
+L<Row|DBIx::Class::Manual::Glossary/"Row"> object, it will magically
+set any foreign key columns of the new object to the related primary
+key columns of the source object for you.  The newly created item will
+not be saved into your storage until you call L<DBIx::Class::Row/insert>
+on it.
 
 =cut
 
@@ -648,13 +606,7 @@ sub new_related {
 
 =head2 create_related
 
-=over 4
-
-=item Arguments: $rel_name, \%col_data, L<\%attrs?|DBIx::Class::ResultSet/ATTRIBUTES>
-
-=item Return Value: L<$result|DBIx::Class::ResultClass>
-
-=back
+  my $new_obj = $obj->create_related('relname', \%col_data);
 
 Creates a new item, similarly to new_related, and also inserts the item's data
 into your storage medium. See the distinction between C<create> and C<new>
@@ -672,13 +624,7 @@ sub create_related {
 
 =head2 find_related
 
-=over 4
-
-=item Arguments: $rel_name, \%col_data | @pk_values, L<\%attrs?|DBIx::Class::ResultSet/ATTRIBUTES>
-
-=item Return Value: L<$result|DBIx::Class::ResultClass> | undef
-
-=back
+  my $found_item = $obj->find_related('relname', @pri_vals | \%pri_vals);
 
 Attempt to find a related object using its primary key or unique constraints.
 See L<DBIx::Class::ResultSet/find> for details.
@@ -693,16 +639,11 @@ sub find_related {
 
 =head2 find_or_new_related
 
-=over 4
+  my $new_obj = $obj->find_or_new_related('relname', \%col_data);
 
-=item Arguments: $rel_name, \%col_data, L<\%attrs?|DBIx::Class::ResultSet/ATTRIBUTES>
-
-=item Return Value: L<$result|DBIx::Class::ResultClass>
-
-=back
-
-Find an item of a related class.  See L<DBIx::Class::ResultSet/find_or_new>
-for details.
+Find an item of a related class. If none exists, instantiate a new item of the
+related class. The object will not be saved into your storage until you call
+L<DBIx::Class::Row/insert> on it.
 
 =cut
 
@@ -714,13 +655,7 @@ sub find_or_new_related {
 
 =head2 find_or_create_related
 
-=over 4
-
-=item Arguments: $rel_name, \%col_data, L<\%attrs?|DBIx::Class::ResultSet/ATTRIBUTES>
-
-=item Return Value: L<$result|DBIx::Class::ResultClass>
-
-=back
+  my $new_obj = $obj->find_or_create_related('relname', \%col_data);
 
 Find or create an item of a related class. See
 L<DBIx::Class::ResultSet/find_or_create> for details.
@@ -735,13 +670,7 @@ sub find_or_create_related {
 
 =head2 update_or_create_related
 
-=over 4
-
-=item Arguments: $rel_name, \%col_data, { key => $unique_constraint }?
-
-=item Return Value: L<$result|DBIx::Class::ResultClass>
-
-=back
+  my $updated_item = $obj->update_or_create_related('relname', \%col_data, \%attrs?);
 
 Update or create an item of a related class. See
 L<DBIx::Class::ResultSet/update_or_create> for details.
@@ -755,14 +684,6 @@ sub update_or_create_related {
 }
 
 =head2 set_from_related
-
-=over 4
-
-=item Arguments: $rel_name, L<$result|DBIx::Class::ResultClass>
-
-=item Return Value: 1
-
-=back
 
   $book->set_from_related('author', $author_obj);
   $book->author($author_obj);                      ## same thing
@@ -819,14 +740,6 @@ sub set_from_related {
 
 =head2 update_from_related
 
-=over 4
-
-=item Arguments: $rel_name, L<$result|DBIx::Class::ResultClass>
-
-=item Return Value: 1
-
-=back
-
   $book->update_from_related('author', $author_obj);
 
 The same as L</"set_from_related">, but the changes are immediately updated
@@ -842,20 +755,9 @@ sub update_from_related {
 
 =head2 delete_related
 
-=over 4
+  $obj->delete_related('relname', $cond, $attrs);
 
-=item Arguments: $rel_name, $cond?, L<\%attrs?|DBIx::Class::ResultSet/ATTRIBUTES>
-
-=item Return Value: L<$storage_rv|DBIx::Class::Storage>
-
-=back
-
-Delete any related item subject to the given conditions.  Internally, this
-calls:
-
-  $self->search_related(@_)->delete
-
-And returns the result of that.
+Delete any related item subject to the given conditions.
 
 =cut
 
@@ -873,18 +775,16 @@ relationships.>
 
 =over 4
 
-=item Arguments: \%col_data, L<\%attrs?|DBIx::Class::ResultSet/ATTRIBUTES>
-
-=item Return Value: L<$result|DBIx::Class::ResultClass>
+=item Arguments: ($foreign_vals | $obj), $link_vals?
 
 =back
 
   my $role = $schema->resultset('Role')->find(1);
   $actor->add_to_roles($role);
-      # creates a My::DBIC::Schema::ActorRoles linking table result object
+      # creates a My::DBIC::Schema::ActorRoles linking table row object
 
   $actor->add_to_roles({ name => 'lead' }, { salary => 15_000_000 });
-      # creates a new My::DBIC::Schema::Role result object and the linking table
+      # creates a new My::DBIC::Schema::Role row object and the linking table
       # object with an extra column in the link
 
 Adds a linking table object for C<$obj> or C<$foreign_vals>. If the first
@@ -899,9 +799,7 @@ B<Currently only available for C<many-to-many> relationships.>
 
 =over 4
 
-=item Arguments: (\@hashrefs_of_col_data | L<@result_objs|DBIx::Class::ResultClass>), $link_vals?
-
-=item Return Value: undefined
+=item Arguments: (\@hashrefs | \@objs), $link_vals?
 
 =back
 
@@ -935,15 +833,13 @@ B<Currently only available for C<many-to-many> relationships.>
 
 =over 4
 
-=item Arguments: L<$result|DBIx::Class::ResultClass>
-
-=item Return Value: undefined
+=item Arguments: $obj
 
 =back
 
   my $role = $schema->resultset('Role')->find(1);
   $actor->remove_from_roles($role);
-      # removes $role's My::DBIC::Schema::ActorRoles linking table result object
+      # removes $role's My::DBIC::Schema::ActorRoles linking table row object
 
 Removes the link between the current object and the related object. Note that
 the related object itself won't be deleted unless you call ->delete() on
@@ -951,7 +847,7 @@ it. This method just removes the link between the two objects.
 
 =head1 AUTHORS
 
-See L<DBIx::Class/CONTRIBUTORS>
+Matt S. Trout <mst@shadowcatsystems.co.uk>
 
 =head1 LICENSE
 

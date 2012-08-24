@@ -94,7 +94,7 @@ You can retrieve the result source at runtime in the following ways:
 
    $schema->source($source_name);
 
-=item From a Result object:
+=item From a Row object:
 
    $row->result_source;
 
@@ -133,7 +133,7 @@ sub new {
 
 =item Arguments: @columns
 
-=item Return Value: L<$result_source|/new>
+=item Return value: The ResultSource object
 
 =back
 
@@ -146,7 +146,7 @@ pairs, uses the hashref as the L</column_info> for that column. Repeated
 calls of this method will add more columns, not replace them.
 
 The column names given will be created as accessor methods on your
-L<Result|DBIx::Class::ResultClass> objects. You can change the name of the accessor
+L<DBIx::Class::Row> objects. You can change the name of the accessor
 by supplying an L</accessor> in the column_info hash.
 
 If a column name beginning with a plus sign ('+col1') is provided, the
@@ -299,7 +299,7 @@ L<SQL::Translator::Producer::MySQL>.
 
 =item Arguments: $colname, \%columninfo?
 
-=item Return Value: 1/0 (true/false)
+=item Return value: 1/0 (true/false)
 
 =back
 
@@ -343,7 +343,7 @@ sub add_column { shift->add_columns(@_); } # DO NOT CHANGE THIS TO GLOB
 
 =item Arguments: $colname
 
-=item Return Value: 1/0 (true/false)
+=item Return value: 1/0 (true/false)
 
 =back
 
@@ -364,7 +364,7 @@ sub has_column {
 
 =item Arguments: $colname
 
-=item Return Value: Hashref of info
+=item Return value: Hashref of info
 
 =back
 
@@ -412,9 +412,9 @@ sub column_info {
 
 =over
 
-=item Arguments: none
+=item Arguments: None
 
-=item Return Value: Ordered list of column names
+=item Return value: Ordered list of column names
 
 =back
 
@@ -438,7 +438,7 @@ sub columns {
 
 =item Arguments: \@colnames ?
 
-=item Return Value: Hashref of column name/info pairs
+=item Return value: Hashref of column name/info pairs
 
 =back
 
@@ -512,7 +512,7 @@ sub columns_info {
 
 =item Arguments: @colnames
 
-=item Return Value: undefined
+=item Return value: undefined
 
 =back
 
@@ -530,7 +530,7 @@ broken result source.
 
 =item Arguments: $colname
 
-=item Return Value: undefined
+=item Return value: undefined
 
 =back
 
@@ -568,7 +568,7 @@ sub remove_column { shift->remove_columns(@_); } # DO NOT CHANGE THIS TO GLOB
 
 =item Arguments: @cols
 
-=item Return Value: undefined
+=item Return value: undefined
 
 =back
 
@@ -602,9 +602,9 @@ sub set_primary_key {
 
 =over 4
 
-=item Arguments: none
+=item Arguments: None
 
-=item Return Value: Ordered list of primary column names
+=item Return value: Ordered list of primary column names
 
 =back
 
@@ -641,7 +641,7 @@ will be applied to the L</column_info> of each L<primary_key|/set_primary_key>
 
 =item Arguments: $sequence_name
 
-=item Return Value: undefined
+=item Return value: undefined
 
 =back
 
@@ -664,7 +664,7 @@ sub sequence {
 
 =item Arguments: $name?, \@colnames
 
-=item Return Value: undefined
+=item Return value: undefined
 
 =back
 
@@ -730,7 +730,7 @@ sub add_unique_constraint {
 
 =item Arguments: @constraints
 
-=item Return Value: undefined
+=item Return value: undefined
 
 =back
 
@@ -782,7 +782,7 @@ sub add_unique_constraints {
 
 =item Arguments: \@colnames
 
-=item Return Value: Constraint name
+=item Return value: Constraint name
 
 =back
 
@@ -816,9 +816,9 @@ sub name_unique_constraint {
 
 =over 4
 
-=item Arguments: none
+=item Arguments: None
 
-=item Return Value: Hash of unique constraint data
+=item Return value: Hash of unique constraint data
 
 =back
 
@@ -840,9 +840,9 @@ sub unique_constraints {
 
 =over 4
 
-=item Arguments: none
+=item Arguments: None
 
-=item Return Value: Unique constraint names
+=item Return value: Unique constraint names
 
 =back
 
@@ -864,9 +864,9 @@ sub unique_constraint_names {
 
 =over 4
 
-=item Arguments: L<$cond?|DBIx::Class::SQLMaker>,straintname
+=item Arguments: $constraintname
 
-=item Return Value: List of constraint columns
+=item Return value: List of constraint columns
 
 =back
 
@@ -894,7 +894,7 @@ sub unique_constraint_columns {
 
 =item Arguments: $callback_name | \&callback_code
 
-=item Return Value: $callback_name | \&callback_code
+=item Return value: $callback_name | \&callback_code
 
 =back
 
@@ -965,9 +965,9 @@ sub _invoke_sqlt_deploy_hook {
 
 =over 4
 
-=item Arguments: none
+=item Arguments: None
 
-=item Return Value: L<$resultset|DBIx::Class::ResultSet>
+=item Return value: $resultset
 
 =back
 
@@ -984,7 +984,7 @@ but is cached from then on unless resultset_class changes.
 
 =item Arguments: $classname
 
-=item Return Value: $classname
+=item Return value: $classname
 
 =back
 
@@ -1010,7 +1010,7 @@ exists.
 
 =item Arguments: \%attrs
 
-=item Return Value: \%attrs
+=item Return value: \%attrs
 
 =back
 
@@ -1046,7 +1046,7 @@ sub resultset {
 
 =over 4
 
-=item Arguments: none
+=item Arguments: None
 
 =item Result value: $name
 
@@ -1082,9 +1082,9 @@ its class name.
 
 =over 4
 
-=item Arguments: none
+=item Arguments: None
 
-=item Return Value: FROM clause
+=item Return value: FROM clause
 
 =back
 
@@ -1102,9 +1102,9 @@ sub from { die 'Virtual method!' }
 
 =over 4
 
-=item Arguments: L<$schema?|DBIx::Class::Schema>
+=item Arguments: $schema
 
-=item Return Value: L<$schema|DBIx::Class::Schema>
+=item Return value: A schema object
 
 =back
 
@@ -1138,15 +1138,17 @@ sub schema {
 
 =over 4
 
-=item Arguments: none
+=item Arguments: None
 
-=item Return Value: L<$storage|DBIx::Class::Storage>
+=item Return value: A Storage object
 
 =back
 
   $source->storage->debug(1);
 
-Returns the L<storage handle|DBIx::Class::Storage> for the current schema.
+Returns the storage handle for the current schema.
+
+See also: L<DBIx::Class::Storage>
 
 =cut
 
@@ -1156,13 +1158,13 @@ sub storage { shift->schema->storage; }
 
 =over 4
 
-=item Arguments: $rel_name, $related_source_name, \%cond, \%attrs?
+=item Arguments: $relname, $related_source_name, \%cond, [ \%attrs ]
 
-=item Return Value: 1/true if it succeeded
+=item Return value: 1/true if it succeeded
 
 =back
 
-  $source->add_relationship('rel_name', 'related_source', $cond, $attrs);
+  $source->add_relationship('relname', 'related_source', $cond, $attrs);
 
 L<DBIx::Class::Relationship> describes a series of methods which
 create pre-defined useful types of relationships. Look there first
@@ -1282,9 +1284,9 @@ sub add_relationship {
 
 =over 4
 
-=item Arguments: none
+=item Arguments: None
 
-=item Return Value: L<@rel_names|DBIx::Class::Relationship>
+=item Return value: List of relationship names
 
 =back
 
@@ -1302,14 +1304,14 @@ sub relationships {
 
 =over 4
 
-=item Arguments: L<$rel_name|DBIx::Class::Relationship>
+=item Arguments: $relname
 
-=item Return Value: L<\%rel_data|DBIx::Class::Relationship::Base/add_relationship>
+=item Return value: Hashref of relation data,
 
 =back
 
 Returns a hash of relationship information for the specified relationship
-name. The keys/values are as specified for L<DBIx::Class::Relationship::Base/add_relationship>.
+name. The keys/values are as specified for L</add_relationship>.
 
 =cut
 
@@ -1322,9 +1324,9 @@ sub relationship_info {
 
 =over 4
 
-=item Arguments: L<$rel_name|DBIx::Class::Relationship>
+=item Arguments: $rel
 
-=item Return Value: 1/0 (true/false)
+=item Return value: 1/0 (true/false)
 
 =back
 
@@ -1341,9 +1343,9 @@ sub has_relationship {
 
 =over 4
 
-=item Arguments: L<$rel_name|DBIx::Class::Relationship>
+=item Arguments: $relname
 
-=item Return Value: L<\%rel_data|DBIx::Class::Relationship::Base/add_relationship>
+=item Return value: Hashref of relationship data
 
 =back
 
@@ -1564,9 +1566,9 @@ sub pk_depends_on {
 # having already been inserted. Takes the name of the relationship and a
 # hashref of columns of the related object.
 sub _pk_depends_on {
-  my ($self, $rel_name, $rel_data) = @_;
+  my ($self, $relname, $rel_data) = @_;
 
-  my $relinfo = $self->relationship_info($rel_name);
+  my $relinfo = $self->relationship_info($relname);
 
   # don't assume things if the relationship direction is specified
   return $relinfo->{attrs}{is_foreign_key_constraint}
@@ -1581,7 +1583,7 @@ sub _pk_depends_on {
   # assume anything that references our PK probably is dependent on us
   # rather than vice versa, unless the far side is (a) defined or (b)
   # auto-increment
-  my $rel_source = $self->related_source($rel_name);
+  my $rel_source = $self->related_source($relname);
 
   foreach my $p ($self->primary_columns) {
     if (exists $keyhash->{$p}) {
@@ -1609,7 +1611,7 @@ our $UNRESOLVABLE_CONDITION = \ '1 = 0';
 # list of non-triviail values (notmally conditions) returned as a part
 # of a joinfree condition hash
 sub _resolve_condition {
-  my ($self, $cond, $as, $for, $rel_name) = @_;
+  my ($self, $cond, $as, $for, $relname) = @_;
 
   my $obj_rel = !!blessed $for;
 
@@ -1620,7 +1622,7 @@ sub _resolve_condition {
       self_alias => $obj_rel ? $as : $for,
       foreign_alias => $relalias,
       self_resultsource => $self,
-      foreign_relname => $rel_name || ($obj_rel ? $as : $for),
+      foreign_relname => $relname || ($obj_rel ? $as : $for),
       self_rowobj => $obj_rel ? $for : undef
     });
 
@@ -1629,7 +1631,7 @@ sub _resolve_condition {
 
       # FIXME sanity check until things stabilize, remove at some point
       $self->throw_exception (
-        "A join-free condition returned for relationship '$rel_name' without a row-object to chain from"
+        "A join-free condition returned for relationship '$relname' without a row-object to chain from"
       ) unless $obj_rel;
 
       # FIXME another sanity check
@@ -1639,7 +1641,7 @@ sub _resolve_condition {
         first { $_ !~ /^\Q$relalias.\E.+/ } keys %$joinfree_cond
       ) {
         $self->throw_exception (
-          "The join-free condition returned for relationship '$rel_name' must be a hash "
+          "The join-free condition returned for relationship '$relname' must be a hash "
          .'reference with all keys being valid columns on the related result source'
         );
       }
@@ -1656,7 +1658,7 @@ sub _resolve_condition {
       }
 
       # see which parts of the joinfree cond are conditionals
-      my $relcol_list = { map { $_ => 1 } $self->related_source($rel_name)->columns };
+      my $relcol_list = { map { $_ => 1 } $self->related_source($relname)->columns };
 
       for my $c (keys %$joinfree_cond) {
         my ($colname) = $c =~ /^ (?: \Q$relalias.\E )? (.+)/x;
@@ -1733,14 +1735,14 @@ sub _resolve_condition {
   elsif (ref $cond eq 'ARRAY') {
     my (@ret, $crosstable);
     for (@$cond) {
-      my ($cond, $crosstab) = $self->_resolve_condition($_, $as, $for, $rel_name);
+      my ($cond, $crosstab) = $self->_resolve_condition($_, $as, $for, $relname);
       push @ret, $cond;
       $crosstable ||= $crosstab;
     }
     return wantarray ? (\@ret, $crosstable) : \@ret;
   }
   else {
-    $self->throw_exception ("Can't handle condition $cond for relationship '$rel_name' yet :(");
+    $self->throw_exception ("Can't handle condition $cond for relationship '$relname' yet :(");
   }
 }
 
@@ -1855,9 +1857,9 @@ sub _resolve_prefetch {
 
 =over 4
 
-=item Arguments: $rel_name
+=item Arguments: $relname
 
-=item Return Value: $source
+=item Return value: $source
 
 =back
 
@@ -1888,9 +1890,9 @@ sub related_source {
 
 =over 4
 
-=item Arguments: L<$rel_name|DBIx::Class::Relationship>
+=item Arguments: $relname
 
-=item Return Value: $classname
+=item Return value: $classname
 
 =back
 
@@ -1910,9 +1912,9 @@ sub related_class {
 
 =over 4
 
-=item Arguments: none
+=item Arguments: None
 
-=item Return Value: L<$source_handle|DBIx::Class::ResultSourceHandle>
+=item Return value: $source_handle
 
 =back
 
@@ -2029,7 +2031,7 @@ Creates a new ResultSource object.  Not normally called directly by end users.
 
 =item Arguments: 1/0 (default: 0)
 
-=item Return Value: 1/0
+=item Return value: 1/0
 
 =back
 
@@ -2042,7 +2044,7 @@ should not be used.  It will be removed before 1.0.
 
 =head1 AUTHORS
 
-See L<DBIx::Class/CONTRIBUTORS>
+Matt S. Trout <mst@shadowcatsystems.co.uk>
 
 =head1 LICENSE
 

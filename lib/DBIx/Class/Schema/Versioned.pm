@@ -298,7 +298,7 @@ sub create_upgrade_path {
 
 =over 4
 
-=item Return Value: a list of version numbers, ordered from lowest to highest
+=item Returns: a list of version numbers, ordered from lowest to highest
 
 =back
 
@@ -759,7 +759,8 @@ sub _source_exists
 
 =head1 AUTHORS
 
-See L<DBIx::Class/CONTRIBUTORS>
+Jess Robinson <castaway@desert-island.me.uk>
+Luke Saunders <luke@shadowcatsystems.co.uk>
 
 =head1 LICENSE
 

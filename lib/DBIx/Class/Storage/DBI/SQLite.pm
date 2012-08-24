@@ -178,7 +178,7 @@ sub connect_call_use_foreign_keys {
 
 =head1 AUTHORS
 
-See L<DBIx::Class/CONTRIBUTORS>
+Matt S. Trout <mst@shadowcatsystems.co.uk>
 
 =head1 LICENSE
 

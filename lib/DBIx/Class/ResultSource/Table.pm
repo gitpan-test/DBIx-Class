@@ -32,7 +32,7 @@ sub from { shift->name; }
 
 =head1 AUTHORS
 
-See L<DBIx::Class/CONTRIBUTORS>
+Matt S. Trout <mst@shadowcatsystems.co.uk>
 
 =head1 LICENSE
 

@@ -46,7 +46,7 @@ This class now exists in its own right on CPAN as Class::Accessor::Grouped
 
 =head1 AUTHORS
 
-See L<DBIx::Class/CONTRIBUTORS>
+Matt S. Trout <mst@shadowcatsystems.co.uk>
 
 =head1 LICENSE
 

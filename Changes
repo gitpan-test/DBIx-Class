@@ -1,15 +1,9 @@
 Revision history for DBIx::Class
 
-0.08199_01 2012-08-22 (UTC)
-   * New Features
-      - Significant documentation cleanup, including generation of an INHERITED
-        METHODS section at build time (Brendan Byrd)
-      - Run all tests against travis-ci.org (http://travis-ci.org/#!/dbsrgits/dbix-class)
-        against more databases than we probably even smoke against (Brendan Byrd)
-
-   * Fixes
-      - Skip certain Firebird tests on 5.10 as we cannot reproduce them on a development
-        machine (Caelum)
+0.08200 2012-08-24 (UTC)
+    * Fixes
+        - Change one of the new tests for the previous release to not require
+          SQL::Translator
 
 0.08199 2012-08-22 (UTC)
     same as devrel

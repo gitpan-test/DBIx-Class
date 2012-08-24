@@ -39,7 +39,9 @@ This subclass supports MSSQL connected via L<DBD::Sybase>.
 
 =head1 AUTHORS
 
-See L<DBIx::Class/CONTRIBUTORS>
+Brandon L Black <blblack@gmail.com>
+
+Justin Hunter <justin.d.hunter@gmail.com>
 
 =head1 LICENSE
 

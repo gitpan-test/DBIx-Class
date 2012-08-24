@@ -221,7 +221,7 @@ sub _run {
 
 =head1 AUTHORS
 
-See L<DBIx::Class/CONTRIBUTORS>
+see L<DBIx::Class>
 
 =head1 LICENSE
 

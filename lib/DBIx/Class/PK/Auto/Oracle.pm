@@ -20,7 +20,7 @@ Just load PK::Auto instead; auto-inc is now handled by Storage.
 
 =head1 AUTHORS
 
-See L<DBIx::Class/CONTRIBUTORS>
+Matt S Trout <mst@shadowcatsystems.co.uk>
 
 =head1 LICENSE
 

@@ -406,7 +406,7 @@ sub load_classes {
 
 =item Arguments: $storage_type|{$storage_type, \%args}
 
-=item Return Value: $storage_type|{$storage_type, \%args}
+=item Return value: $storage_type|{$storage_type, \%args}
 
 =item Default value: DBIx::Class::Storage::DBI
 
@@ -432,7 +432,7 @@ L<DBIx::Class::Storage::DBI::Replicated> for an example of this.
 
 =item Arguments: $code_reference
 
-=item Return Value: $code_reference
+=item Return value: $code_reference
 
 =item Default value: None
 
@@ -530,9 +530,9 @@ sub connect { shift->clone->connection(@_) }
 
 =over 4
 
-=item Arguments: L<$source_name|DBIx::Class::ResultSource/source_name>
+=item Arguments: $source_name
 
-=item Return Value: L<$resultset|DBIx::Class::ResultSet>
+=item Return Value: $resultset
 
 =back
 
@@ -554,7 +554,7 @@ sub resultset {
 
 =over 4
 
-=item Return Value: L<@source_names|DBIx::Class::ResultSource/source_name>
+=item Return Value: @source_names
 
 =back
 
@@ -570,9 +570,9 @@ sub sources { return keys %{shift->source_registrations}; }
 
 =over 4
 
-=item Arguments: L<$source_name|DBIx::Class::ResultSource/source_name>
+=item Arguments: $source_name
 
-=item Return Value: L<$result_source|DBIx::Class::ResultSource>
+=item Return Value: $result_source
 
 =back
 
@@ -605,7 +605,7 @@ sub source {
 
 =over 4
 
-=item Arguments: L<$source_name|DBIx::Class::ResultSource/source_name>
+=item Arguments: $source_name
 
 =item Return Value: $classname
 
@@ -738,9 +738,9 @@ found in L<DBIx::Class::Storage::DBI>.
 
 =over 4
 
-=item Arguments: L<$source_name|DBIx::Class::ResultSource/source_name>, \@data;
+=item Arguments: $source_name, \@data;
 
-=item Return Value: L<\@$results|DBIx::Class::ResultClass> | undef
+=item Return value: \@$objects | nothing
 
 =back
 
@@ -754,7 +754,7 @@ assumes that your datasets all contain the same type of values, using scalar
 references in a column in one row, and not in another will probably not work.
 
 Otherwise, each set of data is inserted into the database using
-L<DBIx::Class::ResultSet/create>, and an arrayref of the Result
+L<DBIx::Class::ResultSet/create>, and a arrayref of the resulting row
 objects is returned.
 
 e.g.
@@ -1137,7 +1137,7 @@ sub deploy {
 
 =item Arguments: See L<DBIx::Class::Storage::DBI/deployment_statements>
 
-=item Return Value: $listofstatements
+=item Return value: $listofstatements
 
 =back
 
@@ -1186,7 +1186,7 @@ sub create_ddl_dir {
 
 =item Arguments: $database-type, $version, $directory, $preversion
 
-=item Return Value: $normalised_filename
+=item Return value: $normalised_filename
 
 =back
 
@@ -1331,7 +1331,7 @@ sub register_class {
 
 =over 4
 
-=item Arguments: $moniker, L<$result_source|DBIx::Class::ResultSource>
+=item Arguments: $moniker, $result_source
 
 =back
 
@@ -1362,7 +1362,7 @@ sub unregister_source { shift->_unregister_source(@_) }
 
 =over 4
 
-=item Arguments: $moniker, L<$result_source|DBIx::Class::ResultSource>
+=item Arguments: $moniker, $result_source
 
 =back
 
@@ -1540,7 +1540,7 @@ sub compose_connection {
 
 =head1 AUTHORS
 
-See L<DBIx::Class/CONTRIBUTORS>
+Matt S. Trout <mst@shadowcatsystems.co.uk>
 
 =head1 LICENSE
 
