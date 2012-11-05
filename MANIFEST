@@ -535,6 +535,7 @@ t/multi_create/reentrance_count.t
 t/multi_create/standard.t
 t/multi_create/torture.t
 t/ordered/cascade_delete.t
+t/ordered/unordered_movement.t
 t/prefetch/attrs_untouched.t
 t/prefetch/bugs.t
 t/prefetch/correlated.t
@@ -601,8 +602,6 @@ t/sqlmaker/limit_dialects/torture.t
 t/sqlmaker/literal_with_bind.t
 t/sqlmaker/msaccess.t
 t/sqlmaker/nest_deprec.t
-t/sqlmaker/op_ident.t
-t/sqlmaker/op_value.t
 t/sqlmaker/oracle.t
 t/sqlmaker/oraclejoin.t
 t/sqlmaker/order_by_bindtransport.t

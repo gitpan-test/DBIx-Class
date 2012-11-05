@@ -11,7 +11,7 @@ our $VERSION;
 # $VERSION declaration must stay up here, ahead of any other package
 # declarations, as to not confuse various modules attempting to determine
 # this ones version, whether that be s.c.o. or Module::Metadata, etc
-$VERSION = '0.08203_01';
+$VERSION = '0.08203_02';
 
 $VERSION = eval $VERSION if $VERSION =~ /_/; # numify for warning-free dev releases
 
@@ -19,48 +19,41 @@ BEGIN {
   package # hide from pause
     DBIx::Class::_ENV_;
 
+  use Config;
+
+  use constant {
+
+    # but of course
+    BROKEN_FORK => ($^O eq 'MSWin32') ? 1 : 0,
+
+    HAS_ITHREADS => $Config{useithreads} ? 1 : 0,
+
+    # ::Runmode would only be loaded by DBICTest, which in turn implies t/
+    DBICTEST => eval { DBICTest::RunMode->is_author } ? 1 : 0,
+
+    # During 5.13 dev cycle HELEMs started to leak on copy
+    PEEPEENESS =>
+      # request for all tests would force "non-leaky" illusion and vice-versa
+      defined $ENV{DBICTEST_ALL_LEAKS}                                              ? !$ENV{DBICTEST_ALL_LEAKS}
+      # otherwise confess that this perl is busted ONLY on smokers
+    : eval { DBICTest::RunMode->is_smoker } && ($] >= 5.013005 and $] <= 5.013006)  ? 1
+      # otherwise we are good
+                                                                                    : 0
+    ,
+
+    # There was a brief period of p5p insanity when $@ was invisible in a DESTROY
+    INVISIBLE_DOLLAR_AT => ($] >= 5.013001 and $] <= 5.013007) ? 1 : 0,
+
+  };
+
   if ($] < 5.009_005) {
     require MRO::Compat;
-    *OLD_MRO = sub () { 1 };
+    constant->import( OLD_MRO => 1 );
   }
   else {
     require mro;
-    *OLD_MRO = sub () { 0 };
+    constant->import( OLD_MRO => 0 );
   }
-
-  # ::Runmode would only be loaded by DBICTest, which in turn implies t/
-  *DBICTEST = eval { DBICTest::RunMode->is_author }
-    ? sub () { 1 }
-    : sub () { 0 }
-  ;
-
-  # There was a brief period of p5p insanity when $@ was invisible in a DESTROY
-  *INVISIBLE_DOLLAR_AT = ($] >= 5.013001 and $] <= 5.013007)
-    ? sub () { 1 }
-    : sub () { 0 }
-  ;
-
-  # During 5.13 dev cycle HELEMs started to leak on copy
-  *PEEPEENESS = (defined $ENV{DBICTEST_ALL_LEAKS}
-    # request for all tests would force "non-leaky" illusion and vice-versa
-    ? ! $ENV{DBICTEST_ALL_LEAKS}
-
-    # otherwise confess that this perl is busted ONLY on smokers
-    : do {
-      if (eval { DBICTest::RunMode->is_smoker }) {
-
-        # leaky 5.13.6 (fixed in blead/cefd5c7c)
-        if ($] == '5.013006') { 1 }
-
-        # not sure why this one leaks, but disable anyway - ANDK seems to make it weep
-        elsif ($] == '5.013005') { 1 }
-
-        else { 0 }
-      }
-      else { 0 }
-    }
-  ) ? sub () { 1 } : sub () { 0 };
-
 }
 
 use mro 'c3';
@@ -289,6 +282,8 @@ acca: Alexander Kuznetsov <acca@cpan.org>
 aherzog: Adam Herzog <adam@herzogdesigns.com>
 
 Alexander Keusch <cpan@keusch.at>
+
+alexrj: Alessandro Ranellucci <aar@cpan.org>
 
 alnewkirk: Al Newkirk <we@ana.im>
 

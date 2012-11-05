@@ -1,22 +1,25 @@
 Revision history for DBIx::Class
 
-0.08203_01 2012-10-18 13:57 (UTC)
+0.08203_02 2012-11-05 08:49 (UTC)
+    * New Features / Changes
+        - SQLMaker now accepts \'literal' with the 'for' rs attribute as an
+          override to the builtin FOR options
     * Fixes
+        - Fix unique constraint violations in Ordered.pm blanket movement
+          (RT#79773, rolls back short-sighted 5e6fde33e)
+        - Fix API mismatch between new_result() and new_related() (originally
+          broken by fea3d045)
         - Fix test failure on perl 5.8
+    * Misc
+        - Much more extensive diagnostics when a new RDBMS/DSN combination is
+          encountered (RT#80431)
 
 0.08203 2012-10-18
-
-    No changes since 0.08202_01
-
-0.08202_01 2012-10-15
     * Fixes
         - Really fix inadequate $dbh->ping SQLite implementation (what shipped
           in 0.08201 tickled other deficiencies in DBD::SQLite itself)
 
 0.08202 2012-10-06
-    * Re-dist due to murphy strike
-
-0.08201 2012-10-05 (UTC)
     * Fixes
         - Replace inadequate $dbh->ping SQLite implementation with our own,
           fixes RT#78420
@@ -27,9 +30,6 @@ Revision history for DBIx::Class
           SQL::Translator
 
 0.08199 2012-08-22 (UTC)
-    same as devrel
-
-0.08198_01 2012-07-25 (UTC)
     * Fixes
         - Roll back incomplete (and broken) internal changes - restore prefetch functionality
 

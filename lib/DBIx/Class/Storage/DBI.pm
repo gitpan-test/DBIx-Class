@@ -207,7 +207,7 @@ sub new {
   END {
     local $?; # just in case the DBI destructor changes it somehow
 
-    # destroy just the object if not native to this process/thread
+    # destroy just the object if not native to this process
     $_->_verify_pid for (grep
       { defined $_ }
       values %seek_and_destroy
@@ -233,7 +233,7 @@ sub DESTROY {
   my $self = shift;
 
   # some databases spew warnings on implicit disconnect
-  $self->_verify_pid;
+  $self->_verify_pid unless DBIx::Class::_ENV_::BROKEN_FORK;
   local $SIG{__WARN__} = sub {};
   $self->_dbh(undef);
 
@@ -885,7 +885,7 @@ sub connected {
 sub _seems_connected {
   my $self = shift;
 
-  $self->_verify_pid;
+  $self->_verify_pid unless DBIx::Class::_ENV_::BROKEN_FORK;
 
   my $dbh = $self->_dbh
     or return 0;
@@ -933,7 +933,7 @@ sub dbh {
 # this is the internal "get dbh or connect (don't check)" method
 sub _get_dbh {
   my $self = shift;
-  $self->_verify_pid;
+  $self->_verify_pid unless DBIx::Class::_ENV_::BROKEN_FORK;
   $self->_populate_dbh unless $self->_dbh;
   return $self->_dbh;
 }
@@ -1007,7 +1007,7 @@ sub _populate_dbh {
 
   $self->_dbh($self->_connect(@info));
 
-  $self->_conn_pid($$) if $^O ne 'MSWin32'; # on win32 these are in fact threads
+  $self->_conn_pid($$) unless DBIx::Class::_ENV_::BROKEN_FORK; # on win32 these are in fact threads
 
   $self->_determine_driver;
 
@@ -1143,6 +1143,63 @@ sub _dbh_get_info {
   return $res;
 }
 
+sub _describe_connection {
+  require DBI::Const::GetInfoReturn;
+
+  my $self = shift;
+  $self->ensure_connected;
+
+  my $res = {
+    DBIC_DSN => $self->_dbi_connect_info->[0],
+    DBI_VER => DBI->VERSION,
+    DBIC_VER => DBIx::Class->VERSION,
+    DBIC_DRIVER => ref $self,
+  };
+
+  for my $inf (
+    #keys %DBI::Const::GetInfoType::GetInfoType,
+    qw/
+      SQL_CURSOR_COMMIT_BEHAVIOR
+      SQL_CURSOR_ROLLBACK_BEHAVIOR
+      SQL_CURSOR_SENSITIVITY
+      SQL_DATA_SOURCE_NAME
+      SQL_DBMS_NAME
+      SQL_DBMS_VER
+      SQL_DEFAULT_TXN_ISOLATION
+      SQL_DM_VER
+      SQL_DRIVER_NAME
+      SQL_DRIVER_ODBC_VER
+      SQL_DRIVER_VER
+      SQL_EXPRESSIONS_IN_ORDERBY
+      SQL_GROUP_BY
+      SQL_IDENTIFIER_CASE
+      SQL_IDENTIFIER_QUOTE_CHAR
+      SQL_MAX_CATALOG_NAME_LEN
+      SQL_MAX_COLUMN_NAME_LEN
+      SQL_MAX_IDENTIFIER_LEN
+      SQL_MAX_TABLE_NAME_LEN
+      SQL_MULTIPLE_ACTIVE_TXN
+      SQL_MULT_RESULT_SETS
+      SQL_NEED_LONG_DATA_LEN
+      SQL_NON_NULLABLE_COLUMNS
+      SQL_ODBC_VER
+      SQL_QUALIFIER_NAME_SEPARATOR
+      SQL_QUOTED_IDENTIFIER_CASE
+      SQL_TXN_CAPABLE
+      SQL_TXN_ISOLATION_OPTION
+    /
+  ) {
+    my $v = $self->_dbh_get_info($inf);
+    next unless defined $v;
+
+    #my $key = sprintf( '%s(%s)', $inf, $DBI::Const::GetInfoType::GetInfoType{$inf} );
+    my $expl = DBI::Const::GetInfoReturn::Explain($inf, $v);
+    $res->{$inf} = DBI::Const::GetInfoReturn::Format($inf, $v) . ( $expl ? " ($expl)" : '' );
+  }
+
+  $res;
+}
+
 sub _determine_driver {
   my ($self) = @_;
 
@@ -1155,7 +1212,8 @@ sub _determine_driver {
       if ($self->_dbh) { # we are connected
         $driver = $self->_dbh->{Driver}{Name};
         $started_connected = 1;
-      } else {
+      }
+      else {
         # if connect_info is a CODEREF, we have no choice but to connect
         if (ref $self->_dbi_connect_info->[0] &&
             reftype $self->_dbi_connect_info->[0] eq 'CODE') {
@@ -1179,6 +1237,18 @@ sub _determine_driver {
           bless $self, $storage_class;
           $self->_rebless();
         }
+        else {
+          $self->_warn_undetermined_driver(
+            'This version of DBIC does not yet seem to supply a driver for '
+          . "your particular RDBMS and/or connection method ('$driver')."
+          );
+        }
+      }
+      else {
+        $self->_warn_undetermined_driver(
+          'Unable to extract a driver name from connect info - this '
+        . 'should not have happened.'
+        );
       }
     }
 
@@ -1191,6 +1261,48 @@ sub _determine_driver {
     $self->_run_connection_actions
         if !$started_connected && defined $self->_dbh;
   }
+}
+
+sub _determine_connector_driver {
+  my ($self, $conn) = @_;
+
+  my $dbtype = $self->_dbh_get_info('SQL_DBMS_NAME');
+
+  if (not $dbtype) {
+    $self->_warn_undetermined_driver(
+      'Unable to retrieve RDBMS type (SQL_DBMS_NAME) of the engine behind your '
+    . "$conn connector - this should not have happened."
+    );
+    return;
+  }
+
+  $dbtype =~ s/\W/_/gi;
+
+  my $subclass = "DBIx::Class::Storage::DBI::${conn}::${dbtype}";
+  return if $self->isa($subclass);
+
+  if ($self->load_optional_class($subclass)) {
+    bless $self, $subclass;
+    $self->_rebless;
+  }
+  else {
+    $self->_warn_undetermined_driver(
+      'This version of DBIC does not yet seem to supply a driver for '
+    . "your particular RDBMS and/or connection method ('$conn/$dbtype')."
+    );
+  }
+}
+
+sub _warn_undetermined_driver {
+  my ($self, $msg) = @_;
+
+  require Data::Dumper::Concise;
+
+  carp_once ($msg . ' While we will attempt to continue anyway, the results '
+  . 'are likely to be underwhelming. Please upgrade DBIC, and if this message '
+  . "does not go away, file a bugreport including the following info:\n"
+  . Data::Dumper::Concise::Dumper($self->_describe_connection)
+  );
 }
 
 sub _do_connection_actions {
@@ -1366,7 +1478,7 @@ sub _exec_txn_begin {
 sub txn_commit {
   my $self = shift;
 
-  $self->_verify_pid if $self->_dbh;
+  $self->_verify_pid unless DBIx::Class::_ENV_::BROKEN_FORK;
   $self->throw_exception("Unable to txn_commit() on a disconnected storage")
     unless $self->_dbh;
 
@@ -1397,7 +1509,7 @@ sub _exec_txn_commit {
 sub txn_rollback {
   my $self = shift;
 
-  $self->_verify_pid if $self->_dbh;
+  $self->_verify_pid unless DBIx::Class::_ENV_::BROKEN_FORK;
   $self->throw_exception("Unable to txn_rollback() on a disconnected storage")
     unless $self->_dbh;
 
@@ -1430,7 +1542,7 @@ for my $meth (qw/svp_begin svp_release svp_rollback/) {
   no strict qw/refs/;
   *{__PACKAGE__ ."::$meth"} = subname $meth => sub {
     my $self = shift;
-    $self->_verify_pid if $self->_dbh;
+    $self->_verify_pid unless DBIx::Class::_ENV_::BROKEN_FORK;
     $self->throw_exception("Unable to $meth() on a disconnected storage")
       unless $self->_dbh;
     $self->next::method(@_);

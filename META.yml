@@ -34,7 +34,7 @@ no_index:
     - DBIx::Class::Carp
     - DBIx::Class::ResultSet::Pager
 requires:
-  Class::Accessor::Grouped: 0.10002
+  Class::Accessor::Grouped: 0.10005
   Class::C3::Componentised: 1.0009
   Class::Inspector: 1.24
   Class::Method::Modifiers: 1.06
@@ -65,5 +65,5 @@ resources:
   homepage: http://www.dbix-class.org/
   license: http://dev.perl.org/licenses/
   repository: git://git.shadowcat.co.uk/dbsrgits/DBIx-Class.git
-version: 0.08203_01
+version: 0.08203_02
 x_authority: cpan:RIBASUSHI
