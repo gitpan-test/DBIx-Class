@@ -1,5 +1,19 @@
 Revision history for DBIx::Class
 
+0.08204_01 2012-12-12
+    * New Features / Changes
+        - MOAR documentation; some general clean-up with links, arguments, etc.
+        - [ $val ] & $val bind variable support
+    * Fixes
+        - When performing resultset update/delete only strip condition
+          qualifiers - leave the source name alone (RT#80015, RT#78844)
+        - More robust behavior under heavily threaded environments - make
+          sure we do not have refaddr reuse in the global storage registry
+        - Fix failing test on 5.8 under Win32 (RT#81114)
+        - Fix hash-randomization test issues (RT#81638)
+        - Disallow erroneous calling of connect_info on a replicated storage
+          (RT#78436)
+
 0.08204 2012-11-08
     * New Features / Changes
         - SQLMaker now accepts \'literal' with the 'for' rs attribute as an

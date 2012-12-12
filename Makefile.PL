@@ -14,6 +14,13 @@ BEGIN {
   $Module::Install::AUTHOR = 0 if (grep { $ENV{"PERL5_${_}_IS_RUNNING"} } (qw/CPANM CPANPLUS CPAN/) );
 }
 
+homepage 'http://www.dbix-class.org/';
+resources 'IRC'         => 'irc://irc.perl.org/#dbix-class';
+resources 'license'     => 'http://dev.perl.org/licenses/';
+resources 'repository'  => 'https://github.com/dbsrgits/DBIx-Class';
+resources 'MailingList' => 'http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class';
+resources 'bugtracker'  => 'http://rt.cpan.org/NoAuth/Bugs.html?Dist=DBIx-Class';
+
 name     'DBIx-Class';
 perl_version '5.008001';
 all_from 'lib/DBIx/Class.pm';
@@ -27,12 +34,10 @@ install_script (qw|
     script/dbicadmin
 |);
 
-homepage 'http://www.dbix-class.org/';
-resources 'IRC'         => 'irc://irc.perl.org/#dbix-class';
-resources 'license'     => 'http://dev.perl.org/licenses/';
-resources 'repository'  => 'git://git.shadowcat.co.uk/dbsrgits/DBIx-Class.git';
-resources 'MailingList' => 'http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class';
-resources 'bugtracker'  => 'http://rt.cpan.org/NoAuth/Bugs.html?Dist=DBIx-Class';
+makemaker_args(
+  PMLIBDIRS => [qw(lib .generated_pod)],
+  PMLIBPARENTDIRS => [qw(lib .generated_pod)],
+);
 
 ###
 ### DO NOT ADD OPTIONAL DEPENDENCIES HERE, EVEN AS recommends()
@@ -41,9 +46,6 @@ resources 'bugtracker'  => 'http://rt.cpan.org/NoAuth/Bugs.html?Dist=DBIx-Class'
 my $runtime_requires = {
   # FIXME - temporary, needs throwing out for something more efficient
   'Data::Compare'            => '1.22',
-
-  # Moo does not yet depend on this higher version
-  'strictures'               => '1.003001',
 
   # DBI itself should be capable of installation and execution in pure-perl
   # mode. However it has never been tested yet, so consider XS for the time
@@ -54,27 +56,23 @@ my $runtime_requires = {
   'Sub::Name'                => '0.04',
 
   # pure-perl (FatPack-able) libs
-  'Class::Accessor::Grouped' => '0.10007',
+  'Class::Accessor::Grouped' => '0.10009',
   'Class::C3::Componentised' => '1.0009',
   'Class::Inspector'         => '1.24',
-  'Class::Method::Modifiers' => '1.06',
   'Config::Any'              => '0.20',
   'Context::Preserve'        => '0.01',
   'Data::Dumper::Concise'    => '2.020',
   'Data::Page'               => '2.00',
-  'Devel::GlobalDestruction' => '0',
+  'Devel::GlobalDestruction' => '0.09',
   'Hash::Merge'              => '0.12',
-  'Moo'                      => '0.009100',
-  'MRO::Compat'              => '0.09',
-  'Module::Find'             => '0.06',
-  'namespace::clean'         => '0.20',
+  'Moo'                      => '1.000006',
+  'MRO::Compat'              => '0.12',
+  'Module::Find'             => '0.07',
+  'namespace::clean'         => '0.24',
   'Path::Class'              => '0.18',
   'Scope::Guard'             => '0.03',
   'SQL::Abstract'            => '1.73',
-  'Try::Tiny'                => '0.04',
-
-  # dual-life corelibs needing a specific bugfixed version
-  'File::Path'               => '2.07',
+  'Try::Tiny'                => '0.07',
 };
 
 my $build_requires = {

@@ -34,12 +34,12 @@ DBIx::Class::ResultSet - Represents a query used for fetching a set of results.
 
 =head1 SYNOPSIS
 
-  my $users_rs   = $schema->resultset('User');
+  my $users_rs = $schema->resultset('User');
   while( $user = $users_rs->next) {
     print $user->username;
   }
 
-  my $registered_users_rs   = $schema->resultset('User')->search({ registered => 1 });
+  my $registered_users_rs = $schema->resultset('User')->search({ registered => 1 });
   my @cds_in_2005 = $schema->resultset('CD')->search({ year => 2005 })->all();
 
 =head1 DESCRIPTION
@@ -191,9 +191,9 @@ See: L</search>, L</count>, L</get_column>, L</all>, L</create>.
 
 =over 4
 
-=item Arguments: $source, \%$attrs
+=item Arguments: L<$source|DBIx::Class::ResultSource>, L<\%attrs?|/ATTRIBUTES>
 
-=item Return Value: $rs
+=item Return Value: L<$resultset|/new>
 
 =back
 
@@ -266,9 +266,9 @@ sub new {
 
 =over 4
 
-=item Arguments: $cond, \%attrs?
+=item Arguments: L<$cond|DBIx::Class::SQLMaker>, L<\%attrs?|/ATTRIBUTES>
 
-=item Return Value: $resultset (scalar context) ||  @row_objs (list context)
+=item Return Value: L<$resultset|/new> (scalar context) | L<@result_objs|DBIx::Class::Manual::ResultClass> (list context)
 
 =back
 
@@ -279,7 +279,8 @@ sub new {
                  # year = 2005 OR year = 2004
 
 In list context, C<< ->all() >> is called implicitly on the resultset, thus
-returning a list of row objects instead. To avoid that, use L</search_rs>.
+returning a list of L<result|DBIx::Class::Manual::ResultClass> objects instead.
+To avoid that, use L</search_rs>.
 
 If you need to pass in additional attributes but no additional condition,
 call it as C<search(undef, \%attrs)>.
@@ -336,9 +337,9 @@ sub search {
 
 =over 4
 
-=item Arguments: $cond, \%attrs?
+=item Arguments: L<$cond|DBIx::Class::SQLMaker>, L<\%attrs?|/ATTRIBUTES>
 
-=item Return Value: $resultset
+=item Return Value: L<$resultset|/new>
 
 =back
 
@@ -629,11 +630,20 @@ sub _stack_cond {
 
 =head2 search_literal
 
+B<CAVEAT>: C<search_literal> is provided for Class::DBI compatibility and
+should only be used in that context. C<search_literal> is a convenience
+method. It is equivalent to calling C<< $schema->search(\[]) >>, but if you
+want to ensure columns are bound correctly, use L</search>.
+
+See L<DBIx::Class::Manual::Cookbook/Searching> and
+L<DBIx::Class::Manual::FAQ/Searching> for searching techniques that do not
+require C<search_literal>.
+
 =over 4
 
-=item Arguments: $sql_fragment, @bind_values
+=item Arguments: $sql_fragment, @standalone_bind_values
 
-=item Return Value: $resultset (scalar context) || @row_objs (list context)
+=item Return Value: L<$resultset|/new> (scalar context) | L<@result_objs|DBIx::Class::Manual::ResultClass> (list context)
 
 =back
 
@@ -643,20 +653,10 @@ sub _stack_cond {
 Pass a literal chunk of SQL to be added to the conditional part of the
 resultset query.
 
-CAVEAT: C<search_literal> is provided for Class::DBI compatibility and should
-only be used in that context. C<search_literal> is a convenience method.
-It is equivalent to calling $schema->search(\[]), but if you want to ensure
-columns are bound correctly, use C<search>.
-
 Example of how to use C<search> instead of C<search_literal>
 
   my @cds = $cd_rs->search_literal('cdid = ? AND (artist = ? OR artist = ?)', (2, 1, 2));
   my @cds = $cd_rs->search(\[ 'cdid = ? AND (artist = ? OR artist = ?)', [ 'cdid', 2 ], [ 'artist', 1 ], [ 'artist', 2 ] ]);
-
-
-See L<DBIx::Class::Manual::Cookbook/Searching> and
-L<DBIx::Class::Manual::FAQ/Searching> for searching techniques that do not
-require C<search_literal>.
 
 =cut
 
@@ -666,16 +666,16 @@ sub search_literal {
   if ( @bind && ref($bind[-1]) eq 'HASH' ) {
     $attr = pop @bind;
   }
-  return $self->search(\[ $sql, map [ __DUMMY__ => $_ ], @bind ], ($attr || () ));
+  return $self->search(\[ $sql, map [ {} => $_ ], @bind ], ($attr || () ));
 }
 
 =head2 find
 
 =over 4
 
-=item Arguments: \%columns_values | @pk_values, \%attrs?
+=item Arguments: \%columns_values | @pk_values, { key => $unique_constraint, L<%attrs?|/ATTRIBUTES> }?
 
-=item Return Value: $row_object | undef
+=item Return Value: L<$result|DBIx::Class::Manual::ResultClass> | undef
 
 =back
 
@@ -707,7 +707,7 @@ Note that this fallback behavior may be deprecated in further versions. If
 you need to search with arbitrary conditions - use L</search>. If the query
 resulting from this fallback produces more than one row, a warning to the
 effect is issued, though only the first row is constructed and returned as
-C<$row_object>.
+C<$result_object>.
 
 In addition to C<key>, L</find> recognizes and applies standard
 L<resultset attributes|/ATTRIBUTES> in the same way as L</search> does.
@@ -921,7 +921,7 @@ sub _build_unique_cond {
       and
     !$ENV{DBIC_NULLABLE_KEY_NOWARN}
       and
-    my @undefs = grep { ! defined $final_cond->{$_} } (keys %$final_cond)
+    my @undefs = sort grep { ! defined $final_cond->{$_} } (keys %$final_cond)
   ) {
     carp_unique ( sprintf (
       "NULL/undef values supplied for requested unique constraint '%s' (NULL "
@@ -939,9 +939,9 @@ sub _build_unique_cond {
 
 =over 4
 
-=item Arguments: $rel, $cond?, \%attrs?
+=item Arguments: $rel_name, $cond?, L<\%attrs?|/ATTRIBUTES>
 
-=item Return Value: $new_resultset (scalar context) || @row_objs (list context)
+=item Return Value: L<$resultset|/new> (scalar context) | L<@result_objs|DBIx::Class::Manual::ResultClass> (list context)
 
 =back
 
@@ -953,7 +953,7 @@ Searches the specified relationship, optionally specifying a condition and
 attributes for matching records. See L</ATTRIBUTES> for more information.
 
 In list context, C<< ->all() >> is called implicitly on the resultset, thus
-returning a list of row objects instead. To avoid that, use L</search_related_rs>.
+returning a list of result objects instead. To avoid that, use L</search_related_rs>.
 
 See also L</search_related_rs>.
 
@@ -980,7 +980,7 @@ sub search_related_rs {
 
 =item Arguments: none
 
-=item Return Value: $cursor
+=item Return Value: L<$cursor|DBIx::Class::Cursor>
 
 =back
 
@@ -1003,9 +1003,9 @@ sub cursor {
 
 =over 4
 
-=item Arguments: $cond?
+=item Arguments: L<$cond?|DBIx::Class::SQLMaker>
 
-=item Return Value: $row_object | undef
+=item Return Value: L<$result|DBIx::Class::Manual::ResultClass> | undef
 
 =back
 
@@ -1113,9 +1113,9 @@ sub _collapse_query {
 
 =over 4
 
-=item Arguments: $cond?
+=item Arguments: L<$cond?|DBIx::Class::SQLMaker>
 
-=item Return Value: $resultsetcolumn
+=item Return Value: L<$resultsetcolumn|DBIx::Class::ResultSetColumn>
 
 =back
 
@@ -1135,9 +1135,9 @@ sub get_column {
 
 =over 4
 
-=item Arguments: $cond, \%attrs?
+=item Arguments: L<$cond|DBIx::Class::SQLMaker>, L<\%attrs?|/ATTRIBUTES>
 
-=item Return Value: $resultset (scalar context) || @row_objs (list context)
+=item Return Value: L<$resultset|/new> (scalar context) | L<@result_objs|DBIx::Class::Manual::ResultClass> (list context)
 
 =back
 
@@ -1180,7 +1180,7 @@ sub search_like {
 
 =item Arguments: $first, $last
 
-=item Return Value: $resultset (scalar context) || @row_objs (list context)
+=item Return Value: L<$resultset|/new> (scalar context) | L<@result_objs|DBIx::Class::Manual::ResultClass> (list context)
 
 =back
 
@@ -1209,7 +1209,7 @@ sub slice {
 
 =item Arguments: none
 
-=item Return Value: $result | undef
+=item Return Value: L<$result|DBIx::Class::Manual::ResultClass> | undef
 
 =back
 
@@ -1391,9 +1391,9 @@ sub _collapse_result {
 
 =over 4
 
-=item Arguments: $result_source?
+=item Arguments: L<$result_source?|DBIx::Class::ResultSource>
 
-=item Return Value: $result_source
+=item Return Value: L<$result_source|DBIx::Class::ResultSource>
 
 =back
 
@@ -1410,7 +1410,7 @@ is derived.
 
 =back
 
-An accessor for the class to use when creating row objects. Defaults to
+An accessor for the class to use when creating result objects. Defaults to
 C<< result_source->result_class >> - which in most cases is the name of the
 L<"table"|DBIx::Class::Manual::Glossary/"ResultSource"> class.
 
@@ -1440,7 +1440,7 @@ sub result_class {
 
 =over 4
 
-=item Arguments: $cond, \%attrs??
+=item Arguments: L<$cond|DBIx::Class::SQLMaker>, L<\%attrs?|/ATTRIBUTES>
 
 =item Return Value: $count
 
@@ -1484,9 +1484,9 @@ sub count {
 
 =over 4
 
-=item Arguments: $cond, \%attrs??
+=item Arguments: L<$cond|DBIx::Class::SQLMaker>, L<\%attrs?|/ATTRIBUTES>
 
-=item Return Value: $count_rs
+=item Return Value: L<$count_rs|DBIx::Class::ResultSetColumn>
 
 =back
 
@@ -1640,9 +1640,12 @@ sub _bool {
 
 =head2 count_literal
 
+B<CAVEAT>: C<count_literal> is provided for Class::DBI compatibility and
+should only be used in that context. See L</search_literal> for further info.
+
 =over 4
 
-=item Arguments: $sql_fragment, @bind_values
+=item Arguments: $sql_fragment, @standalone_bind_values
 
 =item Return Value: $count
 
@@ -1661,7 +1664,7 @@ sub count_literal { shift->search_literal(@_)->count; }
 
 =item Arguments: none
 
-=item Return Value: @objects
+=item Return Value: L<@result_objs|DBIx::Class::Manual::ResultClass>
 
 =back
 
@@ -1731,7 +1734,7 @@ sub reset {
 
 =item Arguments: none
 
-=item Return Value: $object | undef
+=item Return Value: L<$result|DBIx::Class::Manual::ResultClass> | undef
 
 =back
 
@@ -1760,18 +1763,15 @@ sub _rs_update_delete {
 
   my $attrs = { %{$self->_resolved_attrs} };
 
-  # "needs" is a strong word here - if the subquery is part of an IN clause - no point of
-  # even adding the group_by. It will really be used only when composing a poor-man's
-  # multicolumn-IN equivalent OR set
-  my $needs_group_by_subq = defined $attrs->{group_by};
+  my $existing_group_by = delete $attrs->{group_by};
+  my $needs_subq = defined $existing_group_by;
 
-  # simplify the joinmap and maybe decide if a grouping (and thus subquery) is necessary
-  my $relation_classifications;
+  # simplify the joinmap and maybe decide if a subquery is necessary
+  my $relation_classifications = {};
+
   if (ref($attrs->{from}) eq 'ARRAY') {
-    if (@{$attrs->{from}} == 1) {
-      # not a fucking JOIN at all, quit with the dickery
-      $relation_classifications = {};
-    } else {
+    # if we already know we need a subq, no point of classifying relations
+    if (!$needs_subq and @{$attrs->{from}} > 1) {
       $attrs->{from} = $storage->_prune_unused_joins ($attrs->{from}, $attrs->{select}, $cond, $attrs);
 
       $relation_classifications = $storage->_resolve_aliastypes_from_select_args (
@@ -1779,32 +1779,33 @@ sub _rs_update_delete {
         $attrs->{select},
         $cond,
         $attrs
-      ) unless $needs_group_by_subq;  # we already know we need a group, no point of resolving them
+      );
     }
   }
   else {
-    $needs_group_by_subq ||= 1; # if {from} is unparseable assume the worst
+    $needs_subq ||= 1; # if {from} is unparseable assume the worst
   }
 
-  $needs_group_by_subq ||= exists $relation_classifications->{multiplying};
-
-  # if no subquery - life is easy-ish
-  unless (
-    $needs_group_by_subq
-      or
-    keys %$relation_classifications # if any joins at all - need to wrap a subq
-      or
-    $self->_has_resolved_attr(qw/rows offset/) # limits call for a subq
+  # do we need anything like a subquery?
+  if (
+    ! $needs_subq
+      and
+    ! keys %{ $relation_classifications->{restricting} || {} }
+      and
+    ! $self->_has_resolved_attr(qw/rows offset/) # limits call for a subq
   ) {
     # Most databases do not allow aliasing of tables in UPDATE/DELETE. Thus
     # a condition containing 'me' or other table prefixes will not work
     # at all. Tell SQLMaker to dequalify idents via a gross hack.
-    my $sqla = $rsrc->storage->sql_maker;
-    local $sqla->{_dequalify_idents} = 1;
+    my $cond = do {
+      my $sqla = $rsrc->storage->sql_maker;
+      local $sqla->{_dequalify_idents} = 1;
+      \[ $sqla->_recurse_where($self->{cond}) ];
+    };
     return $rsrc->storage->$op(
       $rsrc,
       $op eq 'update' ? $values : (),
-      $self->{cond},
+      $cond,
     );
   }
 
@@ -1816,7 +1817,6 @@ sub _rs_update_delete {
       $rsrc->source_name,
     )
   );
-  my $existing_group_by = delete $attrs->{group_by};
 
   # make a new $rs selecting only the PKs (that's all we really need for the subq)
   delete $attrs->{$_} for qw/collapse _collapse_order_by select _prefetch_selector_range as/;
@@ -1847,13 +1847,15 @@ sub _rs_update_delete {
     );
   }
   else {
+
     # if all else fails - get all primary keys and operate over a ORed set
     # wrap in a transaction for consistency
     # this is where the group_by starts to matter
-    my $subq_group_by;
-    if ($needs_group_by_subq) {
-      $subq_group_by = $attrs->{columns};
-
+    if (
+      $existing_group_by
+        or
+      keys %{ $relation_classifications->{multiplying} || {} }
+    ) {
       # make sure if there is a supplied group_by it matches the columns compiled above
       # perfectly. Anything else can not be sanely executed on most databases so croak
       # right then and there
@@ -1866,7 +1868,7 @@ sub _rs_update_delete {
         if (
           join ("\x00", sort @current_group_by)
             ne
-          join ("\x00", sort @$subq_group_by )
+          join ("\x00", sort @{$attrs->{columns}} )
         ) {
           $self->throw_exception (
             "You have just attempted a $op operation on a resultset which does group_by"
@@ -1877,12 +1879,14 @@ sub _rs_update_delete {
           );
         }
       }
+
+      $subrs = $subrs->search({}, { group_by => $attrs->{columns} });
     }
 
     my $guard = $storage->txn_scope_guard;
 
     my @op_condition;
-    for my $row ($subrs->search({}, { group_by => $subq_group_by })->cursor->all) {
+    for my $row ($subrs->cursor->all) {
       push @op_condition, { map
         { $idcols->[$_] => $row->[$_] }
         (0 .. $#$idcols)
@@ -1907,13 +1911,13 @@ sub _rs_update_delete {
 
 =item Arguments: \%values
 
-=item Return Value: $storage_rv
+=item Return Value: L<$storage_rv|DBIx::Class::Storage>
 
 =back
 
 Sets the specified columns in the resultset to the supplied values in a
 single query. Note that this will not run any accessor/set_column/update
-triggers, nor will it update any row object instances derived from this
+triggers, nor will it update any result object instances derived from this
 resultset (this includes the contents of the L<resultset cache|/set_cache>
 if any). See L</update_all> if you need to execute any on-update
 triggers or cascades defined either by you or a
@@ -1975,13 +1979,13 @@ sub update_all {
 
 =item Arguments: none
 
-=item Return Value: $storage_rv
+=item Return Value: L<$storage_rv|DBIx::Class::Storage>
 
 =back
 
 Deletes the rows matching this resultset in a single query. Note that this
 will not run any delete triggers, nor will it alter the
-L<in_storage|DBIx::Class::Row/in_storage> status of any row object instances
+L<in_storage|DBIx::Class::Row/in_storage> status of any result object instances
 derived from this resultset (this includes the contents of the
 L<resultset cache|/set_cache> if any). See L</delete_all> if you need to
 execute any on-delete triggers or cascades defined either by you or a
@@ -2237,11 +2241,11 @@ sub _normalize_populate_args {
 
 =item Arguments: none
 
-=item Return Value: $pager
+=item Return Value: L<$pager|Data::Page>
 
 =back
 
-Return Value a L<Data::Page> object for the current resultset. Only makes
+Returns a L<Data::Page> object for the current resultset. Only makes
 sense for queries with a C<page> attribute.
 
 To get the full count of entries for a paged resultset, call
@@ -2284,7 +2288,7 @@ sub pager {
 
 =item Arguments: $page_number
 
-=item Return Value: $rs
+=item Return Value: L<$resultset|/new>
 
 =back
 
@@ -2303,16 +2307,16 @@ sub page {
 
 =over 4
 
-=item Arguments: \%vals
+=item Arguments: \%col_data
 
-=item Return Value: $rowobject
+=item Return Value: L<$result|DBIx::Class::Manual::ResultClass>
 
 =back
 
-Creates a new row object in the resultset's result class and returns
+Creates a new result object in the resultset's result class and returns
 it. The row is not inserted into the database at this point, call
 L<DBIx::Class::Row/insert> to do that. Calling L<DBIx::Class::Row/in_storage>
-will tell you whether the row object has been inserted or not.
+will tell you whether the result object has been inserted or not.
 
 Passes the hashref of input on to L<DBIx::Class::Row/new>.
 
@@ -2510,7 +2514,7 @@ sub _remove_alias {
 
 =item Arguments: none
 
-=item Return Value: \[ $sql, @bind ]
+=item Return Value: \[ $sql, L<@bind_values|/DBIC BIND VALUES> ]
 
 =back
 
@@ -2541,9 +2545,9 @@ sub as_query {
 
 =over 4
 
-=item Arguments: \%vals, \%attrs?
+=item Arguments: \%col_data, { key => $unique_constraint, L<%attrs?|/ATTRIBUTES> }?
 
-=item Return Value: $rowobject
+=item Return Value: L<$result|DBIx::Class::Manual::ResultClass>
 
 =back
 
@@ -2588,9 +2592,9 @@ sub find_or_new {
 
 =over 4
 
-=item Arguments: \%vals
+=item Arguments: \%col_data
 
-=item Return Value: a L<DBIx::Class::Row> $object
+=item Return Value: L<$result|DBIx::Class::Manual::ResultClass>
 
 =back
 
@@ -2614,12 +2618,11 @@ This can be applied recursively, and will work correctly for a structure
 with an arbitrary depth and width, as long as the relationships actually
 exists and the correct column data has been supplied.
 
-
 Instead of hashrefs of plain related data (key/value pairs), you may
 also pass new or inserted objects. New objects (not inserted yet, see
 L</new>), will be inserted into their appropriate tables.
 
-Effectively a shortcut for C<< ->new_result(\%vals)->insert >>.
+Effectively a shortcut for C<< ->new_result(\%col_data)->insert >>.
 
 Example of creating a new row.
 
@@ -2677,9 +2680,9 @@ sub create {
 
 =over 4
 
-=item Arguments: \%vals, \%attrs?
+=item Arguments: \%col_data, { key => $unique_constraint, L<%attrs?|/ATTRIBUTES> }?
 
-=item Return Value: $rowobject
+=item Return Value: L<$result|DBIx::Class::Manual::ResultClass>
 
 =back
 
@@ -2738,7 +2741,7 @@ database!
     year   => 2005,
   });
 
-  if( $cd->in_storage ) {
+  if( !$cd->in_storage ) {
       # do some stuff
       $cd->insert;
   }
@@ -2759,16 +2762,16 @@ sub find_or_create {
 
 =over 4
 
-=item Arguments: \%col_values, { key => $unique_constraint }?
+=item Arguments: \%col_data, { key => $unique_constraint, L<%attrs?|/ATTRIBUTES> }?
 
-=item Return Value: $row_object
+=item Return Value: L<$result|DBIx::Class::Manual::ResultClass>
 
 =back
 
   $resultset->update_or_create({ col => $val, ... });
 
 Like L</find_or_create>, but if a row is found it is immediately updated via
-C<< $found_row->update (\%col_values) >>.
+C<< $found_row->update (\%col_data) >>.
 
 
 Takes an optional C<key> attribute to search on a specific unique constraint.
@@ -2809,20 +2812,6 @@ L</update_or_new> and L<DBIx::Class::Row/in_storage> instead. Don't forget
 to call L<DBIx::Class::Row/insert> to save the newly created row to the
 database!
 
-  my $cd = $schema->resultset('CD')->update_or_new(
-    {
-      artist => 'Massive Attack',
-      title  => 'Mezzanine',
-      year   => 1998,
-    },
-    { key => 'cd_artist_title' }
-  );
-
-  if( $cd->in_storage ) {
-      # do some stuff
-      $cd->insert;
-  }
-
 =cut
 
 sub update_or_create {
@@ -2843,16 +2832,16 @@ sub update_or_create {
 
 =over 4
 
-=item Arguments: \%col_values, { key => $unique_constraint }?
+=item Arguments: \%col_data, { key => $unique_constraint, L<%attrs?|/ATTRIBUTES> }?
 
-=item Return Value: $rowobject
+=item Return Value: L<$result|DBIx::Class::Manual::ResultClass>
 
 =back
 
   $resultset->update_or_new({ col => $val, ... });
 
 Like L</find_or_new> but if a row is found it is immediately updated via
-C<< $found_row->update (\%col_values) >>.
+C<< $found_row->update (\%col_data) >>.
 
 For example:
 
@@ -2908,7 +2897,7 @@ sub update_or_new {
 
 =item Arguments: none
 
-=item Return Value: \@cache_objects | undef
+=item Return Value: L<\@result_objs|DBIx::Class::Manual::ResultClass> | undef
 
 =back
 
@@ -2927,15 +2916,15 @@ sub get_cache {
 
 =over 4
 
-=item Arguments: \@cache_objects
+=item Arguments: L<\@result_objs|DBIx::Class::Manual::ResultClass>
 
-=item Return Value: \@cache_objects
+=item Return Value: L<\@result_objs|DBIx::Class::Manual::ResultClass>
 
 =back
 
 Sets the contents of the cache for the resultset. Expects an arrayref
 of objects of the same class as those produced by the resultset. Note that
-if the cache is set the resultset will return the cached objects rather
+if the cache is set, the resultset will return the cached objects rather
 than re-querying the database even if the cache attr is not set.
 
 The contents of the cache can also be populated by using the
@@ -3006,9 +2995,9 @@ sub is_ordered {
 
 =over 4
 
-=item Arguments: $relationship_name
+=item Arguments: $rel_name
 
-=item Return Value: $resultset
+=item Return Value: L<$resultset|/new>
 
 =back
 
@@ -3131,7 +3120,7 @@ sub current_source_alias {
 
 =item Arguments: none
 
-=item Return Value: $resultset
+=item Return Value: L<$resultset|/new>
 
 =back
 
@@ -3333,7 +3322,7 @@ sub _resolved_attrs {
   if (my $cols = delete $attrs->{columns}) {
     for my $c (ref $cols eq 'ARRAY' ? @$cols : $cols) {
       if (ref $c eq 'HASH') {
-        for my $as (keys %$c) {
+        for my $as (sort keys %$c) {
           push @sel, $c->{$as};
           push @as, $as;
         }
@@ -3762,6 +3751,10 @@ searching for data. They can be passed to any method which takes an
 C<\%attrs> argument. See L</search>, L</search_rs>, L</find>,
 L</count>.
 
+Default attributes can be set on the result class using
+L<DBIx::Class::ResultSource/resultset_attributes>.  (Please read
+the CAVEATS on that feature before using it!)
+
 These are in no particular order:
 
 =head2 order_by
@@ -4127,12 +4120,6 @@ relationship on a given level. e.g.:
    }
  );
 
-In fact, C<DBIx::Class> will emit the following warning:
-
- Prefetching multiple has_many rels tracks and cd_to_producer at top
- level will explode the number of row objects retrievable via ->next
- or ->all. Use at your own risk.
-
 The collapser currently can't identify duplicate tuples for multiple
 L<has_many|DBIx::Class::Relationship/has_many> relationships and as a
 result the second L<has_many|DBIx::Class::Relationship/has_many>
@@ -4209,6 +4196,37 @@ that cmp_ok() may or may not pass depending on the datasets involved. This
 behavior may or may not survive the 0.09 transition.
 
 =back
+
+=head2 alias
+
+=over 4
+
+=item Value: $source_alias
+
+=back
+
+Sets the source alias for the query.  Normally, this defaults to C<me>, but
+nested search queries (sub-SELECTs) might need specific aliases set to
+reference inner queries.  For example:
+
+   my $q = $rs
+      ->related_resultset('CDs')
+      ->related_resultset('Tracks')
+      ->search({
+         'track.id' => { -ident => 'none_search.id' },
+      })
+      ->as_query;
+
+   my $ids = $self->search({
+      -not_exists => $q,
+   }, {
+      alias    => 'none_search',
+      group_by => 'none_search.id',
+   })->get_column('id')->as_query;
+
+   $self->search({ id => { -in => $ids } })
+
+This attribute is directly tied to L</current_source_alias>.
 
 =head2 page
 
@@ -4354,6 +4372,64 @@ L<DBIx::Class::Manual::Cookbook>.
 Set to 'update' for a SELECT ... FOR UPDATE or 'shared' for a SELECT
 ... FOR SHARED. If \$scalar is passed, this is taken directly and embedded in the
 query.
+
+=head1 DBIC BIND VALUES
+
+Because DBIC may need more information to bind values than just the column name
+and value itself, it uses a special format for both passing and receiving bind
+values.  Each bind value should be composed of an arrayref of
+C<< [ \%args => $val ] >>.  The format of C<< \%args >> is currently:
+
+=over 4
+
+=item dbd_attrs
+
+If present (in any form), this is what is being passed directly to bind_param.
+Note that different DBD's expect different bind args.  (e.g. DBD::SQLite takes
+a single numerical type, while DBD::Pg takes a hashref if bind options.)
+
+If this is specified, all other bind options described below are ignored.
+
+=item sqlt_datatype
+
+If present, this is used to infer the actual bind attribute by passing to
+C<< $resolved_storage->bind_attribute_by_data_type() >>.  Defaults to the
+"data_type" from the L<add_columns column info|DBIx::Class::ResultSource/add_columns>.
+
+Note that the data type is somewhat freeform (hence the sqlt_ prefix);
+currently drivers are expected to "Do the Right Thing" when given a common
+datatype name.  (Not ideal, but that's what we got at this point.)
+
+=item sqlt_size
+
+Currently used to correctly allocate buffers for bind_param_inout().
+Defaults to "size" from the L<add_columns column info|DBIx::Class::ResultSource/add_columns>,
+or to a sensible value based on the "data_type".
+
+=item dbic_colname
+
+Used to fill in missing sqlt_datatype and sqlt_size attributes (if they are
+explicitly specified they are never overriden).  Also used by some weird DBDs,
+where the column name should be available at bind_param time (e.g. Oracle).
+
+=back
+
+For backwards compatibility and convenience, the following shortcuts are
+supported:
+
+  [ $name => $val ] === [ { dbic_colname => $name }, $val ]
+  [ \$dt  => $val ] === [ { sqlt_datatype => $dt }, $val ]
+  [ undef,   $val ] === [ {}, $val ]
+  [ $val ]          === [ {}, $val ]
+  $val              === [ {}, $val ]
+
+=head1 AUTHOR AND CONTRIBUTORS
+
+See L<AUTHOR|DBIx::Class/AUTHOR> and L<CONTRIBUTORS|DBIx::Class/CONTRIBUTORS> in DBIx::Class
+
+=head1 LICENSE
+
+You may distribute this code under the same terms as Perl itself.
 
 =cut
 

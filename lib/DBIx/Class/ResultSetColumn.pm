@@ -118,7 +118,7 @@ sub new {
 
 =item Arguments: none
 
-=item Return Value: \[ $sql, @bind ]
+=item Return Value: \[ $sql, L<@bind_values|DBIx::Class::ResultSet/DBIC BIND VALUES> ]
 
 =back
 
@@ -171,7 +171,7 @@ Returns all values of the column in the resultset (or C<undef> if
 there are none).
 
 Much like L<DBIx::Class::ResultSet/all> but returns values rather
-than row objects.
+than result objects.
 
 =cut
 
@@ -286,7 +286,7 @@ sub min {
 
 =item Arguments: none
 
-=item Return Value: $resultset
+=item Return Value: L<$resultset|DBIx::Class::ResultSet>
 
 =back
 
@@ -325,7 +325,7 @@ sub max {
 
 =item Arguments: none
 
-=item Return Value: $resultset
+=item Return Value: L<$resultset|DBIx::Class::ResultSet>
 
 =back
 
@@ -364,7 +364,7 @@ sub sum {
 
 =item Arguments: none
 
-=item Return Value: $resultset
+=item Return Value: L<$resultset|DBIx::Class::ResultSet>
 
 =back
 
@@ -413,7 +413,7 @@ sub func {
 
 =item Arguments: $function
 
-=item Return Value: $resultset
+=item Return Value: L<$resultset|DBIx::Class::ResultSet>
 
 =back
 
@@ -472,11 +472,9 @@ sub _resultset {
 
 1;
 
-=head1 AUTHORS
+=head1 AUTHOR AND CONTRIBUTORS
 
-Luke Saunders <luke.saunders@gmail.com>
-
-Jess Robinson
+See L<AUTHOR|DBIx::Class/AUTHOR> and L<CONTRIBUTORS|DBIx::Class/CONTRIBUTORS> in DBIx::Class
 
 =head1 LICENSE
 

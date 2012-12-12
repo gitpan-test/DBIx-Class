@@ -107,7 +107,10 @@ my $rdbms_firebird_odbc = {
 
 my $reqs = {
   dist => {
-    #'Module::Install::Pod::Inherit' => '0.01',
+    req => { $] < '5.010001' ? () : (
+      'Pod::Inherit' => '0.16',
+      'Pod::Tree'    => '0',
+    ) },
   },
 
   replicated => {
@@ -698,13 +701,9 @@ sub req_group_list {
 
 # This is to be called by the author only (automatically in Makefile.PL)
 sub _gen_pod {
-  my ($class, $distver) = @_;
+  my ($class, $distver, $pod_dir) = @_;
 
-  my $modfn = __PACKAGE__ . '.pm';
-  $modfn =~ s/\:\:/\//g;
-
-  my $podfn = __FILE__;
-  $podfn =~ s/\.pm$/\.pod/;
+  die "No POD root dir supplied" unless $pod_dir;
 
   $distver ||=
     eval { require DBIx::Class; DBIx::Class->VERSION; }
@@ -716,6 +715,17 @@ sub _gen_pod {
 "halted\n\n" . $@ .
 "\n\n---------------------------------------------------------------------\n"
   ;
+
+  # do not ask for a recent version, use 1.x API calls
+  # this *may* execute on a smoker with old perl or whatnot
+  require File::Path;
+
+  (my $modfn = __PACKAGE__ . '.pm') =~ s|::|/|g;
+
+  (my $podfn = "$pod_dir/$modfn") =~ s/\.pm$/\.pod/;
+  (my $dir = $podfn) =~ s|/[^/]+$||;
+
+  File::Path::mkpath([$dir]);
 
   my $sqltver = $class->req_list_for ('deploy')->{'SQL::Translator'}
     or die "Hrmm? No sqlt dep?";
@@ -797,7 +807,7 @@ EOD
     '=head2 req_group_list',
     '=over',
     '=item Arguments: none',
-    '=item Returns: \%list_of_requirement_groups',
+    '=item Return Value: \%list_of_requirement_groups',
     '=back',
     <<'EOD',
 This method should be used by DBIx::Class packagers, to get a hashref of all
@@ -808,7 +818,7 @@ EOD
     '=head2 req_list_for',
     '=over',
     '=item Arguments: $group_name',
-    '=item Returns: \%list_of_module_version_pairs',
+    '=item Return Value: \%list_of_module_version_pairs',
     '=back',
     <<'EOD',
 This method should be used by DBIx::Class extension authors, to determine the
@@ -820,7 +830,7 @@ EOD
     '=head2 req_ok_for',
     '=over',
     '=item Arguments: $group_name',
-    '=item Returns: 1|0',
+    '=item Return Value: 1|0',
     '=back',
     <<'EOD',
 Returns true or false depending on whether all modules required by
@@ -830,7 +840,7 @@ EOD
     '=head2 req_missing_for',
     '=over',
     '=item Arguments: $group_name',
-    '=item Returns: $error_message_string',
+    '=item Return Value: $error_message_string',
     '=back',
     <<"EOD",
 Returns a single line string suitable for inclusion in larger error messages.
@@ -850,7 +860,7 @@ EOD
     '=head2 req_errorlist_for',
     '=over',
     '=item Arguments: $group_name',
-    '=item Returns: \%list_of_loaderrors_per_module',
+    '=item Return Value: \%list_of_loaderrors_per_module',
     '=back',
     <<'EOD',
 Returns a hashref containing the actual errors that occured while attempting
@@ -864,6 +874,7 @@ EOD
 
   open (my $fh, '>', $podfn) or Carp::croak "Unable to write to $podfn: $!";
   print $fh join ("\n\n", @chunks);
+  print $fh "\n";
   close ($fh);
 }
 

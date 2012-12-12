@@ -22,7 +22,7 @@ postamble <<"EOP";
 dist : test_xt
 
 test_xt :
-\tPERL_DL_NONLAZY=1 RELEASE_TESTING=1 \$(FULLPERLRUN) "-MExtUtils::Command::MM" "-e" "test_harness(\$(TEST_VERBOSE), 'inc', '\$(INST_LIB)', '\$(INST_ARCHLIB)')" $xt_tests
+\tenv PERL_DL_NONLAZY=1 RELEASE_TESTING=1 \$(FULLPERLRUN) "-MExtUtils::Command::MM" "-e" "test_harness(\$(TEST_VERBOSE), 'inc', '\$(INST_LIB)', '\$(INST_ARCHLIB)')" "$xt_tests"
 
 EOP
 

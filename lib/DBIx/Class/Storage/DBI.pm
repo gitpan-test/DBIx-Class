@@ -198,10 +198,9 @@ sub new {
   my %seek_and_destroy;
 
   sub _arm_global_destructor {
-    my $self = shift;
-    my $key = refaddr ($self);
-    $seek_and_destroy{$key} = $self;
-    weaken ($seek_and_destroy{$key});
+    weaken (
+      $seek_and_destroy{ refaddr($_[0]) } = $_[0]
+    );
   }
 
   END {
@@ -218,14 +217,18 @@ sub new {
     # As per DBI's recommendation, DBIC disconnects all handles as
     # soon as possible (DBIC will reconnect only on demand from within
     # the thread)
-    for (values %seek_and_destroy) {
-      next unless $_;
+    my @instances = grep { defined $_ } values %seek_and_destroy;
+    for (@instances) {
       $_->{_dbh_gen}++;  # so that existing cursors will drop as well
       $_->_dbh(undef);
 
       $_->transaction_depth(0);
       $_->savepoints([]);
     }
+
+    # properly renumber all existing refs
+    %seek_and_destroy = ();
+    $_->_arm_global_destructor for @instances;
   }
 }
 
@@ -1075,15 +1078,15 @@ sub _server_info {
 
     $info = {};
 
-    my $server_version;
-    try {
-      $server_version = $self->_get_server_version;
-    }
-    catch {
-      if ($self->{_in_determine_driver}) {
-        $self->throw_exception($_);
-      }
-      $server_version = undef;
+    my $server_version = try {
+      $self->_get_server_version
+    } catch {
+      # driver determination *may* use this codepath
+      # in which case we must rethrow
+      $self->throw_exception($_) if $self->{_in_determine_driver};
+
+      # $server_version on failure
+      undef;
     };
 
     if (defined $server_version) {
@@ -1128,19 +1131,7 @@ sub _dbh_get_info {
       unless defined $info;
   }
 
-  my $res;
-
-  try {
-    $res = $self->_get_dbh->get_info($info);
-  }
-  catch {
-    if ($self->{_in_determine_driver}) {
-      $self->throw_exception($_);
-    }
-    $res = undef;
-  };
-
-  return $res;
+  return $self->_get_dbh->get_info($info);
 }
 
 sub _describe_connection {
@@ -1559,6 +1550,7 @@ sub _prep_for_execute {
 
 sub _gen_sql_bind {
   my ($self, $op, $ident, $args) = @_;
+  $args = [ $args ] unless (ref $args);
 
   my ($sql, @bind) = $self->sql_maker->$op(
     blessed($ident) ? $ident->from : $ident,
@@ -1570,7 +1562,7 @@ sub _gen_sql_bind {
       and
     $op eq 'select'
       and
-    first { blessed($_->[1]) && $_->[1]->isa('DateTime') } @bind
+    first { ref $_ && @$_ > 1 && blessed($_->[1]) && $_->[1]->isa('DateTime') } @bind
   ) {
     carp_unique 'DateTime objects passed to search() are not supported '
       . 'properly (InflateColumn::DateTime formats and settings are not '
@@ -1612,6 +1604,9 @@ sub _resolve_bindattrs {
   return [ map {
     if (ref $_ ne 'ARRAY') {
       [{}, $_]
+    }
+    elsif (@$_ == 1 && ref $_->[0] ne 'HASH') {
+      [{}, $_->[0]]
     }
     elsif (! defined $_->[0]) {
       [{}, $_->[1]]
@@ -2343,7 +2338,7 @@ sub _select_args {
 ###
   # This would be the point to deflate anything found in $where
   # (and leave $attrs->{bind} intact). Problem is - inflators historically
-  # expect a row object. And all we have is a resultsource (it is trivial
+  # expect a result object. And all we have is a resultsource (it is trivial
   # to extract deflator coderefs via $alias2source above).
   #
   # I don't see a way forward other than changing the way deflators are
@@ -2650,7 +2645,7 @@ sub is_datatype_numeric {
 
 =over 4
 
-=item Arguments: $schema \@databases, $version, $directory, $preversion, \%sqlt_args
+=item Arguments: $schema, \@databases, $version, $directory, $preversion, \%sqlt_args
 
 =back
 
@@ -2712,7 +2707,7 @@ sub create_ddl_dir {
   } else {
       -d $dir
         or
-      (require File::Path and File::Path::make_path ("$dir"))  # make_path does not like objects (i.e. Path::Class::Dir)
+      (require File::Path and File::Path::mkpath (["$dir"]))  # mkpath does not like objects (i.e. Path::Class::Dir)
         or
       $self->throw_exception(
         "Failed to create '$dir': " . ($! || $@ || 'error unknown')
@@ -3000,6 +2995,8 @@ sub lag_behind_master {
 
 =item Arguments: $relname, $join_count
 
+=item Return Value: $alias
+
 =back
 
 L<DBIx::Class> uses L<DBIx::Class::Relationship> names as table aliases in
@@ -3119,11 +3116,9 @@ cases if you choose the C<< AutoCommit => 0 >> path, just as you would
 be with raw DBI.
 
 
-=head1 AUTHORS
+=head1 AUTHOR AND CONTRIBUTORS
 
-Matt S. Trout <mst@shadowcatsystems.co.uk>
-
-Andy Grundman <andy@hybridized.org>
+See L<AUTHOR|DBIx::Class/AUTHOR> and L<CONTRIBUTORS|DBIx::Class/CONTRIBUTORS> in DBIx::Class
 
 =head1 LICENSE
 
