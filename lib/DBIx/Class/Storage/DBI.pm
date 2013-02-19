@@ -176,6 +176,7 @@ sub new {
   $new->_sql_maker_opts({});
   $new->_dbh_details({});
   $new->{_in_do_block} = 0;
+  $new->{_dbh_gen} = 0;
 
   # read below to see what this does
   $new->_arm_global_destructor;
@@ -215,17 +216,17 @@ sub new {
     # soon as possible (DBIC will reconnect only on demand from within
     # the thread)
     my @instances = grep { defined $_ } values %seek_and_destroy;
-    %seek_and_destroy = ();
-
     for (@instances) {
+      $_->{_dbh_gen}++;  # so that existing cursors will drop as well
       $_->_dbh(undef);
 
       $_->transaction_depth(0);
       $_->savepoints([]);
-
-      # properly renumber existing refs
-      $_->_arm_global_destructor
     }
+
+    # properly renumber all existing refs
+    %seek_and_destroy = ();
+    $_->_arm_global_destructor for @instances;
   }
 }
 
@@ -251,6 +252,7 @@ sub _verify_pid {
   my $pid = $self->_conn_pid;
   if( defined $pid and $pid != $$ and my $dbh = $self->_dbh ) {
     $dbh->{InactiveDestroy} = 1;
+    $self->{_dbh_gen}++;
     $self->_dbh(undef);
     $self->transaction_depth(0);
     $self->savepoints([]);
@@ -833,6 +835,7 @@ sub disconnect {
     %{ $self->_dbh->{CachedKids} } = ();
     $self->_dbh->disconnect;
     $self->_dbh(undef);
+    $self->{_dbh_gen}++;
   }
 }
 
@@ -2288,8 +2291,8 @@ sub _select_args {
   # see if we need to tear the prefetch apart otherwise delegate the limiting to the
   # storage, unless software limit was requested
   if (
-    # limited collapsing has_many
-    ( $attrs->{rows} && $attrs->{collapse} )
+    #limited has_many
+    ( $attrs->{rows} && keys %{$attrs->{collapse}} )
        ||
     # grouped prefetch (to satisfy group_by == select)
     ( $attrs->{group_by}

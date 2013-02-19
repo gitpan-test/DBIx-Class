@@ -9,7 +9,7 @@ use DBICTest;
 my $schema = DBICTest->init_schema();
 
 lives_ok(sub {
-  # while cds.* will be selected anyway (prefetch implies it)
+  # while cds.* will be selected anyway (prefetch currently forces the result of _resolve_prefetch)
   # only the requested me.name column will be fetched.
 
   # reference sql with select => [...]
@@ -20,8 +20,8 @@ lives_ok(sub {
     {
       prefetch => [ qw/ cds / ],
       order_by => [ { -desc => 'me.name' }, 'cds.title' ],
-      select => [qw/ me.name cds.title / ],
-    },
+      select => [qw/ me.name  cds.title / ],
+    }
   );
 
   is ($rs->count, 2, 'Correct number of collapsed artists');
@@ -30,56 +30,6 @@ lives_ok(sub {
   is ($we_are_goth->cds->count, 1, 'Correct number of CDs for first artist');
   is ($we_are_goth->cds->first->title, 'Come Be Depressed With Us', 'Correct cd for artist');
 }, 'explicit prefetch on a keyless object works');
-
-lives_ok ( sub {
-
-  my $rs = $schema->resultset('CD')->search(
-    {},
-    {
-      order_by => [ { -desc => 'me.year' } ],
-    }
-  );
-  my $years = [qw/ 2001 2001 1999 1998 1997/];
-
-  is_deeply (
-    [ $rs->search->get_column('me.year')->all ],
-    $years,
-    'Expected years (at least one duplicate)',
-  );
-
-  my @cds_and_tracks;
-  for my $cd ($rs->all) {
-    my $data = { year => $cd->year, cdid => $cd->cdid };
-    for my $tr ($cd->tracks->all) {
-      push @{$data->{tracks}}, { $tr->get_columns };
-    }
-    push @cds_and_tracks, $data;
-  }
-
-  my $pref_rs = $rs->search ({}, { columns => [qw/year cdid/], prefetch => 'tracks' });
-
-  my @pref_cds_and_tracks;
-  for my $cd ($pref_rs->all) {
-    my $data = { $cd->get_columns };
-    for my $tr ($cd->tracks->all) {
-      push @{$data->{tracks}}, { $tr->get_columns };
-    }
-    push @pref_cds_and_tracks, $data;
-  }
-
-  is_deeply (
-    \@pref_cds_and_tracks,
-    \@cds_and_tracks,
-    'Correct collapsing on non-unique primary object'
-  );
-
-  is_deeply (
-    [ $pref_rs->search ({}, { result_class => 'DBIx::Class::ResultClass::HashRefInflator' })->all ],
-    \@cds_and_tracks,
-    'Correct HRI collapsing on non-unique primary object'
-  );
-
-}, 'weird collapse lives');
 
 
 lives_ok(sub {
@@ -105,7 +55,7 @@ throws_ok(
   sub {
     $schema->resultset('Track')->search({}, { join => { cd => 'artist' }, '+columns' => 'artist.name' } )->next;
   },
-  qr|\QInflation into non-existent relationship 'artist' of 'Track' requested, check the inflation specification (columns/as) ending in '...artist.name'|,
+  qr|\QCan't inflate manual prefetch into non-existent relationship 'artist' from 'Track', check the inflation specification (columns/as) ending in 'artist.name'|,
   'Sensible error message on mis-specified "as"',
 );
 
