@@ -22,6 +22,8 @@ BEGIN {
 
 use namespace::clean;
 
+__PACKAGE__->mk_group_accessors ( simple => [ in_storage => '_in_storage' ] );
+
 =head1 NAME
 
 DBIx::Class::Row - Basic row methods
@@ -176,7 +178,7 @@ sub new {
   my ($class, $attrs) = @_;
   $class = ref $class if ref $class;
 
-  my $new = bless { _column_data => {} }, $class;
+  my $new = bless { _column_data => {}, _in_storage => 0 }, $class;
 
   if ($attrs) {
     $new->throw_exception("attrs must be a hashref")
@@ -480,13 +482,6 @@ are used.
 Creating a result object using L<DBIx::Class::ResultSet/new_result>, or
 calling L</delete> on one, sets it to false.
 
-=cut
-
-sub in_storage {
-  my ($self, $val) = @_;
-  $self->{_in_storage} = $val if @_ > 1;
-  return $self->{_in_storage} ? 1 : 0;
-}
 
 =head2 update
 
@@ -619,7 +614,7 @@ sub delete {
     );
 
     delete $self->{_column_data_in_storage};
-    $self->in_storage(undef);
+    $self->in_storage(0);
   }
   else {
     my $rsrc = try { $self->result_source_instance }
@@ -773,6 +768,7 @@ Marks a column as having been changed regardless of whether it has
 really changed.
 
 =cut
+
 sub make_column_dirty {
   my ($self, $column) = @_;
 
@@ -1181,76 +1177,39 @@ L<DBIx::Class::ResultSet>, see L<DBIx::Class::ResultSet/result_class>.
 sub inflate_result {
   my ($class, $source, $me, $prefetch) = @_;
 
-  $source = $source->resolve
-    if $source->isa('DBIx::Class::ResultSourceHandle');
-
   my $new = bless
     { _column_data => $me, _result_source => $source },
     ref $class || $class
   ;
 
-  foreach my $pre (keys %{$prefetch||{}}) {
+  if ($prefetch) {
+    for my $pre ( keys %$prefetch ) {
 
-    my (@pre_vals, $is_multi);
-    if (ref $prefetch->{$pre}[0] eq 'ARRAY') {
-      $is_multi = 1;
-      @pre_vals = @{$prefetch->{$pre}};
+      my @pre_objects;
+      if (
+        @{$prefetch->{$pre}||[]}
+          and
+        ref($prefetch->{$pre}) ne $DBIx::Class::ResultSource::RowParser::Util::null_branch_class
+      ) {
+        my $pre_source = $source->related_source($pre);
+
+        @pre_objects = map {
+          $pre_source->result_class->inflate_result( $pre_source, @$_ )
+        } ( ref $prefetch->{$pre}[0] eq 'ARRAY' ?  @{$prefetch->{$pre}} : $prefetch->{$pre} );
+      }
+
+      my $accessor = $source->relationship_info($pre)->{attrs}{accessor}
+        or $class->throw_exception("No accessor type declared for prefetched relationship '$pre'");
+
+      if ($accessor eq 'single') {
+        $new->{_relationship_data}{$pre} = $pre_objects[0];
+      }
+      elsif ($accessor eq 'filter') {
+        $new->{_inflated_column}{$pre} = $pre_objects[0];
+      }
+
+      $new->related_resultset($pre)->set_cache(\@pre_objects);
     }
-    else {
-      @pre_vals = $prefetch->{$pre};
-    }
-
-    my $pre_source = try {
-      $source->related_source($pre)
-    }
-    catch {
-      $class->throw_exception(sprintf
-
-        "Can't inflate manual prefetch into non-existent relationship '%s' from '%s', "
-      . "check the inflation specification (columns/as) ending in '%s.%s'.",
-
-        $pre,
-        $source->source_name,
-        $pre,
-        (keys %{$pre_vals[0][0]})[0] || 'something.something...',
-      );
-    };
-
-    my $accessor = $source->relationship_info($pre)->{attrs}{accessor}
-      or $class->throw_exception("No accessor type declared for prefetched $pre");
-
-    if (! $is_multi and $accessor eq 'multi') {
-      $class->throw_exception("Manual prefetch (via select/columns) not supported with accessor 'multi'");
-    }
-
-    my @pre_objects;
-    for my $me_pref (@pre_vals) {
-
-        # FIXME - this should not be necessary
-        # the collapser currently *could* return bogus elements with all
-        # columns set to undef
-        my $has_def;
-        for (values %{$me_pref->[0]}) {
-          if (defined $_) {
-            $has_def++;
-            last;
-          }
-        }
-        next unless $has_def;
-
-        push @pre_objects, $pre_source->result_class->inflate_result(
-          $pre_source, @$me_pref
-        );
-    }
-
-    if ($accessor eq 'single') {
-      $new->{_relationship_data}{$pre} = $pre_objects[0];
-    }
-    elsif ($accessor eq 'filter') {
-      $new->{_inflated_column}{$pre} = $pre_objects[0];
-    }
-
-    $new->related_resultset($pre)->set_cache(\@pre_objects);
   }
 
   $new->in_storage (1);

@@ -137,11 +137,15 @@ another.
 
 =head3 Resolving conditions and attributes
 
-When a resultset is chained from another resultset, conditions and
-attributes with the same keys need resolving.
+When a resultset is chained from another resultset (ie:
+C<my $new_rs = $old_rs->search(\%extra_cond, \%attrs)>), conditions
+and attributes with the same keys need resolving.
 
-L</join>, L</prefetch>, L</+select>, L</+as> attributes are merged
-into the existing ones from the original resultset.
+If any of L</columns>, L</select>, L</as> are present, they reset the
+original selection, and start the selection "clean".
+
+The L</join>, L</prefetch>, L</+columns>, L</+select>, L</+as> attributes
+are merged into the existing ones from the original resultset.
 
 The L</where> and L</having> attributes, and any search conditions, are
 merged with an SQL C<AND> to the existing condition from the original
@@ -838,7 +842,7 @@ sub find {
 
   # Run the query, passing the result_class since it should propagate for find
   my $rs = $self->search ($final_cond, {result_class => $self->result_class, %$attrs});
-  if (keys %{$rs->_resolved_attrs->{collapse}}) {
+  if ($rs->_resolved_attrs->{collapse}) {
     my $row = $rs->next;
     carp "Query returned more than one row" if $rs->next;
     return $row;
@@ -1048,11 +1052,9 @@ sub single {
 
   my $attrs = { %{$self->_resolved_attrs} };
 
-  if (keys %{$attrs->{collapse}}) {
-    $self->throw_exception(
-      'single() can not be used on resultsets prefetching has_many. Use find( \%cond ) or next() instead'
-    );
-  }
+  $self->throw_exception(
+    'single() can not be used on resultsets prefetching has_many. Use find( \%cond ) or next() instead'
+  ) if $attrs->{collapse};
 
   if ($where) {
     if (defined $attrs->{where}) {
@@ -1066,12 +1068,13 @@ sub single {
     }
   }
 
-  my @data = $self->result_source->storage->select_single(
+  my $data = [ $self->result_source->storage->select_single(
     $attrs->{from}, $attrs->{select},
     $attrs->{where}, $attrs
-  );
-
-  return (@data ? ($self->_construct_object(@data))[0] : undef);
+  )];
+  return undef unless @$data;
+  $self->{stashed_rows} = [ $data ];
+  $self->_construct_objects->[0];
 }
 
 
@@ -1228,161 +1231,203 @@ first record from the resultset.
 
 sub next {
   my ($self) = @_;
+
   if (my $cache = $self->get_cache) {
     $self->{all_cache_position} ||= 0;
     return $cache->[$self->{all_cache_position}++];
   }
+
   if ($self->{attrs}{cache}) {
     delete $self->{pager};
     $self->{all_cache_position} = 1;
     return ($self->all)[0];
   }
-  if ($self->{stashed_objects}) {
-    my $obj = shift(@{$self->{stashed_objects}});
-    delete $self->{stashed_objects} unless @{$self->{stashed_objects}};
-    return $obj;
-  }
-  my @row = (
-    exists $self->{stashed_row}
-      ? @{delete $self->{stashed_row}}
-      : $self->cursor->next
-  );
-  return undef unless (@row);
-  my ($row, @more) = $self->_construct_object(@row);
-  $self->{stashed_objects} = \@more if @more;
-  return $row;
+
+  return shift(@{$self->{stashed_objects}}) if @{ $self->{stashed_objects}||[] };
+
+  $self->{stashed_objects} = $self->_construct_objects
+    or return undef;
+
+  return shift @{$self->{stashed_objects}};
 }
 
-sub _construct_object {
-  my ($self, @row) = @_;
+# Constructs as many objects as it can in one pass while respecting
+# cursor laziness. Several modes of operation:
+#
+# * Always builds everything present in @{$self->{stashed_rows}}
+# * If called with $fetch_all true - pulls everything off the cursor and
+#   builds all objects in one pass
+# * If $self->_resolved_attrs->{collapse} is true, checks the order_by
+#   and if the resultset is ordered properly by the left side:
+#   * Fetches stuff off the cursor until the "master object" changes,
+#     and saves the last extra row (if any) in @{$self->{stashed_rows}}
+#   OR
+#   * Just fetches, and collapses/constructs everything as if $fetch_all
+#     was requested (there is no other way to collapse except for an
+#     eager cursor)
+# * If no collapse is requested - just get the next row, construct and
+#   return
+sub _construct_objects {
+  my ($self, $fetch_all) = @_;
 
-  my $info = $self->_collapse_result($self->{_attrs}{as}, \@row)
-    or return ();
-  my @new = $self->result_class->inflate_result($self->result_source, @$info);
-  @new = $self->{_attrs}{record_filter}->(@new)
-    if exists $self->{_attrs}{record_filter};
-  return @new;
-}
+  my $rsrc = $self->result_source;
+  my $attrs = $self->_resolved_attrs;
 
-sub _collapse_result {
-  my ($self, $as_proto, $row) = @_;
-
-  my @copy = @$row;
-
-  # 'foo'         => [ undef, 'foo' ]
-  # 'foo.bar'     => [ 'foo', 'bar' ]
-  # 'foo.bar.baz' => [ 'foo.bar', 'baz' ]
-
-  my @construct_as = map { [ (/^(?:(.*)\.)?([^.]+)$/) ] } @$as_proto;
-
-  my %collapse = %{$self->{_attrs}{collapse}||{}};
-
-  my @pri_index;
-
-  # if we're doing collapsing (has_many prefetch) we need to grab records
-  # until the PK changes, so fill @pri_index. if not, we leave it empty so
-  # we know we don't have to bother.
-
-  # the reason for not using the collapse stuff directly is because if you
-  # had for e.g. two artists in a row with no cds, the collapse info for
-  # both would be NULL (undef) so you'd lose the second artist
-
-  # store just the index so we can check the array positions from the row
-  # without having to contruct the full hash
-
-  if (keys %collapse) {
-    my %pri = map { ($_ => 1) } $self->result_source->_pri_cols;
-    foreach my $i (0 .. $#construct_as) {
-      next if defined($construct_as[$i][0]); # only self table
-      if (delete $pri{$construct_as[$i][1]}) {
-        push(@pri_index, $i);
-      }
-      last unless keys %pri; # short circuit (Johnny Five Is Alive!)
-    }
+  if (!$fetch_all and ! $attrs->{order_by} and $attrs->{collapse}) {
+    # default order for collapsing unless the user asked for something
+    $attrs->{order_by} = [ map { join '.', $attrs->{alias}, $_} $rsrc->primary_columns ];
+    $attrs->{_ordered_for_collapse} = 1;
+    $attrs->{_order_is_artificial} = 1;
   }
 
-  # no need to do an if, it'll be empty if @pri_index is empty anyway
+  my $cursor = $self->cursor;
 
-  my %pri_vals = map { ($_ => $copy[$_]) } @pri_index;
+  # this will be used as both initial raw-row collector AND as a RV of
+  # _construct_objects. Not regrowing the array twice matters a lot...
+  # a suprising amount actually
+  my $rows = delete $self->{stashed_rows};
 
-  my @const_rows;
+  if ($fetch_all) {
+    # FIXME SUBOPTIMAL - we can do better, cursor->next/all (well diff. methods) should return a ref
+    $rows = [ ($rows ? @$rows : ()), $cursor->all ];
+  }
+  elsif( $attrs->{collapse} ) {
 
-  do { # no need to check anything at the front, we always want the first row
+    $attrs->{_ordered_for_collapse} = (!$attrs->{order_by}) ? 0 : do {
+      my $st = $rsrc->schema->storage;
+      my @ord_cols = map
+        { $_->[0] }
+        ( $st->_extract_order_criteria($attrs->{order_by}) )
+      ;
 
-    my %const;
+      my $colinfos = $st->_resolve_column_info($attrs->{from}, \@ord_cols);
 
-    foreach my $this_as (@construct_as) {
-      $const{$this_as->[0]||''}{$this_as->[1]} = shift(@copy);
-    }
-
-    push(@const_rows, \%const);
-
-  } until ( # no pri_index => no collapse => drop straight out
-      !@pri_index
-    or
-      do { # get another row, stash it, drop out if different PK
-
-        @copy = $self->cursor->next;
-        $self->{stashed_row} = \@copy;
-
-        # last thing in do block, counts as true if anything doesn't match
-
-        # check xor defined first for NULL vs. NOT NULL then if one is
-        # defined the other must be so check string equality
-
-        grep {
-          (defined $pri_vals{$_} ^ defined $copy[$_])
-          || (defined $pri_vals{$_} && ($pri_vals{$_} ne $copy[$_]))
-        } @pri_index;
-      }
-  );
-
-  my $alias = $self->{attrs}{alias};
-  my $info = [];
-
-  my %collapse_pos;
-
-  my @const_keys;
-
-  foreach my $const (@const_rows) {
-    scalar @const_keys or do {
-      @const_keys = sort { length($a) <=> length($b) } keys %$const;
-    };
-    foreach my $key (@const_keys) {
-      if (length $key) {
-        my $target = $info;
-        my @parts = split(/\./, $key);
-        my $cur = '';
-        my $data = $const->{$key};
-        foreach my $p (@parts) {
-          $target = $target->[1]->{$p} ||= [];
-          $cur .= ".${p}";
-          if ($cur eq ".${key}" && (my @ckey = @{$collapse{$cur}||[]})) {
-            # collapsing at this point and on final part
-            my $pos = $collapse_pos{$cur};
-            CK: foreach my $ck (@ckey) {
-              if (!defined $pos->{$ck} || $pos->{$ck} ne $data->{$ck}) {
-                $collapse_pos{$cur} = $data;
-                delete @collapse_pos{ # clear all positioning for sub-entries
-                  grep { m/^\Q${cur}.\E/ } keys %collapse_pos
-                };
-                push(@$target, []);
-                last CK;
-              }
-            }
-          }
-          if (exists $collapse{$cur}) {
-            $target = $target->[-1];
-          }
+      for (0 .. $#ord_cols) {
+        if (
+          ! $colinfos->{$ord_cols[$_]}
+            or
+          $colinfos->{$ord_cols[$_]}{-result_source} != $rsrc
+        ) {
+          splice @ord_cols, $_;
+          last;
         }
-        $target->[0] = $data;
-      } else {
-        $info->[0] = $const->{$key};
+      }
+
+      # since all we check here are the start of the order_by belonging to the
+      # top level $rsrc, a present identifying set will mean that the resultset
+      # is ordered by its leftmost table in a tsable manner
+      (@ord_cols and $rsrc->_identifying_column_set({ map
+        { $colinfos->{$_}{-colname} => $colinfos->{$_} }
+        @ord_cols
+      })) ? 1 : 0;
+    } unless defined $attrs->{_ordered_for_collapse};
+
+    if (! $attrs->{_ordered_for_collapse}) {
+      $fetch_all = 1;
+
+      # instead of looping over ->next, use ->all in stealth mode
+      # *without* calling a ->reset afterwards
+      # FIXME - encapsulation breach, got to be a better way
+      if (! $cursor->{_done}) {
+        $rows = [ ($rows ? @$rows : ()), $cursor->all ];
+        $cursor->{_done} = 1;
       }
     }
   }
 
-  return $info;
+  if (! $fetch_all and ! @{$rows||[]} ) {
+    # FIXME SUBOPTIMAL - we can do better, cursor->next/all (well diff. methods) should return a ref
+    if (scalar (my @r = $cursor->next) ) {
+      $rows = [ \@r ];
+    }
+  }
+
+  return undef unless @{$rows||[]};
+
+  my @extra_collapser_args;
+  if ($attrs->{collapse} and ! $fetch_all ) {
+
+    @extra_collapser_args = (
+      # FIXME SUBOPTIMAL - we can do better, cursor->next/all (well diff. methods) should return a ref
+      sub { my @r = $cursor->next or return; \@r }, # how the collapser gets more rows
+      ($self->{stashed_rows} = []),                 # where does it stuff excess
+    );
+  }
+
+  # hotspot - skip the setter
+  my $res_class = $self->_result_class;
+
+  my $inflator_cref = $self->{_result_inflator}{cref} ||= do {
+    $res_class->can ('inflate_result')
+      or $self->throw_exception("Inflator $res_class does not provide an inflate_result() method");
+  };
+
+  my $infmap = $attrs->{as};
+
+  $self->{_result_inflator}{is_hri} = do { ( $inflator_cref == (
+    require DBIx::Class::ResultClass::HashRefInflator
+      &&
+    DBIx::Class::ResultClass::HashRefInflator->can('inflate_result')
+  ) ) ? 1 : 0
+  } unless defined $self->{_result_inflator}{is_hri};
+
+  if ($attrs->{_single_resultclass_inflation}) {
+    # construct a much simpler array->hash folder for the one-table cases right here
+    if ($self->{_result_inflator}{is_hri}) {
+      for my $r (@$rows) {
+        $r = { map { $infmap->[$_] => $r->[$_] } 0..$#$infmap };
+      }
+    }
+    # FIXME SUBOPTIMAL this is a very very very hot spot
+    # while rather optimal we can *still* do much better, by
+    # building a smarter Row::inflate_result(), and
+    # switch to feeding it data via a much leaner interface
+    #
+    # crude unscientific benchmarking indicated the shortcut eval is not worth it for
+    # this particular resultset size
+    elsif (@$rows < 60) {
+      for my $r (@$rows) {
+        $r = $inflator_cref->($res_class, $rsrc, { map { $infmap->[$_] => $r->[$_] } (0..$#$infmap) } );
+      }
+    }
+    else {
+      eval sprintf (
+        '$_ = $inflator_cref->($res_class, $rsrc, { %s }) for @$rows',
+        join (', ', map { "\$infmap->[$_] => \$_->[$_]" } 0..$#$infmap )
+      );
+    }
+  }
+  # Special-case multi-object HRI (we always prune)
+  elsif ($self->{_result_inflator}{is_hri}) {
+    ( $self->{_row_parser}{hri} ||= $rsrc->_mk_row_parser({
+      eval => 1,
+      inflate_map => $infmap,
+      selection => $attrs->{select},
+      collapse => $attrs->{collapse},
+      premultiplied => $attrs->{_main_source_premultiplied},
+      hri_style => 1,
+    }) )->($rows, @extra_collapser_args);
+  }
+  # Regular multi-object
+  else {
+
+    ( $self->{_row_parser}{classic} ||= $rsrc->_mk_row_parser({
+      eval => 1,
+      inflate_map => $infmap,
+      selection => $attrs->{select},
+      collapse => $attrs->{collapse},
+      premultiplied => $attrs->{_main_source_premultiplied},
+    }) )->($rows, @extra_collapser_args);
+
+    $_ = $inflator_cref->($res_class, $rsrc, @$_) for @$rows;
+  }
+
+  # CDBI compat stuff
+  if ($attrs->{record_filter}) {
+    $_ = $attrs->{record_filter}->($_) for @$rows;
+  }
+
+  return $rows;
 }
 
 =head2 result_source
@@ -1422,6 +1467,7 @@ in the original source class will not run.
 sub result_class {
   my ($self, $result_class) = @_;
   if ($result_class) {
+
     unless (ref $result_class) { # don't fire this for an object
       $self->ensure_class_loaded($result_class);
     }
@@ -1430,6 +1476,8 @@ sub result_class {
     # permit the user to set result class on one result set only; it only
     # chains if provided to search()
     #$self->{attrs}{result_class} = $result_class if ref $self;
+
+    delete $self->{_result_inflator};
   }
   $self->_result_class;
 }
@@ -1459,8 +1507,7 @@ sub count {
 
   # this is a little optimization - it is faster to do the limit
   # adjustments in software, instead of a subquery
-  my $rows = delete $attrs->{rows};
-  my $offset = delete $attrs->{offset};
+  my ($rows, $offset) = delete @{$attrs}{qw/rows offset/};
 
   my $crs;
   if ($self->_has_resolved_attr (qw/collapse group_by/)) {
@@ -1531,7 +1578,6 @@ sub _count_rs {
   # overwrite the selector (supplied by the storage)
   $tmp_attrs->{select} = $rsrc->storage->_count_select ($rsrc, $attrs);
   $tmp_attrs->{as} = 'count';
-  delete @{$tmp_attrs}{qw/columns/};
 
   my $tmp_rs = $rsrc->resultset_class->new($rsrc, $tmp_attrs)->get_column ('count');
 
@@ -1553,7 +1599,7 @@ sub _count_subq_rs {
 
   # if we multi-prefetch we group_by something unique, as this is what we would
   # get out of the rs via ->next/->all. We *DO WANT* to clobber old group_by regardless
-  if ( keys %{$attrs->{collapse}}  ) {
+  if ( $attrs->{collapse}  ) {
     $sub_attrs->{group_by} = [ map { "$attrs->{alias}.$_" } @{
       $rsrc->_identifying_column_set || $self->throw_exception(
         'Unable to construct a unique group_by criteria properly collapsing the '
@@ -1677,33 +1723,22 @@ Returns all elements in the resultset.
 sub all {
   my $self = shift;
   if(@_) {
-      $self->throw_exception("all() doesn't take any arguments, you probably wanted ->search(...)->all()");
+    $self->throw_exception("all() doesn't take any arguments, you probably wanted ->search(...)->all()");
   }
 
-  return @{ $self->get_cache } if $self->get_cache;
+  delete @{$self}{qw/stashed_rows stashed_objects/};
 
-  my @obj;
-
-  if (keys %{$self->_resolved_attrs->{collapse}}) {
-    # Using $self->cursor->all is really just an optimisation.
-    # If we're collapsing has_many prefetches it probably makes
-    # very little difference, and this is cleaner than hacking
-    # _construct_object to survive the approach
-    $self->cursor->reset;
-    my @row = $self->cursor->next;
-    while (@row) {
-      push(@obj, $self->_construct_object(@row));
-      @row = (exists $self->{stashed_row}
-               ? @{delete $self->{stashed_row}}
-               : $self->cursor->next);
-    }
-  } else {
-    @obj = map { $self->_construct_object(@$_) } $self->cursor->all;
+  if (my $c = $self->get_cache) {
+    return @$c;
   }
 
-  $self->set_cache(\@obj) if $self->{attrs}{cache};
+  $self->cursor->reset;
 
-  return @obj;
+  my $objs = $self->_construct_objects('fetch_all') || [];
+
+  $self->set_cache($objs) if $self->{attrs}{cache};
+
+  return @$objs;
 }
 
 =head2 reset
@@ -1724,6 +1759,8 @@ another query.
 
 sub reset {
   my ($self) = @_;
+
+  delete @{$self}{qw/stashed_rows stashed_objects/};
   $self->{all_cache_position} = 0;
   $self->cursor->reset;
   return $self;
@@ -1825,7 +1862,7 @@ sub _rs_update_delete {
     );
 
     # make a new $rs selecting only the PKs (that's all we really need for the subq)
-    delete $attrs->{$_} for qw/collapse _collapse_order_by select _prefetch_selector_range as/;
+    delete $attrs->{$_} for qw/collapse select _prefetch_selector_range as/;
     $attrs->{columns} = [ map { "$attrs->{alias}.$_" } @$idcols ];
     $attrs->{group_by} = \ '';  # FIXME - this is an evil hack, it causes the optimiser to kick in and throw away the LEFT joins
     my $subrs = (ref $self)->new($rsrc, $attrs);
@@ -2261,7 +2298,7 @@ sub pager {
   # throw away the paging flags and re-run the count (possibly
   # with a subselect) to get the real total count
   my $count_attrs = { %$attrs };
-  delete $count_attrs->{$_} for qw/rows offset page pager/;
+  delete @{$count_attrs}{qw/rows offset page pager/};
 
   my $total_rs = (ref $self)->new($self->result_source, $count_attrs);
 
@@ -3001,7 +3038,6 @@ Returns a related resultset for the supplied relationship name.
 sub related_resultset {
   my ($self, $rel) = @_;
 
-  $self->{related_resultsets} ||= {};
   return $self->{related_resultsets}{$rel} ||= do {
     my $rsrc = $self->result_source;
     my $rel_info = $rsrc->relationship_info($rel);
@@ -3028,13 +3064,13 @@ sub related_resultset {
     #XXX - temp fix for result_class bug. There likely is a more elegant fix -groditi
     delete @{$attrs}{qw(result_class alias)};
 
-    my $new_cache;
+    my $related_cache;
 
     if (my $cache = $self->get_cache) {
-      if ($cache->[0] && $cache->[0]->related_resultset($rel)->get_cache) {
-        $new_cache = [ map { @{$_->related_resultset($rel)->get_cache} }
-                        @$cache ];
-      }
+      $related_cache = [ map
+        { @{$_->related_resultset($rel)->get_cache||[]} }
+        @$cache
+      ];
     }
 
     my $rel_source = $rsrc->related_source($rel);
@@ -3057,7 +3093,7 @@ sub related_resultset {
                        where => $attrs->{where},
                    });
     };
-    $new->set_cache($new_cache) if $new_cache;
+    $new->set_cache($related_cache) if $related_cache;
     $new;
   };
 }
@@ -3282,6 +3318,40 @@ sub _chain_relationship {
   return {%$attrs, from => $from, seen_join => $seen};
 }
 
+# FIXME - this needs to go live in Schema with the tree walker... or
+# something
+my $inflatemap_checker;
+$inflatemap_checker = sub {
+  my ($rsrc, $relpaths) = @_;
+
+  my $rels;
+
+  for (@$relpaths) {
+    $_ =~ /^ ( [^\.]+ ) \. (.+) $/x
+      or next;
+
+    push @{$rels->{$1}}, $2;
+  }
+
+  for my $rel (keys %$rels) {
+    my $rel_rsrc = try {
+      $rsrc->related_source ($rel)
+    } catch {
+    $rsrc->throw_exception(sprintf(
+      "Inflation into non-existent relationship '%s' of '%s' requested, "
+    . "check the inflation specification (columns/as) ending in '...%s.%s'",
+      $rel,
+      $rsrc->source_name,
+      $rel,
+      ( sort { length($a) <=> length ($b) } @{$rels->{$rel}} )[0],
+    ))};
+
+    $inflatemap_checker->($rel_rsrc, $rels->{$rel});
+  }
+
+  return;
+};
+
 sub _resolved_attrs {
   my $self = shift;
   return $self->{_attrs} if $self->{_attrs};
@@ -3327,14 +3397,10 @@ sub _resolved_attrs {
     if $attrs->{select};
 
   # assume all unqualified selectors to apply to the current alias (legacy stuff)
-  for (@sel) {
-    $_ = (ref $_ or $_ =~ /\./) ? $_ : "$alias.$_";
-  }
+  $_ = (ref $_ or $_ =~ /\./) ? $_ : "$alias.$_" for @sel;
 
-  # disqualify all $alias.col as-bits (collapser mandated)
-  for (@as) {
-    $_ = ($_ =~ /^\Q$alias.\E(.+)$/) ? $1 : $_;
-  }
+  # disqualify all $alias.col as-bits (inflate-map mandated)
+  $_ = ($_ =~ /^\Q$alias.\E(.+)$/) ? $1 : $_ for @as;
 
   # de-duplicate the result (remove *identical* select/as pairs)
   # and also die on duplicate {as} pointing to different {select}s
@@ -3356,6 +3422,14 @@ sub _resolved_attrs {
       $i++;
     }
   }
+
+  # validate the user-supplied 'as' chain
+  # folks get too confused by the (logical) exception message, need to
+  # go to some lengths to clarify the text
+  #
+  # FIXME - this needs to go live in Schema with the tree walker... or
+  # something
+  $inflatemap_checker->($source, \@as);
 
   $attrs->{select} = \@sel;
   $attrs->{as} = \@as;
@@ -3421,15 +3495,17 @@ sub _resolved_attrs {
     }
   }
 
-  $attrs->{collapse} ||= {};
-  if ($attrs->{prefetch}) {
+  # generate selections based on the prefetch helper
+  my $prefetch;
+  $prefetch = $self->_merge_joinpref_attr( {}, delete $attrs->{prefetch} )
+    if defined $attrs->{prefetch};
+
+  if ($prefetch) {
 
     $self->throw_exception("Unable to prefetch, resultset contains an unnamed selector $attrs->{_dark_selector}{string}")
       if $attrs->{_dark_selector};
 
-    my $prefetch = $self->_merge_joinpref_attr( {}, delete $attrs->{prefetch} );
-
-    my $prefetch_ordering = [];
+    $attrs->{collapse} = 1;
 
     # this is a separate structure (we don't look in {from} directly)
     # as the resolver needs to shift things off the lists to work
@@ -3452,8 +3528,7 @@ sub _resolved_attrs {
       }
     }
 
-    my @prefetch =
-      $source->_resolve_prefetch( $prefetch, $alias, $join_map, $prefetch_ordering, $attrs->{collapse} );
+    my @prefetch = $source->_resolve_prefetch( $prefetch, $alias, $join_map );
 
     # we need to somehow mark which columns came from prefetch
     if (@prefetch) {
@@ -3463,9 +3538,60 @@ sub _resolved_attrs {
 
     push @{ $attrs->{select} }, (map { $_->[0] } @prefetch);
     push @{ $attrs->{as} }, (map { $_->[1] } @prefetch);
+  }
 
-    push( @{$attrs->{order_by}}, @$prefetch_ordering );
-    $attrs->{_collapse_order_by} = \@$prefetch_ordering;
+  if ( ! List::Util::first { $_ =~ /\./ } @{$attrs->{as}} ) {
+    $attrs->{_single_resultclass_inflation} = 1;
+    $attrs->{collapse} = 0;
+  }
+
+  # run through the resulting joinstructure (starting from our current slot)
+  # and unset collapse if proven unnesessary
+  #
+  # also while we are at it find out if the current root source has
+  # been premultiplied by previous related_source chaining
+  #
+  # this allows to predict whether a root object with all other relation
+  # data set to NULL is in fact unique
+  if ($attrs->{collapse}) {
+
+    if (ref $attrs->{from} eq 'ARRAY') {
+
+      if (@{$attrs->{from}} <= 1) {
+        # no joins - no collapse
+        $attrs->{collapse} = 0;
+      }
+      else {
+        # find where our table-spec starts
+        my @fromlist = @{$attrs->{from}};
+        while (@fromlist) {
+          my $t = shift @fromlist;
+
+          my $is_multi;
+          # me vs join from-spec distinction - a ref means non-root
+          if (ref $t eq 'ARRAY') {
+            $t = $t->[0];
+            $is_multi ||= ! $t->{-is_single};
+          }
+          last if ($t->{-alias} && $t->{-alias} eq $alias);
+          $attrs->{_main_source_premultiplied} ||= $is_multi;
+        }
+
+        # no non-singles remaining, nor any premultiplication - nothing to collapse
+        if (
+          ! $attrs->{_main_source_premultiplied}
+            and
+          ! List::Util::first { ! $_->[0]{-is_single} } @fromlist
+        ) {
+          $attrs->{collapse} = 0;
+        }
+      }
+    }
+
+    else {
+      # if we can not analyze the from - err on the side of safety
+      $attrs->{_main_source_premultiplied} = 1;
+    }
   }
 
   # if both page and offset are specified, produce a combined offset
@@ -3592,7 +3718,7 @@ sub _merge_joinpref_attr {
     $seen_keys->{$import_key} = 1; # don't merge the same key twice
   }
 
-  return $orig;
+  return @$orig ? $orig : ();
 }
 
 {
@@ -3688,7 +3814,8 @@ sub STORABLE_freeze {
   my $to_serialize = { %$self };
 
   # A cursor in progress can't be serialized (and would make little sense anyway)
-  delete $to_serialize->{cursor};
+  # the parser can be regenerated (and can't be serialized)
+  delete @{$to_serialize}{qw/cursor _row_parser _result_inflator/};
 
   # nor is it sensical to store a not-yet-fired-count pager
   if ($to_serialize->{pager} and ref $to_serialize->{pager}{total_entries} eq 'CODE') {
@@ -3724,6 +3851,10 @@ sub throw_exception {
     DBIx::Class::Exception->throw(@_);
   }
 }
+
+1;
+
+__END__
 
 # XXX: FIXME: Attributes docs need clearing up
 
@@ -3774,7 +3905,7 @@ syntax as outlined above.
 
 =over 4
 
-=item Value: \@columns
+=item Value: \@columns | \%columns | $column
 
 =back
 
@@ -3876,14 +4007,6 @@ an explicit list.
 
 =back
 
-=head2 +as
-
-=over 4
-
-Indicates additional column names for those added via L</+select>. See L</as>.
-
-=back
-
 =head2 as
 
 =over 4
@@ -3925,6 +4048,14 @@ use C<get_column> instead:
 
 You can create your own accessors if required - see
 L<DBIx::Class::Manual::Cookbook> for details.
+
+=head2 +as
+
+=over 4
+
+Indicates additional column names for those added via L</+select>. See L</as>.
+
+=back
 
 =head2 join
 
@@ -3989,7 +4120,7 @@ similarly for a third time). For e.g.
 will return a set of all artists that have both a cd with title 'Down
 to Earth' and a cd with title 'Popular'.
 
-If you want to fetch related objects from other tables as well, see C<prefetch>
+If you want to fetch related objects from other tables as well, see L</prefetch>
 below.
 
  NOTE: An internal join-chain pruner will discard certain joins while
@@ -4000,6 +4131,55 @@ below.
 
 For more help on using joins with search, see L<DBIx::Class::Manual::Joining>.
 
+=head2 collapse
+
+=over 4
+
+=item Value: (0 | 1)
+
+=back
+
+When set to a true value, indicates that any rows fetched from joined has_many
+relationships are to be aggregated into the corresponding "parent" object. For
+example, the resultset:
+
+  my $rs = $schema->resultset('CD')->search({}, {
+    '+columns' => [ qw/ tracks.title tracks.position / ],
+    join => 'tracks',
+    collapse => 1,
+  });
+
+While executing the following query:
+
+  SELECT me.*, tracks.title, tracks.position
+    FROM cd me
+    LEFT JOIN track tracks
+      ON tracks.cdid = me.cdid
+
+Will return only as many objects as there are rows in the CD source, even
+though the result of the query may span many rows. Each of these CD objects
+will in turn have multiple "Track" objects hidden behind the has_many
+generated accessor C<tracks>. Without C<< collapse => 1 >>, the return values
+of this resultset would be as many CD objects as there are tracks (a "Cartesian
+product"), with each CD object containing exactly one of all fetched Track data.
+
+When a collapse is requested on a non-ordered resultset, an order by some
+unique part of the main source (the left-most table) is inserted automatically.
+This is done so that the resultset is allowed to be "lazy" - calling
+L<< $rs->next|/next >> will fetch only as many rows as it needs to build the next
+object with all of its related data.
+
+If an L</order_by> is already declared, and orders the resultset in a way that
+makes collapsing as described above impossible (e.g. C<< ORDER BY
+has_many_rel.column >> or C<ORDER BY RANDOM()>), DBIC will automatically
+switch to "eager" mode and slurp the entire resultset before consturcting the
+first object returned by L</next>.
+
+Setting this attribute on a resultset that does not join any has_many
+relations is a no-op.
+
+For a more in-depth discussion, see L</PREFETCHING>.
+
 =head2 prefetch
 
 =over 4
@@ -4008,177 +4188,76 @@ For more help on using joins with search, see L<DBIx::Class::Manual::Joining>.
 
 =back
 
-Contains one or more relationships that should be fetched along with
-the main query (when they are accessed afterwards the data will
-already be available, without extra queries to the database).  This is
-useful for when you know you will need the related objects, because it
-saves at least one query:
+This attribute is a shorthand for specifying a L</join> spec, adding all
+columns from the joined related sources as L</+columns> and setting
+L</collapse> to a true value. For example, the following two queries are
+equivalent:
 
-  my $rs = $schema->resultset('Tag')->search(
-    undef,
+  my $rs = $schema->resultset('Artist')->search({}, {
+    prefetch => { cds => ['genre', 'tracks' ] },
+  });
+
+and
+
+  my $rs = $schema->resultset('Artist')->search({}, {
+    join => { cds => ['genre', 'tracks' ] },
+    collapse => 1,
+    '+columns' => [
+      (map
+        { +{ "cds.$_" => "cds.$_" } }
+        $schema->source('Artist')->related_source('cds')->columns
+      ),
+      (map
+        { +{ "cds.genre.$_" => "genre.$_" } }
+        $schema->source('Artist')->related_source('cds')->related_source('genre')->columns
+      ),
+      (map
+        { +{ "cds.tracks.$_" => "tracks.$_" } }
+        $schema->source('Artist')->related_source('cds')->related_source('tracks')->columns
+      ),
+    ],
+  });
+
+Both producing the following SQL:
+
+  SELECT  me.artistid, me.name, me.rank, me.charfield,
+          cds.cdid, cds.artist, cds.title, cds.year, cds.genreid, cds.single_track,
+          genre.genreid, genre.name,
+          tracks.trackid, tracks.cd, tracks.position, tracks.title, tracks.last_updated_on, tracks.last_updated_at
+    FROM artist me
+    LEFT JOIN cd cds
+      ON cds.artist = me.artistid
+    LEFT JOIN genre genre
+      ON genre.genreid = cds.genreid
+    LEFT JOIN track tracks
+      ON tracks.cd = cds.cdid
+  ORDER BY me.artistid
+
+While L</prefetch> implies a L</join>, it is ok to mix the two together, as
+the arguments are properly merged and generally do the right thing. For
+example, you may want to do the following:
+
+  my $artists_and_cds_without_genre = $schema->resultset('Artist')->search(
+    { 'genre.genreid' => undef },
     {
-      prefetch => {
-        cd => 'artist'
-      }
+      join => { cds => 'genre' },
+      prefetch => 'cds',
     }
   );
 
-The initial search results in SQL like the following:
+Which generates the following SQL:
 
-  SELECT tag.*, cd.*, artist.* FROM tag
-  JOIN cd ON tag.cd = cd.cdid
-  JOIN artist ON cd.artist = artist.artistid
+  SELECT  me.artistid, me.name, me.rank, me.charfield,
+          cds.cdid, cds.artist, cds.title, cds.year, cds.genreid, cds.single_track
+    FROM artist me
+    LEFT JOIN cd cds
+      ON cds.artist = me.artistid
+    LEFT JOIN genre genre
+      ON genre.genreid = cds.genreid
+  WHERE genre.genreid IS NULL
+  ORDER BY me.artistid
 
-L<DBIx::Class> has no need to go back to the database when we access the
-C<cd> or C<artist> relationships, which saves us two SQL statements in this
-case.
-
-Simple prefetches will be joined automatically, so there is no need
-for a C<join> attribute in the above search.
-
-L</prefetch> can be used with the any of the relationship types and
-multiple prefetches can be specified together. Below is a more complex
-example that prefetches a CD's artist, its liner notes (if present),
-the cover image, the tracks on that cd, and the guests on those
-tracks.
-
- # Assuming:
- My::Schema::CD->belongs_to( artist      => 'My::Schema::Artist'     );
- My::Schema::CD->might_have( liner_note  => 'My::Schema::LinerNotes' );
- My::Schema::CD->has_one(    cover_image => 'My::Schema::Artwork'    );
- My::Schema::CD->has_many(   tracks      => 'My::Schema::Track'      );
-
- My::Schema::Artist->belongs_to( record_label => 'My::Schema::RecordLabel' );
-
- My::Schema::Track->has_many( guests => 'My::Schema::Guest' );
-
-
- my $rs = $schema->resultset('CD')->search(
-   undef,
-   {
-     prefetch => [
-       { artist => 'record_label'},  # belongs_to => belongs_to
-       'liner_note',                 # might_have
-       'cover_image',                # has_one
-       { tracks => 'guests' },       # has_many => has_many
-     ]
-   }
- );
-
-This will produce SQL like the following:
-
- SELECT cd.*, artist.*, record_label.*, liner_note.*, cover_image.*,
-        tracks.*, guests.*
-   FROM cd me
-   JOIN artist artist
-     ON artist.artistid = me.artistid
-   JOIN record_label record_label
-     ON record_label.labelid = artist.labelid
-   LEFT JOIN track tracks
-     ON tracks.cdid = me.cdid
-   LEFT JOIN guest guests
-     ON guests.trackid = track.trackid
-   LEFT JOIN liner_notes liner_note
-     ON liner_note.cdid = me.cdid
-   JOIN cd_artwork cover_image
-     ON cover_image.cdid = me.cdid
- ORDER BY tracks.cd
-
-Now the C<artist>, C<record_label>, C<liner_note>, C<cover_image>,
-C<tracks>, and C<guests> of the CD will all be available through the
-relationship accessors without the need for additional queries to the
-database.
-
-However, there is one caveat to be observed: it can be dangerous to
-prefetch more than one L<has_many|DBIx::Class::Relationship/has_many>
-relationship on a given level. e.g.:
-
- my $rs = $schema->resultset('CD')->search(
-   undef,
-   {
-     prefetch => [
-       'tracks',                         # has_many
-       { cd_to_producer => 'producer' }, # has_many => belongs_to (i.e. m2m)
-     ]
-   }
- );
-
-The collapser currently can't identify duplicate tuples for multiple
-L<has_many|DBIx::Class::Relationship/has_many> relationships and as a
-result the second L<has_many|DBIx::Class::Relationship/has_many>
-relation could contain redundant objects.
-
-=head3 Using L</prefetch> with L</join>
-
-L</prefetch> implies a L</join> with the equivalent argument, and is
-properly merged with any existing L</join> specification. So the
-following:
-
-  my $rs = $schema->resultset('CD')->search(
-   {'record_label.name' => 'Music Product Ltd.'},
-   {
-     join     => {artist => 'record_label'},
-     prefetch => 'artist',
-   }
- );
-
-... will work, searching on the record label's name, but only
-prefetching the C<artist>.
-
-=head3 Using L</prefetch> with L</select> / L</+select> / L</as> / L</+as>
-
-L</prefetch> implies a L</+select>/L</+as> with the fields of the
-prefetched relations.  So given:
-
-  my $rs = $schema->resultset('CD')->search(
-   undef,
-   {
-     select   => ['cd.title'],
-     as       => ['cd_title'],
-     prefetch => 'artist',
-   }
- );
-
-The L</select> becomes: C<'cd.title', 'artist.*'> and the L</as>
-becomes: C<'cd_title', 'artist.*'>.
-
-=head3 CAVEATS
-
-Prefetch does a lot of deep magic. As such, it may not behave exactly
-as you might expect.
-
-=over 4
-
-=item *
-
-Prefetch uses the L</cache> to populate the prefetched relationships. This
-may or may not be what you want.
-
-=item *
-
-If you specify a condition on a prefetched relationship, ONLY those
-rows that match the prefetched condition will be fetched into that relationship.
-This means that adding prefetch to a search() B<may alter> what is returned by
-traversing a relationship. So, if you have C<< Artist->has_many(CDs) >> and you do
-
-  my $artist_rs = $schema->resultset('Artist')->search({
-      'cds.year' => 2008,
-  }, {
-      join => 'cds',
-  });
-
-  my $count = $artist_rs->first->cds->count;
-
-  my $artist_rs_prefetch = $artist_rs->search( {}, { prefetch => 'cds' } );
-
-  my $prefetch_count = $artist_rs_prefetch->first->cds->count;
-
-  cmp_ok( $count, '==', $prefetch_count, "Counts should be the same" );
-
-that cmp_ok() may or may not pass depending on the datasets involved. This
-behavior may or may not survive the 0.09 transition.
-
-=back
+For a more in-depth discussion, see L</PREFETCHING>.
 
 =head2 alias
 
@@ -4356,6 +4435,131 @@ Set to 'update' for a SELECT ... FOR UPDATE or 'shared' for a SELECT
 ... FOR SHARED. If \$scalar is passed, this is taken directly and embedded in the
 query.
 
+=head1 PREFETCHING
+
+DBIx::Class supports arbitrary related data prefetching from multiple related
+sources. Any combination of relationship types and column sets are supported.
+If L<collapsing|/collapse> is requested, there is an additional requirement of
+selecting enough data to make every individual object uniquely identifiable.
+
+Here are some more involved examples, based on the following relationship map:
+
+  # Assuming:
+  My::Schema::CD->belongs_to( artist      => 'My::Schema::Artist'     );
+  My::Schema::CD->might_have( liner_note  => 'My::Schema::LinerNotes' );
+  My::Schema::CD->has_many(   tracks      => 'My::Schema::Track'      );
+
+  My::Schema::Artist->belongs_to( record_label => 'My::Schema::RecordLabel' );
+
+  My::Schema::Track->has_many( guests => 'My::Schema::Guest' );
+
+
+
+  my $rs = $schema->resultset('Tag')->search(
+    undef,
+    {
+      prefetch => {
+        cd => 'artist'
+      }
+    }
+  );
+
+The initial search results in SQL like the following:
+
+  SELECT tag.*, cd.*, artist.* FROM tag
+  JOIN cd ON tag.cd = cd.cdid
+  JOIN artist ON cd.artist = artist.artistid
+
+L<DBIx::Class> has no need to go back to the database when we access the
+C<cd> or C<artist> relationships, which saves us two SQL statements in this
+case.
+
+Simple prefetches will be joined automatically, so there is no need
+for a C<join> attribute in the above search.
+
+The L</prefetch> attribute can be used with any of the relationship types
+and multiple prefetches can be specified together. Below is a more complex
+example that prefetches a CD's artist, its liner notes (if present),
+the cover image, the tracks on that CD, and the guests on those
+tracks.
+
+  my $rs = $schema->resultset('CD')->search(
+    undef,
+    {
+      prefetch => [
+        { artist => 'record_label'},  # belongs_to => belongs_to
+        'liner_note',                 # might_have
+        'cover_image',                # has_one
+        { tracks => 'guests' },       # has_many => has_many
+      ]
+    }
+  );
+
+This will produce SQL like the following:
+
+  SELECT cd.*, artist.*, record_label.*, liner_note.*, cover_image.*,
+         tracks.*, guests.*
+    FROM cd me
+    JOIN artist artist
+      ON artist.artistid = me.artistid
+    JOIN record_label record_label
+      ON record_label.labelid = artist.labelid
+    LEFT JOIN track tracks
+      ON tracks.cdid = me.cdid
+    LEFT JOIN guest guests
+      ON guests.trackid = track.trackid
+    LEFT JOIN liner_notes liner_note
+      ON liner_note.cdid = me.cdid
+    JOIN cd_artwork cover_image
+      ON cover_image.cdid = me.cdid
+  ORDER BY tracks.cd
+
+Now the C<artist>, C<record_label>, C<liner_note>, C<cover_image>,
+C<tracks>, and C<guests> of the CD will all be available through the
+relationship accessors without the need for additional queries to the
+database.
+
+=head3 CAVEATS
+
+Prefetch does a lot of deep magic. As such, it may not behave exactly
+as you might expect.
+
+=over 4
+
+=item *
+
+Prefetch uses the L</cache> to populate the prefetched relationships. This
+may or may not be what you want.
+
+=item *
+
+If you specify a condition on a prefetched relationship, ONLY those
+rows that match the prefetched condition will be fetched into that relationship.
+This means that adding prefetch to a search() B<may alter> what is returned by
+traversing a relationship. So, if you have C<< Artist->has_many(CDs) >> and you do
+
+  my $artist_rs = $schema->resultset('Artist')->search({
+      'cds.year' => 2008,
+  }, {
+      join => 'cds',
+  });
+
+  my $count = $artist_rs->first->cds->count;
+
+  my $artist_rs_prefetch = $artist_rs->search( {}, { prefetch => 'cds' } );
+
+  my $prefetch_count = $artist_rs_prefetch->first->cds->count;
+
+  cmp_ok( $count, '==', $prefetch_count, "Counts should be the same" );
+
+That cmp_ok() may or may not pass depending on the datasets involved. In other
+words the C<WHERE> condition would apply to the entire dataset, just like
+it would in regular SQL. If you want to add a condition only to the "right side"
+of a C<LEFT JOIN> - consider declaring and using a L<relationship with a custom
+condition|DBIx::Class::Relationship::Base/condition>
+
+=back
+
 =head1 DBIC BIND VALUES
 
 Because DBIC may need more information to bind values than just the column name
@@ -4412,6 +4616,3 @@ See L<AUTHOR|DBIx::Class/AUTHOR> and L<CONTRIBUTORS|DBIx::Class/CONTRIBUTORS> in
 
 You may distribute this code under the same terms as Perl itself.
 
-=cut
-
-1;

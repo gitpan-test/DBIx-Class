@@ -1,10 +1,6 @@
 package # hide from PAUSE
     DBIx::Class::Admin::Types;
 
-# Workaround for https://rt.cpan.org/Public/Bug/Display.html?id=83336
-use warnings;
-use strict;
-
 use MooseX::Types -declare => [qw(
     DBICConnectInfo
     DBICArrayRef
