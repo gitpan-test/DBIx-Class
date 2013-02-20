@@ -13,10 +13,14 @@ inc/Module/AutoInstall.pm
 inc/Module/Install.pm
 inc/Module/Install/AutoInstall.pm
 inc/Module/Install/Base.pm
+inc/Module/Install/Can.pm
+inc/Module/Install/Fetch.pm
 inc/Module/Install/Include.pm
 inc/Module/Install/Makefile.pm
 inc/Module/Install/Metadata.pm
 inc/Module/Install/Scripts.pm
+inc/Module/Install/Win32.pm
+inc/Module/Install/WriteAll.pm
 lib/DBIx/Class.pm
 lib/DBIx/Class/AccessorGroup.pm
 lib/DBIx/Class/Admin.pm
@@ -204,6 +208,7 @@ maint/Makefile.PL.inc/52_autogen_README.pl
 maint/Makefile.PL.inc/53_autogen_pod.pl
 maint/Makefile.PL.inc/56_autogen_testddl.pl
 maint/Makefile.PL.inc/61_inject_dbicadmin_pod.pl
+maint/Makefile.PL.inc/91_inc_sanity_check.pl
 maint/travis-ci_scripts/10_before_install.bash
 maint/travis-ci_scripts/20_install.bash
 maint/travis-ci_scripts/30_before_script.bash
