@@ -11,7 +11,7 @@ our $VERSION;
 # $VERSION declaration must stay up here, ahead of any other package
 # declarations, as to not confuse various modules attempting to determine
 # this ones version, whether that be s.c.o. or Module::Metadata, etc
-$VERSION = '0.08241';
+$VERSION = '0.08209';
 
 $VERSION = eval $VERSION if $VERSION =~ /_/; # numify for warning-free dev releases
 
@@ -342,6 +342,8 @@ claco: Christopher H. Laco
 clkao: CL Kao
 
 da5id: David Jack Olrik <djo@cpan.org>
+
+davewood: David Schmidt <davewood@gmx.at>
 
 debolaz: Anders Nor Berle <berle@cpan.org>
 

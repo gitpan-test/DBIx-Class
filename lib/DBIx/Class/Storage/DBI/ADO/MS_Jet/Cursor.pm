@@ -34,32 +34,34 @@ for the inner cursor class.
 
 =cut
 
-sub next {
-  my $self = shift;
+sub _dbh_next {
+  my ($storage, $dbh, $self) = @_;
 
-  my @row = $self->next::method(@_);
+  my $next = $self->next::can;
 
-  _normalize_guids(
-    $self->args->[1],
-    $self->{_colinfos} ||= $self->storage->_resolve_column_info($self->args->[0]),
-    \@row,
-    $self->storage
-  );
+  my @row = $next->(@_);
+
+  my $col_infos = $storage->_resolve_column_info($self->args->[0]);
+
+  my $select = $self->args->[1];
+
+  _normalize_guids($select, $col_infos, \@row, $storage);
 
   return @row;
 }
 
-sub all {
-  my $self = shift;
+sub _dbh_all {
+  my ($storage, $dbh, $self) = @_;
 
-  my @rows = $self->next::method(@_);
+  my $next = $self->next::can;
 
-  _normalize_guids(
-    $self->args->[1],
-    $self->{_colinfos} ||= $self->storage->_resolve_column_info($self->args->[0]),
-    $_,
-    $self->storage
-  ) for @rows;
+  my @rows = $next->(@_);
+
+  my $col_infos = $storage->_resolve_column_info($self->args->[0]);
+
+  my $select = $self->args->[1];
+
+  _normalize_guids($select, $col_infos, $_, $storage) for @rows;
 
   return @rows;
 }

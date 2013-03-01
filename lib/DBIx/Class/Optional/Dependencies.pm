@@ -197,7 +197,7 @@ my $reqs = {
 
   test_strictures => {
     req => {
-      'Test::Strict'              => '0.16',
+      'Test::Strict'              => '0.20',
     },
   },
 
@@ -259,7 +259,6 @@ my $reqs = {
 
   test_cdbicompat => {
     req => {
-      'Class::DBI' => 0,
       'Class::DBI::Plugin::DeepAbstractSearch' => '0',
       %$datetime_basic,
       'Time::Piece::MySQL'        => '0',
