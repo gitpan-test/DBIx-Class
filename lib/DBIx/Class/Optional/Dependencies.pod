@@ -418,6 +418,19 @@ The author is expected to prepend the necessary text to this message before
 returning the actual error seen by the user.
 
 
+=head2 die_unless_req_ok_for
+
+=over
+
+=item Arguments: $group_name
+
+=back
+
+Checks if L</req_ok_for> passes for the supplied C<$group_name>, and
+in case of failure throws an exception including the information
+from L</req_missing_for>.
+
+
 =head2 req_errorlist_for
 
 =over

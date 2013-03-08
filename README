@@ -1,35 +1,53 @@
 NAME
     DBIx::Class - Extensible and flexible object <-> relational mapper.
 
-GETTING HELP/SUPPORT
-    The community can be found via:
+WHERE TO START READING
+    See DBIx::Class::Manual::DocMap for an overview of the exhaustive
+    documentation. To get the most out of DBIx::Class with the least
+    confusion it is strongly recommended to read (at the very least) the
+    Manuals in the order presented there.
+
+HOW TO GET HELP
+    Due to the complexity of its problem domain, DBIx::Class is a relatively
+    complex framework. After you start using DBIx::Class questions will
+    inevitably arise. If you are stuck with a problem or have doubts about a
+    particular approach do not hesitate to contact the community with your
+    questions. The list below is sorted by "fastest response time":
 
     *   IRC: irc.perl.org#dbix-class
 
     *   Mailing list: <http://lists.scsys.co.uk/mailman/listinfo/dbix-class>
 
-    *   Twitter <http://www.twitter.com/dbix_class>
+    *   RT Bug Tracker:
+        <https://rt.cpan.org/NoAuth/Bugs.html?Dist=DBIx-Class>
+
+    *   Twitter: <https://www.twitter.com/dbix_class>
 
     *   Web Site: <http://www.dbix-class.org/>
 
-    *   RT Bug Tracker:
-        <https://rt.cpan.org/Dist/Display.html?Queue=DBIx-Class>
+HOW TO CONTRIBUTE
+    Contributions are always welcome, in all usable forms (we especially
+    welcome documentation improvements). The delivery methods include git-
+    or unified-diff formatted patches, GitHub pull requests, or plain bug
+    reports either via RT or the Mailing list. Contributors are generally
+    granted full access to the official repository after their first patch
+    passes successful review.
 
-    The project is maintained in a git repository, accessible from the
-    following sources:
+    This project is maintained in a git repository. The code and related
+    tools are accessible at the following locations:
 
-    *   git: <git://git.shadowcat.co.uk/dbsrgits/DBIx-Class.git>
+    *   Official repo: <git://git.shadowcat.co.uk/dbsrgits/DBIx-Class.git>
 
-    *   gitweb:
+    *   Official gitweb:
         <http://git.shadowcat.co.uk/gitweb/gitweb.cgi?p=dbsrgits/DBIx-Class.
         git>
 
-    *   github mirror: <https://github.com/dbsrgits/DBIx-Class>
+    *   GitHub mirror: <https://github.com/dbsrgits/DBIx-Class>
 
-    *   authorized committers:
+    *   Authorized committers:
         <ssh://dbsrgits@git.shadowcat.co.uk/DBIx-Class.git>
 
-    *   Travis-CI log: <http://travis-ci.org/dbsrgits/dbix-class/builds>
+    *   Travis-CI log: <https://travis-ci.org/dbsrgits/dbix-class/builds>
 
 SYNOPSIS
     Create a schema class called MyApp/Schema.pm:
@@ -163,10 +181,6 @@ DESCRIPTION
     The test suite is quite substantial, and several developer releases are
     generally made to CPAN before the branch for the next release is merged
     back to trunk for a major release.
-
-WHERE TO GO NEXT
-    DBIx::Class::Manual::DocMap lists each task you might want help on, and
-    the modules where you will find documentation.
 
 AUTHOR
     mst: Matt S. Trout <mst@shadowcatsystems.co.uk>
@@ -310,6 +324,8 @@ CONTRIBUTORS
     michaelr: Michael Reddick <michael.reddick@gmail.com>
 
     milki: Jonathan Chu <milki@rescomp.berkeley.edu>
+
+    mithaldu: Christian Walde <walde.christian@gmail.com>
 
     mjemmeson: Michael Jemmeson <michael.jemmeson@gmail.com>
 
