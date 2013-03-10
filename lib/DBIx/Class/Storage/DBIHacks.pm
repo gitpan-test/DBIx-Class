@@ -24,7 +24,7 @@ use namespace::clean;
 #
 sub _prune_unused_joins {
   my $self = shift;
-  my ($from, $select, $where, $attrs) = @_;
+  my ($from, $select, $where, $attrs, $ignore_multiplication) = @_;
 
   return $from unless $self->_use_join_optimizer;
 
@@ -34,20 +34,26 @@ sub _prune_unused_joins {
 
   my $aliastypes = $self->_resolve_aliastypes_from_select_args(@_);
 
+  # don't care
+  delete $aliastypes->{joining};
+
   # a grouped set will not be affected by amount of rows. Thus any
   # {multiplying} joins can go
-  delete $aliastypes->{multiplying} if $attrs->{group_by};
+  delete $aliastypes->{multiplying}
+    if $ignore_multiplication or $attrs->{group_by};
 
   my @newfrom = $from->[0]; # FROM head is always present
 
   my %need_joins;
+
   for (values %$aliastypes) {
     # add all requested aliases
     $need_joins{$_} = 1 for keys %$_;
 
     # add all their parents (as per joinpath which is an AoH { table => alias })
-    $need_joins{$_} = 1 for map { values %$_ } map { @$_ } values %$_;
+    $need_joins{$_} = 1 for map { values %$_ } map { @{$_->{-parents}} } values %$_;
   }
+
   for my $j (@{$from}[1..$#$from]) {
     push @newfrom, $j if (
       (! $j->[0]{-alias}) # legacy crap
@@ -66,35 +72,32 @@ sub _prune_unused_joins {
 sub _adjust_select_args_for_complex_prefetch {
   my ($self, $from, $select, $where, $attrs) = @_;
 
-  $self->throw_exception ('Nothing to prefetch... how did we get here?!')
-    if not @{$attrs->{_prefetch_selector_range}};
-
   $self->throw_exception ('Complex prefetches are not supported on resultsets with a custom from attribute')
     if (ref $from ne 'ARRAY' || ref $from->[0] ne 'HASH' || ref $from->[1] ne 'ARRAY');
 
+  my $root_alias = $attrs->{alias};
+
   # generate inner/outer attribute lists, remove stuff that doesn't apply
   my $outer_attrs = { %$attrs };
-  delete $outer_attrs->{$_} for qw/where bind rows offset group_by having/;
+  delete $outer_attrs->{$_} for qw/where bind rows offset group_by _grouped_by_distinct having/;
 
   my $inner_attrs = { %$attrs };
-  delete $inner_attrs->{$_} for qw/for collapse _prefetch_selector_range _collapse_order_by select as/;
+  delete $inner_attrs->{$_} for qw/from for collapse select as _related_results_construction/;
 
-  # bring over all non-collapse-induced order_by into the inner query (if any)
-  # the outer one will have to keep them all
-  delete $inner_attrs->{order_by};
-  if (my $ord_cnt = @{$outer_attrs->{order_by}} - @{$outer_attrs->{_collapse_order_by}} ) {
-    $inner_attrs->{order_by} = [
-      @{$outer_attrs->{order_by}}[ 0 .. $ord_cnt - 1]
-    ];
-  }
+  # there is no point of ordering the insides if there is no limit
+  delete $inner_attrs->{order_by} if (
+    delete $inner_attrs->{_order_is_artificial}
+      or
+    ! $inner_attrs->{rows}
+  );
 
   # generate the inner/outer select lists
   # for inside we consider only stuff *not* brought in by the prefetch
   # on the outside we substitute any function for its alias
   my $outer_select = [ @$select ];
-  my $inner_select = [];
+  my $inner_select;
 
-  my ($root_source, $root_source_offset);
+  my ($root_node, $root_node_offset);
 
   for my $i (0 .. $#$from) {
     my $node = $from->[$i];
@@ -103,26 +106,30 @@ sub _adjust_select_args_for_complex_prefetch {
           : next
     ;
 
-    if ( ($h->{-alias}||'') eq $attrs->{alias} and $root_source = $h->{-rsrc} ) {
-      $root_source_offset = $i;
+    if ( ($h->{-alias}||'') eq $root_alias and $h->{-rsrc} ) {
+      $root_node = $h;
+      $root_node_offset = $i;
       last;
     }
   }
 
   $self->throw_exception ('Complex prefetches are not supported on resultsets with a custom from attribute')
-    unless $root_source;
+    unless $root_node;
 
   # use the heavy duty resolver to take care of aliased/nonaliased naming
   my $colinfo = $self->_resolve_column_info($from);
   my $selected_root_columns;
 
-  my ($p_start, $p_end) = @{$outer_attrs->{_prefetch_selector_range}};
-  for my $i (0 .. $p_start - 1, $p_end + 1 .. $#$outer_select) {
+  for my $i (0 .. $#$outer_select) {
     my $sel = $outer_select->[$i];
+
+    next if (
+      $colinfo->{$sel} and $colinfo->{$sel}{-source_alias} ne $root_alias
+    );
 
     if (ref $sel eq 'HASH' ) {
       $sel->{-as} ||= $attrs->{as}[$i];
-      $outer_select->[$i] = join ('.', $attrs->{alias}, ($sel->{-as} || "inner_column_$i") );
+      $outer_select->[$i] = join ('.', $root_alias, ($sel->{-as} || "inner_column_$i") );
     }
     elsif (! ref $sel and my $ci = $colinfo->{$sel}) {
       $selected_root_columns->{$ci->{-colname}} = 1;
@@ -133,77 +140,149 @@ sub _adjust_select_args_for_complex_prefetch {
     push @{$inner_attrs->{as}}, $attrs->{as}[$i];
   }
 
-  # We will need to fetch all native columns in the inner subquery, which may be a part
-  # of an *outer* join condition. We can not just fetch everything because a potential
-  # has_many restricting join collapse *will not work* on heavy data types.
-  # Time for more horrible SQL parsing, aughhhh
+  # We will need to fetch all native columns in the inner subquery, which may
+  # be a part of an *outer* join condition, or an order_by (which needs to be
+  # preserved outside)
+  # We can not just fetch everything because a potential has_many restricting
+  # join collapse *will not work* on heavy data types.
+  my $connecting_aliastypes = $self->_resolve_aliastypes_from_select_args(
+    [grep { ref($_) eq 'ARRAY' or ref($_) eq 'HASH' } @{$from}[$root_node_offset .. $#$from]],
+    [],
+    $where,
+    $inner_attrs
+  );
 
-  # MASSIVE FIXME - in fact when we are fully transitioned to DQ and the support is
-  # is sane - we will need to trim the select list to *only* fetch stuff that is
-  # necessary to build joins. In the current implementation if I am selecting a blob
-  # and the group_by kicks in - we are fucked, and all the user can do is not select
-  # that column. This is silly!
-
-  my $retardo_sqla_cache = {};
-  for my $cond ( map { $_->[1] } @{$from}[$root_source_offset + 1 .. $#$from] ) {
-    for my $col (@{$self->_extract_condition_columns($cond, $retardo_sqla_cache)}) {
-      my $ci = $colinfo->{$col};
-      if (
-        $ci
-          and
-        $ci->{-source_alias} eq $attrs->{alias}
-          and
-        ! $selected_root_columns->{$ci->{-colname}}++
-      ) {
-        # adding it to both to keep limits not supporting dark selectors happy
-        push @$inner_select, $ci->{-fq_colname};
-        push @{$inner_attrs->{as}}, $ci->{-fq_colname};
-      }
+  for (sort map { keys %{$_->{-seen_columns}||{}} } map { values %$_ } values %$connecting_aliastypes) {
+    my $ci = $colinfo->{$_} or next;
+    if (
+      $ci->{-source_alias} eq $root_alias
+        and
+      ! $selected_root_columns->{$ci->{-colname}}++
+    ) {
+      # adding it to both to keep limits not supporting dark selectors happy
+      push @$inner_select, $ci->{-fq_colname};
+      push @{$inner_attrs->{as}}, $ci->{-fq_colname};
     }
   }
 
   # construct the inner $from and lock it in a subquery
   # we need to prune first, because this will determine if we need a group_by below
-  # the fake group_by is so that the pruner throws away all non-selecting, non-restricting
-  # multijoins (since we def. do not care about those inside the subquery)
-
+  # throw away all non-selecting, non-restricting multijoins
+  # (since we def. do not care about multiplication those inside the subquery)
   my $inner_subq = do {
 
     # must use it here regardless of user requests
     local $self->{_use_join_optimizer} = 1;
 
-    my $inner_from = $self->_prune_unused_joins ($from, $inner_select, $where, {
-      group_by => ['dummy'], %$inner_attrs,
-    });
+    # throw away multijoins since we def. do not care about those inside the subquery
+    my $inner_from = $self->_prune_unused_joins ($from, $inner_select, $where, $inner_attrs, 'ignore_multiplication');
 
     my $inner_aliastypes =
       $self->_resolve_aliastypes_from_select_args( $inner_from, $inner_select, $where, $inner_attrs );
 
-    # we need to simulate collapse in the subq if a multiplying join is pulled
-    # by being a non-selecting restrictor
+    # uh-oh a multiplier (which is not us) left in, this is a problem
     if (
-      ! $inner_attrs->{group_by}
+      $inner_aliastypes->{multiplying}
         and
-      first {
-        $inner_aliastypes->{restricting}{$_}
-          and
-        ! $inner_aliastypes->{selecting}{$_}
-      } ( keys %{$inner_aliastypes->{multiplying}||{}} )
+      !$inner_aliastypes->{grouping}  # if there are groups - assume user knows wtf they are up to
+        and
+      my @multipliers = grep { $_ ne $root_alias } keys %{$inner_aliastypes->{multiplying}}
     ) {
-      my $unprocessed_order_chunks;
-      ($inner_attrs->{group_by}, $unprocessed_order_chunks) = $self->_group_over_selection (
-        $inner_from, $inner_select, $inner_attrs->{order_by}
-      );
 
-      $self->throw_exception (
-        'A required group_by clause could not be constructed automatically due to a complex '
-      . 'order_by criteria. Either order_by columns only (no functions) or construct a suitable '
-      . 'group_by by hand'
-      )  if $unprocessed_order_chunks;
+      # if none of the multipliers came from an order_by (guaranteed to have been combined
+      # with a limit) - easy - just slap a group_by to simulate a collape and be on our way
+      if (
+        ! $inner_aliastypes->{ordering}
+          or
+        ! first { $inner_aliastypes->{ordering}{$_} } @multipliers
+      ) {
+        my $unprocessed_order_chunks;
+        ($inner_attrs->{group_by}, $unprocessed_order_chunks) = $self->_group_over_selection (
+          $inner_from, $inner_select, $inner_attrs->{order_by}
+        );
+
+        $self->throw_exception (
+          'A required group_by clause could not be constructed automatically due to a complex '
+        . 'order_by criteria. Either order_by columns only (no functions) or construct a suitable '
+        . 'group_by by hand'
+        )  if $unprocessed_order_chunks;
+      }
+      else {
+        # We need to order by external columns and group at the same time
+        # so we can calculate the proper limit
+        # This doesn't really make sense in SQL, however from DBICs point
+        # of view is rather valid (order the leftmost objects by whatever
+        # criteria and get the offset/rows many). There is a way around
+        # this however in SQL - we simply tae the direction of each piece
+        # of the foreign order and convert them to MIN(X) for ASC or MAX(X)
+        # for DESC, and group_by the root columns. The end result should be
+        # exactly what we expect
+
+        # FIXME REMOVE LATER - (just a sanity check)
+        if (defined ( my $impostor = first
+          { $_ ne $root_alias }
+          keys %{ $inner_aliastypes->{selecting} }
+        ) ) {
+          $self->throw_exception(sprintf
+            'Unexpected inner selection during complex prefetch (%s)...',
+            join ', ', keys %{ $inner_aliastypes->{joining}{$impostor}{-seen_columns} || {} }
+          );
+        }
+
+        # supplement the main selection with pks if not already there,
+        # as they will have to be a part of the group_by to colapse
+        # things properly
+        my $cur_sel = { map { $_ => 1 } @$inner_select };
+        my @pks = map { "$root_alias.$_" } $root_node->{-rsrc}->primary_columns
+          or $self->throw_exception( sprintf
+            'Unable to perform complex limited prefetch off %s without declared primary key',
+            $root_node->{-rsrc}->source_name,
+          );
+        for my $col (@pks) {
+          push @$inner_select, $col
+            unless $cur_sel->{$col}++;
+        }
+
+        # wrap any part of the order_by that "responds" to an ordering alias
+        # into a MIN/MAX
+        # FIXME - this code is a joke, will need to be completely rewritten in
+        # the DQ branch. But I need to push a POC here, otherwise the
+        # pesky tests won't pass
+        my $sql_maker = $self->sql_maker;
+        my ($lquote, $rquote, $sep) = map { quotemeta $_ } ($sql_maker->_quote_chars, $sql_maker->name_sep);
+        my $own_re = qr/ $lquote \Q$root_alias\E $rquote $sep | \b \Q$root_alias\E $sep /x;
+        my @order = @{$attrs->{order_by}};
+        my @order_chunks = map { ref $_ eq 'ARRAY' ? $_ : [ $_ ] } $sql_maker->_order_by_chunks (\@order);
+        $self->throw_exception ('Order By parsing failed...') if @order != @order_chunks;
+        for my $i (0 .. $#order) {
+          # skip ourselves, and anything that looks like a literal
+          next if $order_chunks[$i][0] =~ $own_re;
+          next if (ref $order[$i] and ref $order[$i] ne 'HASH');
+
+          my $is_desc = $order_chunks[$i][0] =~ s/\sDESC$//i;
+          $order_chunks[$i][0] =~ s/\sASC$//i;
+
+          $order[$i] = \[
+            sprintf(
+              '%s(%s)%s',
+              ($is_desc ? 'MAX' : 'MIN'),
+              $order_chunks[$i][0],
+              ($is_desc ? ' DESC' : ''),
+            ),
+            @ {$order_chunks[$i]} [ 1 .. $#{$order_chunks[$i]} ]
+          ];
+        }
+
+        $inner_attrs->{order_by} = \@order;
+        ($inner_attrs->{group_by}) = $self->_group_over_selection (
+          $inner_from, $inner_select, $inner_attrs->{order_by}
+        );
+      }
     }
 
     # we already optimized $inner_from above
-    local $self->{_use_join_optimizer} = 0;
+    # and already local()ized
+    $self->{_use_join_optimizer} = 0;
 
     # generate the subquery
     $self->_select_args_to_query (
@@ -230,30 +309,28 @@ sub _adjust_select_args_for_complex_prefetch {
   my @outer_from;
 
   # we may not be the head
-  if ($root_source_offset) {
+  if ($root_node_offset) {
     # first generate the outer_from, up to the substitution point
-    @outer_from = splice @$from, 0, $root_source_offset;
-
-    my $root_node = shift @$from;
+    @outer_from = splice @$from, 0, $root_node_offset;
 
     push @outer_from, [
       {
-        -alias => $attrs->{alias},
-        -rsrc => $root_node->[0]{-rsrc},
-        $attrs->{alias} => $inner_subq,
+        -alias => $root_alias,
+        -rsrc => $root_node->{-rsrc},
+        $root_alias => $inner_subq,
       },
-      @{$root_node}[1 .. $#$root_node],
+      @{$from->[0]}[1 .. $#{$from->[0]}],
     ];
   }
   else {
-    my $root_node = shift @$from;
-
     @outer_from = {
-      -alias => $attrs->{alias},
+      -alias => $root_alias,
       -rsrc => $root_node->{-rsrc},
-      $attrs->{alias} => $inner_subq,
+      $root_alias => $inner_subq,
     };
   }
+
+  shift @$from; # it's replaced in @outer_from already
 
   # scan the *remaining* from spec against different attributes, and see which joins are needed
   # in what role
@@ -261,9 +338,9 @@ sub _adjust_select_args_for_complex_prefetch {
     $self->_resolve_aliastypes_from_select_args( $from, $outer_select, $where, $outer_attrs );
 
   # unroll parents
-  my ($outer_select_chain, $outer_restrict_chain) = map { +{
-    map { $_ => 1 } map { values %$_} map { @$_ } values %{ $outer_aliastypes->{$_} || {} }
-  } } qw/selecting restricting/;
+  my ($outer_select_chain, @outer_nonselecting_chains) = map { +{
+    map { $_ => 1 } map { values %$_} map { @{$_->{-parents}} } values %{ $outer_aliastypes->{$_} || {} }
+  } } qw/selecting restricting grouping ordering/;
 
   # see what's left - throw away if not selecting/restricting
   # also throw in a group_by if a non-selecting multiplier,
@@ -277,13 +354,13 @@ sub _adjust_select_args_for_complex_prefetch {
     ) {
       push @outer_from, $j
     }
-    elsif ($outer_restrict_chain->{$alias}) {
+    elsif (first { $_->{$alias} } @outer_nonselecting_chains ) {
       push @outer_from, $j;
       $need_outer_group_by ||= $outer_aliastypes->{multiplying}{$alias} ? 1 : 0;
     }
   }
 
-  if ($need_outer_group_by and ! $outer_attrs->{group_by}) {
+  if ( $need_outer_group_by and $attrs->{_grouped_by_distinct} ) {
 
     my $unprocessed_order_chunks;
     ($outer_attrs->{group_by}, $unprocessed_order_chunks) = $self->_group_over_selection (
@@ -337,7 +414,7 @@ sub _resolve_aliastypes_from_select_args {
       or next;
 
     $alias_list->{$al} = $j;
-    $aliases_by_type->{multiplying}{$al} ||= $j->{-join_path}||[] if (
+    $aliases_by_type->{multiplying}{$al} ||= { -parents => $j->{-join_path}||[] } if (
       # not array == {from} head == can't be multiplying
       ( ref($_) eq 'ARRAY' and ! $j->{-is_single} )
         or
@@ -357,6 +434,7 @@ sub _resolve_aliastypes_from_select_args {
   local $sql_maker->{where_bind};
   local $sql_maker->{group_bind};
   local $sql_maker->{having_bind};
+  local $sql_maker->{from_bind};
 
   # we can't scan properly without any quoting (\b doesn't cut it
   # everywhere), so unless there is proper quoting set - use our
@@ -380,13 +458,22 @@ sub _resolve_aliastypes_from_select_args {
   my $to_scan = {
     restricting => [
       $sql_maker->_recurse_where ($where),
-      $sql_maker->_parse_rs_attrs ({
-        map { $_ => $attrs->{$_} } (qw/group_by having/)
-      }),
+      $sql_maker->_parse_rs_attrs ({ having => $attrs->{having} }),
+    ],
+    grouping => [
+      $sql_maker->_parse_rs_attrs ({ group_by => $attrs->{group_by} }),
+    ],
+    joining => [
+      $sql_maker->_recurse_from (
+        ref $from->[0] eq 'ARRAY' ? $from->[0][0] : $from->[0],
+        @{$from}[1 .. $#$from],
+      ),
     ],
     selecting => [
       $sql_maker->_recurse_fields ($select),
-      ( map { $_->[0] } $self->_extract_order_criteria ($attrs->{order_by}, $sql_maker) ),
+    ],
+    ordering => [
+      map { $_->[0] } $self->_extract_order_criteria ($attrs->{order_by}, $sql_maker),
     ],
   };
 
@@ -397,15 +484,18 @@ sub _resolve_aliastypes_from_select_args {
   # alias (should work even if they are in scalarrefs)
   for my $alias (keys %$alias_list) {
     my $al_re = qr/
-      $lquote $alias $rquote $sep
+      $lquote $alias $rquote $sep (?: $lquote ([^$rquote]+) $rquote )?
         |
-      \b $alias \.
+      \b $alias \. ([^\s\)\($rquote]+)?
     /x;
 
     for my $type (keys %$to_scan) {
       for my $piece (@{$to_scan->{$type}}) {
-        $aliases_by_type->{$type}{$alias} ||= $alias_list->{$alias}{-join_path}||[]
-          if ($piece =~ $al_re);
+        if (my @matches = $piece =~ /$al_re/g) {
+          $aliases_by_type->{$type}{$alias} ||= { -parents => $alias_list->{$alias}{-join_path}||[] };
+          $aliases_by_type->{$type}{$alias}{-seen_columns}{"$alias.$_"} = "$alias.$_"
+            for grep { defined $_ } @matches;
+        }
       }
     }
   }
@@ -415,13 +505,15 @@ sub _resolve_aliastypes_from_select_args {
   for my $col (keys %$colinfo) {
     next if $col =~ / \. /x;   # if column is qualified it was caught by the above
 
-    my $col_re = qr/ $lquote $col $rquote /x;
+    my $col_re = qr/ $lquote ($col) $rquote /x;
 
     for my $type (keys %$to_scan) {
       for my $piece (@{$to_scan->{$type}}) {
-        if ($piece =~ $col_re) {
+        if (my @matches = $piece =~ /$col_re/g) {
           my $alias = $colinfo->{$col}{-source_alias};
-          $aliases_by_type->{$type}{$alias} ||= $alias_list->{$alias}{-join_path}||[];
+          $aliases_by_type->{$type}{$alias} ||= { -parents => $alias_list->{$alias}{-join_path}||[] };
+          $aliases_by_type->{$type}{$alias}{-seen_columns}{"$alias.$_"} = $_
+            for grep { defined $_ } @matches;
         }
       }
     }
@@ -430,11 +522,15 @@ sub _resolve_aliastypes_from_select_args {
   # Add any non-left joins to the restriction list (such joins are indeed restrictions)
   for my $j (values %$alias_list) {
     my $alias = $j->{-alias} or next;
-    $aliases_by_type->{restricting}{$alias} ||= $j->{-join_path}||[] if (
+    $aliases_by_type->{restricting}{$alias} ||= { -parents => $j->{-join_path}||[] } if (
       (not $j->{-join_type})
         or
       ($j->{-join_type} !~ /^left (?: \s+ outer)? $/xi)
     );
+  }
+
+  for (keys %$aliases_by_type) {
+    delete $aliases_by_type->{$_} unless keys %{$aliases_by_type->{$_}};
   }
 
   return $aliases_by_type;
@@ -650,61 +746,6 @@ sub _inner_join_to_node {
   }
 
   return \@new_from;
-}
-
-# yet another atrocity: attempt to extract all columns from a
-# where condition by hooking _quote
-sub _extract_condition_columns {
-  my ($self, $cond, $sql_maker_cache) = @_;
-
-  return [] unless $cond;
-
-  my $sm = $sql_maker_cache->{condparser} ||= $self->{_sql_ident_capturer} ||= do {
-    # FIXME - replace with a Moo trait
-    my $orig_sm_class = ref $self->sql_maker;
-    my $smic_class = "${orig_sm_class}::_IdentCapture_";
-
-    unless ($smic_class->isa('SQL::Abstract')) {
-
-      no strict 'refs';
-      *{"${smic_class}::_quote"} = subname "${smic_class}::_quote" => sub {
-        my ($self, $ident) = @_;
-        if (ref $ident eq 'SCALAR') {
-          $ident = $$ident;
-          my $storage_quotes = $self->sql_quote_char || '"';
-          my ($ql, $qr) = map
-            { quotemeta $_ }
-            (ref $storage_quotes eq 'ARRAY' ? @$storage_quotes : ($storage_quotes) x 2 )
-          ;
-
-          while ($ident =~ /
-            $ql (\w+) $qr
-              |
-            ([\w\.]+)
-          /xg) {
-            $self->{_captured_idents}{$1||$2}++;
-          }
-        }
-        else {
-          $self->{_captured_idents}{$ident}++;
-        }
-        return $ident;
-      };
-
-      *{"${smic_class}::_get_captured_idents"} = subname "${smic_class}::_get_captures" => sub {
-        (delete shift->{_captured_idents}) || {};
-      };
-
-      $self->inject_base ($smic_class, $orig_sm_class);
-
-    }
-
-    $smic_class->new();
-  };
-
-  $sm->_recurse_where($cond);
-
-  return [ sort keys %{$sm->_get_captured_idents} ];
 }
 
 sub _extract_order_criteria {

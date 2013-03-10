@@ -176,7 +176,6 @@ sub new {
   $new->_sql_maker_opts({});
   $new->_dbh_details({});
   $new->{_in_do_block} = 0;
-  $new->{_dbh_gen} = 0;
 
   # read below to see what this does
   $new->_arm_global_destructor;
@@ -216,17 +215,17 @@ sub new {
     # soon as possible (DBIC will reconnect only on demand from within
     # the thread)
     my @instances = grep { defined $_ } values %seek_and_destroy;
+    %seek_and_destroy = ();
+
     for (@instances) {
-      $_->{_dbh_gen}++;  # so that existing cursors will drop as well
       $_->_dbh(undef);
 
       $_->transaction_depth(0);
       $_->savepoints([]);
-    }
 
-    # properly renumber all existing refs
-    %seek_and_destroy = ();
-    $_->_arm_global_destructor for @instances;
+      # properly renumber existing refs
+      $_->_arm_global_destructor
+    }
   }
 }
 
@@ -252,7 +251,6 @@ sub _verify_pid {
   my $pid = $self->_conn_pid;
   if( defined $pid and $pid != $$ and my $dbh = $self->_dbh ) {
     $dbh->{InactiveDestroy} = 1;
-    $self->{_dbh_gen}++;
     $self->_dbh(undef);
     $self->transaction_depth(0);
     $self->savepoints([]);
@@ -835,7 +833,6 @@ sub disconnect {
     %{ $self->_dbh->{CachedKids} } = ();
     $self->_dbh->disconnect;
     $self->_dbh(undef);
-    $self->{_dbh_gen}++;
   }
 }
 
@@ -2288,24 +2285,33 @@ sub _select_args {
     $attrs->{rows} = $sql_maker->__max_int;
   }
 
-  my @limit;
+  my ($complex_prefetch, @limit);
 
-  # see if we need to tear the prefetch apart otherwise delegate the limiting to the
-  # storage, unless software limit was requested
+  # see if we will need to tear the prefetch apart to satisfy group_by == select
+  # this is *extremely tricky* to get right
+  #
+  # Follows heavy but necessary analyzis of the group_by - if it refers to any
+  # sort of non-root column assume the user knows what they are doing and do
+  # not try to be clever
   if (
-    #limited has_many
-    ( $attrs->{rows} && keys %{$attrs->{collapse}} )
-       ||
-    # grouped prefetch (to satisfy group_by == select)
-    ( $attrs->{group_by}
-        &&
-      @{$attrs->{group_by}}
-        &&
-      $attrs->{_prefetch_selector_range}
-    )
+    $attrs->{_related_results_construction}
+      and
+    $attrs->{group_by}
+      and
+    @{$attrs->{group_by}}
+      and
+    my $grp_aliases = try {
+      $self->_resolve_aliastypes_from_select_args( $attrs->{from}, undef, undef, { group_by => $attrs->{group_by} } )
+    }
   ) {
-    ($ident, $select, $where, $attrs)
-      = $self->_adjust_select_args_for_complex_prefetch ($ident, $select, $where, $attrs);
+    $complex_prefetch = ! defined first { $_ ne $rs_alias } keys %{ $grp_aliases->{grouping} || {} };
+  }
+
+  $complex_prefetch ||= ( $attrs->{rows} && $attrs->{collapse} );
+
+  if ($complex_prefetch) {
+    ($ident, $select, $where, $attrs) =
+      $self->_adjust_select_args_for_complex_prefetch ($ident, $select, $where, $attrs);
   }
   elsif (! $attrs->{software_limit} ) {
     push @limit, (
@@ -2316,6 +2322,8 @@ sub _select_args {
 
   # try to simplify the joinmap further (prune unreferenced type-single joins)
   if (
+    ! $complex_prefetch
+      and
     ref $ident
       and
     reftype $ident eq 'ARRAY'
