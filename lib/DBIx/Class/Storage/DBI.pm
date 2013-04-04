@@ -176,6 +176,7 @@ sub new {
   $new->_sql_maker_opts({});
   $new->_dbh_details({});
   $new->{_in_do_block} = 0;
+  $new->{_dbh_gen} = 0;
 
   # read below to see what this does
   $new->_arm_global_destructor;
@@ -215,17 +216,17 @@ sub new {
     # soon as possible (DBIC will reconnect only on demand from within
     # the thread)
     my @instances = grep { defined $_ } values %seek_and_destroy;
-    %seek_and_destroy = ();
-
     for (@instances) {
+      $_->{_dbh_gen}++;  # so that existing cursors will drop as well
       $_->_dbh(undef);
 
       $_->transaction_depth(0);
       $_->savepoints([]);
-
-      # properly renumber existing refs
-      $_->_arm_global_destructor
     }
+
+    # properly renumber all existing refs
+    %seek_and_destroy = ();
+    $_->_arm_global_destructor for @instances;
   }
 }
 
@@ -251,6 +252,7 @@ sub _verify_pid {
   my $pid = $self->_conn_pid;
   if( defined $pid and $pid != $$ and my $dbh = $self->_dbh ) {
     $dbh->{InactiveDestroy} = 1;
+    $self->{_dbh_gen}++;
     $self->_dbh(undef);
     $self->transaction_depth(0);
     $self->savepoints([]);
@@ -833,6 +835,7 @@ sub disconnect {
     %{ $self->_dbh->{CachedKids} } = ();
     $self->_dbh->disconnect;
     $self->_dbh(undef);
+    $self->{_dbh_gen}++;
   }
 }
 
@@ -1703,22 +1706,63 @@ sub _execute {
 
   my ($sql, $bind) = $self->_prep_for_execute($op, $ident, \@args);
 
-  shift->dbh_do(    # retry over disconnects
-    '_dbh_execute',
+  shift->dbh_do( _dbh_execute =>     # retry over disconnects
     $sql,
     $bind,
-    $ident,
+    $self->_dbi_attrs_for_bind($ident, $bind),
   );
 }
 
 sub _dbh_execute {
-  my ($self, undef, $sql, $bind, $ident) = @_;
+  my ($self, $dbh, $sql, $bind, $bind_attrs) = @_;
 
   $self->_query_start( $sql, $bind );
 
-  my $bind_attrs = $self->_dbi_attrs_for_bind($ident, $bind);
+  my $sth = $self->_bind_sth_params(
+    $self->_prepare_sth($dbh, $sql),
+    $bind,
+    $bind_attrs,
+  );
 
-  my $sth = $self->_sth($sql);
+  # Can this fail without throwing an exception anyways???
+  my $rv = $sth->execute();
+  $self->throw_exception(
+    $sth->errstr || $sth->err || 'Unknown error: execute() returned false, but error flags were not set...'
+  ) if !$rv;
+
+  $self->_query_end( $sql, $bind );
+
+  return (wantarray ? ($rv, $sth, @$bind) : $rv);
+}
+
+sub _prepare_sth {
+  my ($self, $dbh, $sql) = @_;
+
+  # 3 is the if_active parameter which avoids active sth re-use
+  my $sth = $self->disable_sth_caching
+    ? $dbh->prepare($sql)
+    : $dbh->prepare_cached($sql, {}, 3);
+
+  # XXX You would think RaiseError would make this impossible,
+  #  but apparently that's not true :(
+  $self->throw_exception(
+    $dbh->errstr
+      ||
+    sprintf( "\$dbh->prepare() of '%s' through %s failed *silently* without "
+            .'an exception and/or setting $dbh->errstr',
+      length ($sql) > 20
+        ? substr($sql, 0, 20) . '...'
+        : $sql
+      ,
+      'DBD::' . $dbh->{Driver}{Name},
+    )
+  ) if !$sth;
+
+  $sth;
+}
+
+sub _bind_sth_params {
+  my ($self, $sth, $bind, $bind_attrs) = @_;
 
   for my $i (0 .. $#$bind) {
     if (ref $bind->[$i][1] eq 'SCALAR') {  # any scalarrefs are assumed to be bind_inouts
@@ -1730,26 +1774,21 @@ sub _dbh_execute {
       );
     }
     else {
+      # FIXME SUBOPTIMAL - most likely this is not necessary at all
+      # confirm with dbi-dev whether explicit stringification is needed
+      my $v = ( length ref $bind->[$i][1] and overload::Method($bind->[$i][1], '""') )
+        ? "$bind->[$i][1]"
+        : $bind->[$i][1]
+      ;
       $sth->bind_param(
         $i + 1,
-        (ref $bind->[$i][1] and overload::Method($bind->[$i][1], '""'))
-          ? "$bind->[$i][1]"
-          : $bind->[$i][1]
-        ,
+        $v,
         $bind_attrs->[$i],
       );
     }
   }
 
-  # Can this fail without throwing an exception anyways???
-  my $rv = $sth->execute();
-  $self->throw_exception(
-    $sth->errstr || $sth->err || 'Unknown error: execute() returned false, but error flags were not set...'
-  ) if !$rv;
-
-  $self->_query_end( $sql, $bind );
-
-  return (wantarray ? ($rv, $sth, @$bind) : $rv);
+  $sth;
 }
 
 sub _prefetch_autovalues {
@@ -1886,14 +1925,15 @@ sub insert_bulk {
 
   my @col_range = (0..$#$cols);
 
-  # FIXME - perhaps this is not even needed? does DBI stringify?
+  # FIXME SUBOPTIMAL - most likely this is not necessary at all
+  # confirm with dbi-dev whether explicit stringification is needed
   #
   # forcibly stringify whatever is stringifiable
   # ResultSet::populate() hands us a copy - safe to mangle
   for my $r (0 .. $#$data) {
     for my $c (0 .. $#{$data->[$r]}) {
       $data->[$r][$c] = "$data->[$r][$c]"
-        if ( ref $data->[$r][$c] and overload::Method($data->[$r][$c], '""') );
+        if ( length ref $data->[$r][$c] and overload::Method($data->[$r][$c], '""') );
     }
   }
 
@@ -2077,7 +2117,7 @@ sub insert_bulk {
   my $guard = $self->txn_scope_guard;
 
   $self->_query_start( $sql, @$proto_bind ? [[undef => '__BULK_INSERT__' ]] : () );
-  my $sth = $self->_sth($sql);
+  my $sth = $self->_prepare_sth($self->_dbh, $sql);
   my $rv = do {
     if (@$proto_bind) {
       # proto bind contains the information on which pieces of $data to pull
@@ -2243,13 +2283,11 @@ sub _select_args_to_query {
     $self->_select_args(@_);
 
   # my ($sql, $prepared_bind) = $self->_gen_sql_bind($op, $ident, [ $select, $cond, $rs_attrs, $rows, $offset ]);
-  my ($sql, $prepared_bind) = $self->_gen_sql_bind($op, $ident, \@args);
-  $prepared_bind ||= [];
+  my ($sql, $bind) = $self->_gen_sql_bind($op, $ident, \@args);
 
-  return wantarray
-    ? ($sql, $prepared_bind)
-    : \[ "($sql)", @$prepared_bind ]
-  ;
+  # reuse the bind arrayref
+  unshift @{$bind}, "($sql)";
+  \$bind;
 }
 
 sub _select_args {
@@ -2285,33 +2323,24 @@ sub _select_args {
     $attrs->{rows} = $sql_maker->__max_int;
   }
 
-  my ($complex_prefetch, @limit);
+  my @limit;
 
-  # see if we will need to tear the prefetch apart to satisfy group_by == select
-  # this is *extremely tricky* to get right
-  #
-  # Follows heavy but necessary analyzis of the group_by - if it refers to any
-  # sort of non-root column assume the user knows what they are doing and do
-  # not try to be clever
+  # see if we need to tear the prefetch apart otherwise delegate the limiting to the
+  # storage, unless software limit was requested
   if (
-    $attrs->{_related_results_construction}
-      and
-    $attrs->{group_by}
-      and
-    @{$attrs->{group_by}}
-      and
-    my $grp_aliases = try {
-      $self->_resolve_aliastypes_from_select_args( $attrs->{from}, undef, undef, { group_by => $attrs->{group_by} } )
-    }
+    #limited has_many
+    ( $attrs->{rows} && keys %{$attrs->{collapse}} )
+       ||
+    # grouped prefetch (to satisfy group_by == select)
+    ( $attrs->{group_by}
+        &&
+      @{$attrs->{group_by}}
+        &&
+      $attrs->{_prefetch_selector_range}
+    )
   ) {
-    $complex_prefetch = ! defined first { $_ ne $rs_alias } keys %{ $grp_aliases->{grouping} || {} };
-  }
-
-  $complex_prefetch ||= ( $attrs->{rows} && $attrs->{collapse} );
-
-  if ($complex_prefetch) {
-    ($ident, $select, $where, $attrs) =
-      $self->_adjust_select_args_for_complex_prefetch ($ident, $select, $where, $attrs);
+    ($ident, $select, $where, $attrs)
+      = $self->_adjust_select_args_for_complex_prefetch ($ident, $select, $where, $attrs);
   }
   elsif (! $attrs->{software_limit} ) {
     push @limit, (
@@ -2322,8 +2351,6 @@ sub _select_args {
 
   # try to simplify the joinmap further (prune unreferenced type-single joins)
   if (
-    ! $complex_prefetch
-      and
     ref $ident
       and
     reftype $ident eq 'ARRAY'
@@ -2394,42 +2421,6 @@ to L<DBIx::Class::Schema/connect>. For a list of available limit dialects
 see L<DBIx::Class::SQLMaker::LimitDialects>.
 
 =cut
-
-sub _dbh_sth {
-  my ($self, $dbh, $sql) = @_;
-
-  # 3 is the if_active parameter which avoids active sth re-use
-  my $sth = $self->disable_sth_caching
-    ? $dbh->prepare($sql)
-    : $dbh->prepare_cached($sql, {}, 3);
-
-  # XXX You would think RaiseError would make this impossible,
-  #  but apparently that's not true :(
-  $self->throw_exception(
-    $dbh->errstr
-      ||
-    sprintf( "\$dbh->prepare() of '%s' through %s failed *silently* without "
-            .'an exception and/or setting $dbh->errstr',
-      length ($sql) > 20
-        ? substr($sql, 0, 20) . '...'
-        : $sql
-      ,
-      'DBD::' . $dbh->{Driver}{Name},
-    )
-  ) if !$sth;
-
-  $sth;
-}
-
-sub sth {
-  carp_unique 'sth was mistakenly marked/documented as public, stop calling it (will be removed before DBIC v0.09)';
-  shift->_sth(@_);
-}
-
-sub _sth {
-  my ($self, $sql) = @_;
-  $self->dbh_do('_dbh_sth', $sql);  # retry over disconnects
-}
 
 sub _dbh_columns_info_for {
   my ($self, $dbh, $table) = @_;

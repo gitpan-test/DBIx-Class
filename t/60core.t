@@ -173,7 +173,7 @@ is_deeply( \@cd, [qw/cdid artist title year genreid single_track/], 'column orde
 $cd = $schema->resultset("CD")->search({ title => 'Spoonful of bees' }, { columns => ['title'] })->next;
 is($cd->title, 'Spoonful of bees', 'subset of columns returned correctly');
 
-$cd = $schema->resultset("CD")->search(undef, { include_columns => [ { name => 'artist.name' } ], join => [ 'artist' ] })->find(1);
+$cd = $schema->resultset("CD")->search(undef, { '+columns' => [ { name => 'artist.name' } ], join => [ 'artist' ] })->find(1);
 
 is($cd->title, 'Spoonful of bees', 'Correct CD returned with include');
 is($cd->get_column('name'), 'Caterwauler McCrae', 'Additional column returned');
@@ -253,13 +253,11 @@ is ($collapsed_or_rs->all, 4, 'Collapsed joined search with OR returned correct 
 is ($collapsed_or_rs->count, 4, 'Collapsed search count with OR ok');
 
 # make sure sure distinct on a grouped rs is warned about
-{
-  my $cd_rs = $schema->resultset ('CD')
-                ->search ({}, { distinct => 1, group_by => 'title' });
-  warnings_exist (sub {
-    $cd_rs->next;
-  }, qr/Useless use of distinct/, 'UUoD warning');
-}
+my $cd_rs = $schema->resultset ('CD')
+              ->search ({}, { distinct => 1, group_by => 'title' });
+warnings_exist (sub {
+  $cd_rs->next;
+}, qr/Useless use of distinct/, 'UUoD warning');
 
 {
   my $tcount = $schema->resultset('Track')->search(
@@ -300,16 +298,10 @@ is($or_rs->next->cdid, $rel_rs->next->cdid, 'Related object ok');
 $or_rs->reset;
 $rel_rs->reset;
 
-# at this point there should be no active statements
-# (finish() was called everywhere, either explicitly via
-# reset() or on DESTROY)
-for (keys %{$schema->storage->dbh->{CachedKids}}) {
-  fail("Unreachable cached statement still active: $_")
-    if $schema->storage->dbh->{CachedKids}{$_}->FETCH('Active');
-}
-
 my $tag = $schema->resultset('Tag')->search(
-               [ { 'me.tag' => 'Blue' } ], { cols=>[qw/tagid/] } )->next;
+  [ { 'me.tag' => 'Blue' } ],
+  { columns => 'tagid' }
+)->next;
 
 ok($tag->has_column_loaded('tagid'), 'Has tagid loaded');
 ok(!$tag->has_column_loaded('tag'), 'Has not tag loaded');

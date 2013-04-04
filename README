@@ -25,31 +25,8 @@ HOW TO GET HELP
 
     *   Web Site: <http://www.dbix-class.org/>
 
-HOW TO CONTRIBUTE
-    Contributions are always welcome, in all usable forms (we especially
-    welcome documentation improvements). The delivery methods include git-
-    or unified-diff formatted patches, GitHub pull requests, or plain bug
-    reports either via RT or the Mailing list. Contributors are generally
-    granted full access to the official repository after their first patch
-    passes successful review.
-
-    This project is maintained in a git repository. The code and related
-    tools are accessible at the following locations:
-
-    *   Official repo: <git://git.shadowcat.co.uk/dbsrgits/DBIx-Class.git>
-
-    *   Official gitweb:
-        <http://git.shadowcat.co.uk/gitweb/gitweb.cgi?p=dbsrgits/DBIx-Class.
-        git>
-
-    *   GitHub mirror: <https://github.com/dbsrgits/DBIx-Class>
-
-    *   Authorized committers:
-        <ssh://dbsrgits@git.shadowcat.co.uk/DBIx-Class.git>
-
-    *   Travis-CI log: <https://travis-ci.org/dbsrgits/dbix-class/builds>
-
 SYNOPSIS
+  Schema classes preparation
     Create a schema class called MyApp/Schema.pm:
 
       package MyApp::Schema;
@@ -88,6 +65,7 @@ SYNOPSIS
 
       1;
 
+  API usage
     Then you can use these classes in your application's code:
 
       # Connect to your database.
@@ -155,8 +133,8 @@ DESCRIPTION
     It aims to make representing queries in your code as perl-ish as
     possible while still providing access to as many of the capabilities of
     the database as possible, including retrieving related records from
-    multiple tables in a single query, JOIN, LEFT JOIN, COUNT, DISTINCT,
-    GROUP BY, ORDER BY and HAVING support.
+    multiple tables in a single query, "JOIN", "LEFT JOIN", "COUNT",
+    "DISTINCT", "GROUP BY", "ORDER BY" and "HAVING" support.
 
     DBIx::Class can handle multi-column primary and foreign keys, complex
     queries and database-level paging, and does its best to only query the
@@ -169,7 +147,7 @@ DESCRIPTION
     not be).
 
     This project is still under rapid development, so large new features may
-    be marked EXPERIMENTAL - such APIs are still usable but may have edge
+    be marked experimental - such APIs are still usable but may have edge
     bugs. Failing test cases are *always* welcome and point releases are put
     out rapidly as bugs are found and fixed.
 
@@ -181,6 +159,30 @@ DESCRIPTION
     The test suite is quite substantial, and several developer releases are
     generally made to CPAN before the branch for the next release is merged
     back to trunk for a major release.
+
+HOW TO CONTRIBUTE
+    Contributions are always welcome, in all usable forms (we especially
+    welcome documentation improvements). The delivery methods include git-
+    or unified-diff formatted patches, GitHub pull requests, or plain bug
+    reports either via RT or the Mailing list. Contributors are generally
+    granted full access to the official repository after their first patch
+    passes successful review.
+
+    This project is maintained in a git repository. The code and related
+    tools are accessible at the following locations:
+
+    *   Official repo: <git://git.shadowcat.co.uk/dbsrgits/DBIx-Class.git>
+
+    *   Official gitweb:
+        <http://git.shadowcat.co.uk/gitweb/gitweb.cgi?p=dbsrgits/DBIx-Class.
+        git>
+
+    *   GitHub mirror: <https://github.com/dbsrgits/DBIx-Class>
+
+    *   Authorized committers:
+        <ssh://dbsrgits@git.shadowcat.co.uk/DBIx-Class.git>
+
+    *   Travis-CI log: <https://travis-ci.org/dbsrgits/dbix-class/builds>
 
 AUTHOR
     mst: Matt S. Trout <mst@shadowcatsystems.co.uk>
@@ -245,7 +247,11 @@ CONTRIBUTORS
 
     da5id: David Jack Olrik <djo@cpan.org>
 
+    dariusj: Darius Jokilehto <dariusjokilehto@yahoo.co.uk>
+
     davewood: David Schmidt <davewood@gmx.at>
+
+    daxim: Lars Dɪᴇᴄᴋᴏᴡ 迪拉斯 <daxim@cpan.org>
 
     debolaz: Anders Nor Berle <berle@cpan.org>
 
@@ -281,7 +287,7 @@ CONTRIBUTORS
 
     hobbs: Andrew Rodland <arodland@cpan.org>
 
-    ilmari: Dagfinn Ilmari Manns�ker <ilmari@ilmari.org>
+    ilmari: Dagfinn Ilmari Mannsåker <ilmari@ilmari.org>
 
     initself: Mike Baas <mike@initselftech.com>
 
@@ -347,7 +353,7 @@ CONTRIBUTORS
 
     ovid: Curtis "Ovid" Poe <ovid@cpan.org>
 
-    oyse: �ystein Torget <oystein.torget@dnv.com>
+    oyse: Øystein Torget <oystein.torget@dnv.com>
 
     paulm: Paul Makepeace
 
@@ -357,7 +363,7 @@ CONTRIBUTORS
 
     peter: Peter Collingbourne <peter@pcc.me.uk>
 
-    Peter Valdemar M�rch <peter@morch.com>
+    Peter Valdemar Mørch <peter@morch.com>
 
     phaylon: Robert Sedlacek <phaylon@dunkelheit.at>
 

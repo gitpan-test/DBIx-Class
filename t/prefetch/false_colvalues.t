@@ -2,7 +2,6 @@ use warnings;
 use strict;
 
 use Test::More;
-use Test::Deep;
 
 use lib qw(t/lib);
 use DBICTest;
@@ -33,7 +32,7 @@ $schema->storage->debug(1);
 
 my $cd = $schema->resultset('CD')->search( {}, { prefetch => 'artist' })->next;
 
-cmp_deeply
+is_deeply
   { $cd->get_columns },
   {
     artist => 0,
@@ -46,7 +45,7 @@ cmp_deeply
   'Expected CD columns present',
 ;
 
-cmp_deeply
+is_deeply
   { $cd->artist->get_columns },
   {
     artistid => 0,

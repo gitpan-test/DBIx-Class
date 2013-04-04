@@ -22,8 +22,6 @@ BEGIN {
 
 use namespace::clean;
 
-__PACKAGE__->mk_group_accessors ( simple => [ in_storage => '_in_storage' ] );
-
 =head1 NAME
 
 DBIx::Class::Row - Basic row methods
@@ -134,16 +132,16 @@ sub __new_related_find_or_new_helper {
   my $proc_data = { $new_rel_obj->get_columns };
 
   if ($self->__their_pk_needs_us($relname)) {
-    MULTICREATE_DEBUG and warn "MC $self constructing $relname via new_result";
+    MULTICREATE_DEBUG and print STDERR "MC $self constructing $relname via new_result\n";
     return $new_rel_obj;
   }
   elsif ($rsrc->_pk_depends_on($relname, $proc_data )) {
     if (! keys %$proc_data) {
       # there is nothing to search for - blind create
-      MULTICREATE_DEBUG and warn "MC $self constructing default-insert $relname";
+      MULTICREATE_DEBUG and print STDERR "MC $self constructing default-insert $relname\n";
     }
     else {
-      MULTICREATE_DEBUG and warn "MC $self constructing $relname via find_or_new";
+      MULTICREATE_DEBUG and print STDERR "MC $self constructing $relname via find_or_new\n";
       # this is not *really* find or new, as we don't want to double-new the
       # data (thus potentially double encoding or whatever)
       my $exists = $rel_rs->find ($proc_data);
@@ -178,7 +176,7 @@ sub new {
   my ($class, $attrs) = @_;
   $class = ref $class if ref $class;
 
-  my $new = bless { _column_data => {}, _in_storage => 0 }, $class;
+  my $new = bless { _column_data => {} }, $class;
 
   if ($attrs) {
     $new->throw_exception("attrs must be a hashref")
@@ -214,7 +212,7 @@ sub new {
             $new->{_rel_in_storage}{$key} = 1;
             $new->set_from_related($key, $rel_obj);
           } else {
-            MULTICREATE_DEBUG and warn "MC $new uninserted $key $rel_obj\n";
+            MULTICREATE_DEBUG and print STDERR "MC $new uninserted $key $rel_obj\n";
           }
 
           $related->{$key} = $rel_obj;
@@ -234,7 +232,7 @@ sub new {
               $rel_obj->throw_exception ('A multi relationship can not be pre-existing when doing multicreate. Something went wrong');
             } else {
               MULTICREATE_DEBUG and
-                warn "MC $new uninserted $key $rel_obj (${\($idx+1)} of $total)\n";
+                print STDERR "MC $new uninserted $key $rel_obj (${\($idx+1)} of $total)\n";
             }
             push(@objects, $rel_obj);
           }
@@ -251,7 +249,7 @@ sub new {
             $new->{_rel_in_storage}{$key} = 1;
           }
           else {
-            MULTICREATE_DEBUG and warn "MC $new uninserted $key $rel_obj";
+            MULTICREATE_DEBUG and print STDERR "MC $new uninserted $key $rel_obj\n";
           }
           $inflated->{$key} = $rel_obj;
           next;
@@ -363,7 +361,7 @@ sub insert {
       # The guard will save us if we blow out of this scope via die
       $rollback_guard ||= $storage->txn_scope_guard;
 
-      MULTICREATE_DEBUG and warn "MC $self pre-reconstructing $relname $rel_obj\n";
+      MULTICREATE_DEBUG and print STDERR "MC $self pre-reconstructing $relname $rel_obj\n";
 
       my $them = { %{$rel_obj->{_relationship_data} || {} }, $rel_obj->get_columns };
       my $existing;
@@ -395,7 +393,7 @@ sub insert {
 
   MULTICREATE_DEBUG and do {
     no warnings 'uninitialized';
-    warn "MC $self inserting (".join(', ', $self->get_columns).")\n";
+    print STDERR "MC $self inserting (".join(', ', $self->get_columns).")\n";
   };
 
   # perform the insert - the storage will return everything it is asked to
@@ -440,14 +438,14 @@ sub insert {
         $obj->set_from_related($_, $self) for keys %$reverse;
         if ($self->__their_pk_needs_us($relname)) {
           if (exists $self->{_ignore_at_insert}{$relname}) {
-            MULTICREATE_DEBUG and warn "MC $self skipping post-insert on $relname";
+            MULTICREATE_DEBUG and print STDERR "MC $self skipping post-insert on $relname\n";
           }
           else {
-            MULTICREATE_DEBUG and warn "MC $self inserting $relname $obj";
+            MULTICREATE_DEBUG and print STDERR "MC $self inserting $relname $obj\n";
             $obj->insert;
           }
         } else {
-          MULTICREATE_DEBUG and warn "MC $self post-inserting $obj";
+          MULTICREATE_DEBUG and print STDERR "MC $self post-inserting $obj\n";
           $obj->insert();
         }
       }
@@ -482,6 +480,13 @@ are used.
 Creating a result object using L<DBIx::Class::ResultSet/new_result>, or
 calling L</delete> on one, sets it to false.
 
+=cut
+
+sub in_storage {
+  my ($self, $val) = @_;
+  $self->{_in_storage} = $val if @_ > 1;
+  return $self->{_in_storage} ? 1 : 0;
+}
 
 =head2 update
 
@@ -614,7 +619,7 @@ sub delete {
     );
 
     delete $self->{_column_data_in_storage};
-    $self->in_storage(0);
+    $self->in_storage(undef);
   }
   else {
     my $rsrc = try { $self->result_source_instance }
@@ -768,7 +773,6 @@ Marks a column as having been changed regardless of whether it has
 really changed.
 
 =cut
-
 sub make_column_dirty {
   my ($self, $column) = @_;
 
@@ -1177,54 +1181,76 @@ L<DBIx::Class::ResultSet>, see L<DBIx::Class::ResultSet/result_class>.
 sub inflate_result {
   my ($class, $source, $me, $prefetch) = @_;
 
+  $source = $source->resolve
+    if $source->isa('DBIx::Class::ResultSourceHandle');
+
   my $new = bless
     { _column_data => $me, _result_source => $source },
     ref $class || $class
   ;
 
-  if ($prefetch) {
-    for my $pre ( keys %$prefetch ) {
+  foreach my $pre (keys %{$prefetch||{}}) {
 
-      my @pre_objects;
-      if (
-        @{$prefetch->{$pre}||[]}
-          and
-        ref($prefetch->{$pre}) ne $DBIx::Class::ResultSource::RowParser::Util::null_branch_class
-      ) {
-        my $pre_source = try {
-          $source->related_source($pre)
-        } catch {
-          my $err = sprintf
-            "Inflation into non-existent relationship '%s' of '%s' requested",
-            $pre,
-            $source->source_name,
-          ;
-          if (my ($colname) = sort { length($a) <=> length ($b) } keys %{$prefetch->{$pre}[0] || {}} ) {
-            $err .= sprintf ", check the inflation specification (columns/as) ending in '...%s.%s'",
-            $pre,
-            $colname,
-          }
-
-          $source->throw_exception($err);
-        };
-
-        @pre_objects = map {
-          $pre_source->result_class->inflate_result( $pre_source, @$_ )
-        } ( ref $prefetch->{$pre}[0] eq 'ARRAY' ?  @{$prefetch->{$pre}} : $prefetch->{$pre} );
-      }
-
-      my $accessor = $source->relationship_info($pre)->{attrs}{accessor}
-        or $class->throw_exception("No accessor type declared for prefetched relationship '$pre'");
-
-      if ($accessor eq 'single') {
-        $new->{_relationship_data}{$pre} = $pre_objects[0];
-      }
-      elsif ($accessor eq 'filter') {
-        $new->{_inflated_column}{$pre} = $pre_objects[0];
-      }
-
-      $new->related_resultset($pre)->set_cache(\@pre_objects);
+    my (@pre_vals, $is_multi);
+    if (ref $prefetch->{$pre}[0] eq 'ARRAY') {
+      $is_multi = 1;
+      @pre_vals = @{$prefetch->{$pre}};
     }
+    else {
+      @pre_vals = $prefetch->{$pre};
+    }
+
+    my $pre_source = try {
+      $source->related_source($pre)
+    }
+    catch {
+      $class->throw_exception(sprintf
+
+        "Can't inflate manual prefetch into non-existent relationship '%s' from '%s', "
+      . "check the inflation specification (columns/as) ending in '%s.%s'.",
+
+        $pre,
+        $source->source_name,
+        $pre,
+        (keys %{$pre_vals[0][0]})[0] || 'something.something...',
+      );
+    };
+
+    my $accessor = $source->relationship_info($pre)->{attrs}{accessor}
+      or $class->throw_exception("No accessor type declared for prefetched $pre");
+
+    if (! $is_multi and $accessor eq 'multi') {
+      $class->throw_exception("Manual prefetch (via select/columns) not supported with accessor 'multi'");
+    }
+
+    my @pre_objects;
+    for my $me_pref (@pre_vals) {
+
+        # FIXME - this should not be necessary
+        # the collapser currently *could* return bogus elements with all
+        # columns set to undef
+        my $has_def;
+        for (values %{$me_pref->[0]}) {
+          if (defined $_) {
+            $has_def++;
+            last;
+          }
+        }
+        next unless $has_def;
+
+        push @pre_objects, $pre_source->result_class->inflate_result(
+          $pre_source, @$me_pref
+        );
+    }
+
+    if ($accessor eq 'single') {
+      $new->{_relationship_data}{$pre} = $pre_objects[0];
+    }
+    elsif ($accessor eq 'filter') {
+      $new->{_inflated_column}{$pre} = $pre_objects[0];
+    }
+
+    $new->related_resultset($pre)->set_cache(\@pre_objects);
   }
 
   $new->in_storage (1);
