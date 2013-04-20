@@ -85,6 +85,10 @@ BEGIN {
 # as the value to abuse with MSSQL ordered subqueries)
 sub __max_int () { 0x7FFFFFFF };
 
+# we ne longer need to check this - DBIC has ways of dealing with it
+# specifically ::Storage::DBI::_resolve_bindattrs()
+sub _assert_bindval_matches_bindtype () { 1 };
+
 # poor man's de-qualifier
 sub _quote {
   $_[0]->next::method( ( $_[0]{_dequalify_idents} and ! ref $_[1] )
@@ -319,6 +323,18 @@ sub _order_by {
   }
 }
 
+sub _split_order_chunk {
+  my ($self, $chunk) = @_;
+
+  # strip off sort modifiers, but always succeed, so $1 gets reset
+  $chunk =~ s/ (?: \s+ (ASC|DESC) )? \s* $//ix;
+
+  return (
+    $chunk,
+    ( $1 and uc($1) eq 'DESC' ) ? 1 : 0,
+  );
+}
+
 sub _table {
 # optimized due to hotttnesss
 #  my ($self, $from) = @_;
@@ -351,7 +367,6 @@ sub _generate_join_clause {
 
 sub _recurse_from {
   my $self = shift;
-
   return join (' ', $self->_gen_from_blocks(@_) );
 }
 

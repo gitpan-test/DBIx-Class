@@ -15,9 +15,9 @@ BEGIN {
   ;
 }
 
+# load Carp early to prevent tickling of the ::Internal stash being
+# interpreted as "Carp is already loaded" by some braindead loader
 use Carp ();
-use namespace::clean ();
-
 $Carp::Internal{ (__PACKAGE__) }++;
 
 sub __find_caller {
@@ -42,7 +42,12 @@ sub __find_caller {
         and
       ! $Carp::Internal{$1}
         and
-      $2 !~ /^(?: throw_exception | carp | carp_unique | carp_once )$/x
+#############################
+# Need a way to parameterize this for Carp::Skip
+      $1 !~ /^(?: DBIx::Class::Storage::BlockRunner | Context::Preserve | Try::Tiny | Class::Accessor::Grouped | Class::C3::Componentised | Module::Runtime )$/x
+        and
+      $2 !~ /^(?: throw_exception | carp | carp_unique | carp_once | dbh_do | txn_do | with_deferred_fk_checks)$/x
+#############################
     ) ? $f[3] : undef;
 
     if (

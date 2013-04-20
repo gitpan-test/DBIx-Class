@@ -14,7 +14,7 @@ my $rs = $schema->resultset("CD");
 
 cmp_ok (
   $rs->count,
-    '!=',
+    '>',
   $rs->search ({}, {columns => ['year'], distinct => 1})->count,
   'At least one year is the same in rs'
 );
@@ -23,25 +23,31 @@ my $rs_title = $rs->get_column('title');
 my $rs_year = $rs->get_column('year');
 my $max_year = $rs->get_column(\'MAX (year)');
 
-is($rs_title->next, 'Spoonful of bees', "next okay");
+my @all_titles = $rs_title->all;
+cmp_ok(scalar @all_titles, '==', 5, "five titles returned");
+
+my @nexted_titles;
+while (my $r = $rs_title->next) {
+  push @nexted_titles, $r;
+}
+
+is_deeply (\@all_titles, \@nexted_titles, 'next works');
+
 is_deeply( [ sort $rs_year->func('DISTINCT') ], [ 1997, 1998, 1999, 2001 ],  "wantarray context okay");
 ok ($max_year->next == $rs_year->max, q/get_column (\'FUNC') ok/);
-
-my @all = $rs_title->all;
-cmp_ok(scalar @all, '==', 5, "five titles returned");
 
 cmp_ok($rs_year->max, '==', 2001, "max okay for year");
 is($rs_title->min, 'Caterwaulin\' Blues', "min okay for title");
 
 cmp_ok($rs_year->sum, '==', 9996, "three artists returned");
 
-$rs_year->reset;
-is($rs_year->next, 1999, "reset okay");
+my $rso_year = $rs->search({}, { order_by => 'cdid' })->get_column('year');
+is($rso_year->next, 1999, "reset okay");
 
-is($rs_year->first, 1999, "first okay");
+is($rso_year->first, 1999, "first okay");
 
 warnings_exist (sub {
-  is($rs_year->single, 1999, "single okay");
+  is($rso_year->single, 1999, "single okay");
 }, qr/Query returned more than one row/, 'single warned');
 
 
@@ -136,7 +142,6 @@ is ($owner->search_related ('books')->get_column ('price')->sum, 60, 'Correctly 
 
 
 # make sure joined/prefetched get_column of a PK dtrt
-
 $rs->reset;
 my $j_rs = $rs->search ({}, { join => 'tracks' })->get_column ('cdid');
 is_deeply (
@@ -148,9 +153,48 @@ is_deeply (
 $rs->reset;
 my $p_rs = $rs->search ({}, { prefetch => 'tracks' })->get_column ('cdid');
 is_deeply (
-  [ $p_rs->all ],
-  [ $rs->get_column ('cdid')->all ],
+  [ sort $p_rs->all ],
+  [ sort $rs->get_column ('cdid')->all ],
   'prefetch properly collapses amount of rows from get_column',
 );
+
+$rs->reset;
+my $pob_rs = $rs->search({}, {
+  select   => ['me.title', 'tracks.title'],
+  prefetch => 'tracks',
+  order_by => [{-asc => ['position']}],
+  group_by => ['me.title', 'tracks.title'],
+});
+is_same_sql_bind (
+  $pob_rs->get_column("me.title")->as_query,
+  '(SELECT me.title FROM (SELECT me.title, tracks.title FROM cd me LEFT JOIN track tracks ON tracks.cd = me.cdid GROUP BY me.title, tracks.title ORDER BY position ASC) me)',
+  [],
+  'Correct SQL for prefetch/order_by/group_by'
+);
+
+# test aggregate on a function
+{
+  my $tr_rs = $schema->resultset("Track");
+  $tr_rs->create({ cd => 2, title => 'dealbreaker' });
+
+  is(
+    $tr_rs->get_column('cd')->max,
+    5,
+    "Correct: Max cd in Track is 5"
+  );
+
+  my $track_counts_per_cd_via_group_by = $tr_rs->search({}, {
+    columns => [ 'cd', { cnt => { count => 'trackid', -as => 'cnt' } } ],
+    group_by => 'cd',
+  })->get_column('cnt');
+
+  is ($track_counts_per_cd_via_group_by->max, 4, 'Correct max tracks per cd');
+  is ($track_counts_per_cd_via_group_by->min, 3, 'Correct min tracks per cd');
+  is (
+    sprintf('%0.1f', $track_counts_per_cd_via_group_by->func('avg') ),
+    '3.2',
+    'Correct avg tracks per cd'
+  );
+}
 
 done_testing;
