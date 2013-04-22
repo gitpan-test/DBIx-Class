@@ -1,6 +1,6 @@
 Revision history for DBIx::Class
 
-0.08249_01 2013-04-20 23:24 (UTC)
+0.08249_02 2013-04-22 08:57 (UTC)
     * New Features / Changes
         - Rewrite from scratch the result constructor codepath - many bugfixes
           and performance improvements (the current codebase is now capable of
