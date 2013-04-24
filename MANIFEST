@@ -22,6 +22,7 @@ inc/Module/Install/Scripts.pm
 inc/Module/Install/Win32.pm
 inc/Module/Install/WriteAll.pm
 lib/DBIx/Class.pm
+lib/DBIx/Class/_Util.pm
 lib/DBIx/Class/AccessorGroup.pm
 lib/DBIx/Class/Admin.pm
 lib/DBIx/Class/Admin/Descriptive.pm
@@ -609,6 +610,7 @@ t/schema/clone.t
 t/search/deprecated_attributes.t
 t/search/distinct.t
 t/search/preserve_original_rs.t
+t/search/reentrancy.t
 t/search/related_has_many.t
 t/search/related_strip_prefetch.t
 t/search/select_chains.t

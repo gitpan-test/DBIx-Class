@@ -35,9 +35,10 @@ no_index:
     - DBIx::Class::Storage::DBIHacks
     - DBIx::Class::Storage::BlockRunner
     - DBIx::Class::Carp
+    - DBIx::Class::_Util
     - DBIx::Class::ResultSet::Pager
 requires:
-  Class::Accessor::Grouped: 0.10009
+  Class::Accessor::Grouped: 0.10010
   Class::C3::Componentised: 1.0009
   Class::Inspector: 1.24
   Config::Any: 0.20
@@ -68,5 +69,5 @@ resources:
   homepage: http://www.dbix-class.org/
   license: http://dev.perl.org/licenses/
   repository: https://github.com/dbsrgits/DBIx-Class
-version: 0.08249_03
+version: 0.08249_04
 x_authority: cpan:RIBASUSHI
