@@ -2679,7 +2679,7 @@ sub as_query {
     { artist => 'fred' }, { key => 'artists' });
 
   $cd->cd_to_producer->find_or_new({ producer => $producer },
-                                   { key => 'primary });
+                                   { key => 'primary' });
 
 Find an existing record from this resultset using L</find>. if none exists,
 instantiate a new result object and return it. The object will not be saved
@@ -3163,15 +3163,6 @@ sub related_resultset {
     #XXX - temp fix for result_class bug. There likely is a more elegant fix -groditi
     delete @{$attrs}{qw(result_class alias)};
 
-    my $related_cache;
-
-    if (my $cache = $self->get_cache) {
-      $related_cache = [ map
-        { @{$_->related_resultset($rel)->get_cache||[]} }
-        @$cache
-      ];
-    }
-
     my $rel_source = $rsrc->related_source($rel);
 
     my $new = do {
@@ -3192,7 +3183,16 @@ sub related_resultset {
                        where => $attrs->{where},
                    });
     };
-    $new->set_cache($related_cache) if $related_cache;
+
+    if (my $cache = $self->get_cache) {
+      my @related_cache = map
+        { @{$_->related_resultset($rel)->get_cache||[]} }
+        @$cache
+      ;
+
+      $new->set_cache(\@related_cache) if @related_cache;
+    }
+
     $new;
   };
 }
