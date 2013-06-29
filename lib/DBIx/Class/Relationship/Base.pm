@@ -125,6 +125,8 @@ This describes the relationship from C<Item> to C<Item::Links>, where
 C<Item::Links> is a many-to-many linking table, linking items back to
 themselves in a peer fashion (without a "parent-child" designation)
 
+=head4 Custom join conditions
+
 To specify joins which describe more than a simple equality of column
 values, the custom join condition coderef syntax can be used. For
 example:
@@ -206,7 +208,7 @@ With the bind values:
     '4', '1990', '1979'
 
 Note that in order to be able to use
-L<< $row->create_related|DBIx::Class::Relationship::Base/create_related >>,
+L<< $result->create_related|DBIx::Class::Relationship::Base/create_related >>,
 the coderef must not only return as its second such a "simple" condition
 hashref which does not depend on joins being available, but the hashref must
 contain only plain values/deflatable objects, such that the result can be
@@ -423,8 +425,8 @@ $rel_name.
 =back
 
   # These pairs do the same thing
-  $row = $cd->related_resultset('artist')->single;  # has_one relationship
-  $row = $cd->artist;
+  $result = $cd->related_resultset('artist')->single;  # has_one relationship
+  $result = $cd->artist;
   $rs = $cd->related_resultset('tracks');           # has_many relationship
   $rs = $cd->tracks;
 
