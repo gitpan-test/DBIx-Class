@@ -27,9 +27,11 @@ __PACKAGE__->datetime_parser_type (
 
 __PACKAGE__->new_guid('NEWID()');
 
-sub _sql_server_2005_or_higher {
+sub __sql_server_x_or_higher {
+  my ($self, $version) = @_;
+
   if (exists $_[0]->_server_info->{normalized_dbms_version}) {
-    if ($_[0]->_server_info->{normalized_dbms_version} >= 9) {
+    if ($_[0]->_server_info->{normalized_dbms_version} >= $version) {
        return 1
     } else {
        return 0
@@ -37,6 +39,9 @@ sub _sql_server_2005_or_higher {
   }
   return undef;
 }
+
+sub _sql_server_2005_or_higher { shift->__sql_server_x_or_higher(9) }
+sub _sql_server_2012_or_higher { shift->__sql_server_x_or_higher(11) }
 
 sub _prep_for_execute {
   my $self = shift;
@@ -157,6 +162,13 @@ sub _exec_svp_begin {
 # A new SAVE TRANSACTION with the same name releases the previous one.
 sub _exec_svp_release { 1 }
 
+sub bind_attribute_by_data_type {
+  $_[1] =~ /^ (?: int(?:eger)? | (?:tiny|small|medium)int ) $/ix
+    ? DBI::SQL_INTEGER()
+    : undef
+  ;
+}
+
 sub _exec_svp_rollback {
   my ($self, $name) = @_;
 
@@ -167,6 +179,20 @@ sub sqlt_type { 'SQLServer' }
 
 sub sql_limit_dialect {
   my $self = shift;
+
+  my $supports_ofn = $self->_sql_server_2012_or_higher;
+
+  unless (defined $supports_ofn) {
+    # User is connecting via DBD::Sybase and has no permission to run
+    # stored procedures like xp_msver, or version detection failed for some
+    # other reason.
+    # So, we use a query to check if OFN is implemented.
+    try {
+      $self->_get_dbh->selectrow_array('SELECT 1 ORDER BY 1 OFFSET 0 ROWS');
+      $supports_ofn = 1;
+    };
+  }
+  return 'OffsetFetchNext' if $supports_ofn;
 
   my $supports_rno = $self->_sql_server_2005_or_higher;
 
@@ -180,8 +206,9 @@ sub sql_limit_dialect {
       $supports_rno = 1;
     };
   }
+  return 'RowNumberOver' if $supports_rno;
 
-  return $supports_rno ? 'RowNumberOver' : 'Top';
+  return 'Top';
 }
 
 sub _ping {

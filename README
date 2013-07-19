@@ -26,6 +26,12 @@ HOW TO GET HELP
     *   Web Site: <http://www.dbix-class.org/>
 
 SYNOPSIS
+    For the very impatient: DBIx::Class::Manual::QuickStart
+
+    This code in the next step can be generated automatically from an
+    existing database, see dbicdump from the distribution
+    "DBIx-Class-Schema-Loader".
+
   Schema classes preparation
     Create a schema class called MyApp/Schema.pm:
 

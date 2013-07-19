@@ -2,6 +2,7 @@ Changes
 examples/Benchmarks/benchmark_datafetch.pl
 examples/Benchmarks/benchmark_hashrefinflator.pl
 examples/MiscTools/determine_cpan_joint_deps.pl
+examples/Schema/db/example.db
 examples/Schema/db/example.sql
 examples/Schema/insertdb.pl
 examples/Schema/MyDatabase/Main.pm
@@ -79,6 +80,7 @@ lib/DBIx/Class/Manual/Features.pod
 lib/DBIx/Class/Manual/Glossary.pod
 lib/DBIx/Class/Manual/Intro.pod
 lib/DBIx/Class/Manual/Joining.pod
+lib/DBIx/Class/Manual/QuickStart.pod
 lib/DBIx/Class/Manual/Reading.pod
 lib/DBIx/Class/Manual/ResultClass.pod
 lib/DBIx/Class/Manual/Troubleshooting.pod
@@ -625,6 +627,7 @@ t/sqlmaker/limit_dialects/custom.t
 t/sqlmaker/limit_dialects/fetch_first.t
 t/sqlmaker/limit_dialects/first_skip.t
 t/sqlmaker/limit_dialects/generic_subq.t
+t/sqlmaker/limit_dialects/offset_fetch_next.t
 t/sqlmaker/limit_dialects/rno.t
 t/sqlmaker/limit_dialects/rownum.t
 t/sqlmaker/limit_dialects/skip_first.t

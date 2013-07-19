@@ -11,7 +11,7 @@ our $VERSION;
 # $VERSION declaration must stay up here, ahead of any other package
 # declarations, as to not confuse various modules attempting to determine
 # this ones version, whether that be s.c.o. or Module::Metadata, etc
-$VERSION = '0.08250_01';
+$VERSION = '0.08250_02';
 
 $VERSION = eval $VERSION if $VERSION =~ /_/; # numify for warning-free dev releases
 
@@ -136,6 +136,11 @@ list below is sorted by "fastest response time":
 =back
 
 =head1 SYNOPSIS
+
+For the very impatient: L<DBIx::Class::Manual::QuickStart>
+
+This code in the next step can be generated automatically from an existing
+database, see L<dbicdump> from the distribution C<DBIx-Class-Schema-Loader>.
 
 =head2 Schema classes preparation
 
