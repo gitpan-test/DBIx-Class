@@ -3,6 +3,8 @@ package DBIx::Class;
 use strict;
 use warnings;
 
+use DBIx::Class::_TempExtlib;
+
 our $VERSION;
 # Always remember to do all digits for the version even if they're 0
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
@@ -11,7 +13,7 @@ our $VERSION;
 # $VERSION declaration must stay up here, ahead of any other package
 # declarations, as to not confuse various modules attempting to determine
 # this ones version, whether that be s.c.o. or Module::Metadata, etc
-$VERSION = '0.08250_02';
+$VERSION = '0.08901';
 
 $VERSION = eval $VERSION if $VERSION =~ /_/; # numify for warning-free dev releases
 
@@ -40,6 +42,10 @@ BEGIN {
       # otherwise we are good
                                                                                     : 0
     ,
+
+    ASSERT_NO_INTERNAL_WANTARRAY => $ENV{DBIC_ASSERT_NO_INTERNAL_WANTARRAY} ? 1 : 0,
+
+    IV_SIZE => $Config{ivsize},
   };
 
   if ($] < 5.009_005) {
@@ -348,7 +354,7 @@ arcanez: Justin Hunter <justin.d.hunter@gmail.com>
 
 ash: Ash Berlin <ash@cpan.org>
 
-bert: Norbert Csongradi <bert@cpan.org>
+bert: Norbert Csongrádi <bert@cpan.org>
 
 blblack: Brandon L. Black <blblack@gmail.com>
 
@@ -397,6 +403,8 @@ dwc: Daniel Westermann-Clark <danieltwc@cpan.org>
 dyfrgi: Michael Leuchtenburg <michael@slashhome.org>
 
 edenc: Eden Cardim <edencardim@gmail.com>
+
+ether: Karen Etheridge <ether@cpan.org>
 
 felliott: Fitz Elliott <fitz.elliott@gmail.com>
 
@@ -491,6 +499,8 @@ penguin: K J Cheetham
 perigrin: Chris Prather <chris@prather.org>
 
 peter: Peter Collingbourne <peter@pcc.me.uk>
+
+Peter Siklósi <einon@einon.hu>
 
 Peter Valdemar ME<oslash>rch <peter@morch.com>
 

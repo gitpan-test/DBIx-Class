@@ -60,7 +60,7 @@ my @modules = grep {
     (); # empty RV for @modules
   };
 
-} find_modules();
+} grep { $_ !~ /_TempExtlib/ } find_modules();
 
 # have an exception table for old and/or weird code we are not sure
 # we *want* to clean in the first place
@@ -83,13 +83,19 @@ my $skip_idx = { map { $_ => 1 } (
   # utility classes, not part of the inheritance chain
   'DBIx::Class::ResultSource::RowParser::Util',
   'DBIx::Class::_Util',
+
+  # skip for the moment - XXX fixme
+  'DBIx::Class::ResultSet::Role::DQMethods',
+  'DBIx::Class::ResultSet::WithDQMethods',
+  'DBIx::Class::PerlRenderer',
+  'DBIx::Class::PerlRenderer::MangleStrings',
 ) };
 
-my $has_cmop = eval { require Class::MOP };
+my $has_moose = eval { require Moose::Util };
 
 # can't use Class::Inspector for the mundane parts as it does not
 # distinguish imports from anything else, what a crock of...
-# Class::MOP is not always available either - hence just do it ourselves
+# Moose is not always available either - hence just do it ourselves
 
 my $seen; #inheritance means we will see the same method multiple times
 
@@ -105,15 +111,13 @@ for my $mod (@modules) {
     my %parents = map { $_ => 1 } @{mro::get_linear_isa($mod)};
 
     my %roles;
-    if ($has_cmop and my $mc = Class::MOP::class_of($mod)) {
+    if ($has_moose and my $mc = Moose::Util::find_meta($mod)) {
       if ($mc->can('calculate_all_roles_with_inheritance')) {
         $roles{$_->name} = 1 for ($mc->calculate_all_roles_with_inheritance);
       }
     }
 
     for my $name (keys %all_method_like) {
-
-      next if ( DBIx::Class::_ENV_::BROKEN_NAMESPACE_CLEAN and $name =~ /^carp(?:_unique|_once)?$/ );
 
       # overload is a funky thing - it is not cleaned, and its imports are named funny
       next if $name =~ /^\(/;
@@ -150,8 +154,6 @@ for my $mod (@modules) {
         );
       }
     }
-
-    next if DBIx::Class::_ENV_::BROKEN_NAMESPACE_CLEAN;
 
     # some common import names (these should never ever be methods)
     for my $f (qw/carp carp_once carp_unique croak confess cluck try catch finally/) {

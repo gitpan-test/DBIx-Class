@@ -4,10 +4,11 @@ use warnings;
 use Test::More;
 use Test::Warn;
 
-use lib qw(t/lib);
-use DBIC::SqlMakerTest;
+local $TODO = 'Temporarily todo-ed for dq2eb';
 
-use_ok('DBICTest');
+use lib qw(t/lib);
+use DBICTest;
+use DBIC::SqlMakerTest;
 
 my $schema = DBICTest->init_schema();
 

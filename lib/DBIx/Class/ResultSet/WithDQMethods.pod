@@ -1,0 +1,20 @@
+=for comment POD_DERIVED_INDEX_GENERATED
+The following documentation is automatically generated.  Please do not edit
+this file, but rather the original, inline with DBIx::Class::ResultSet::WithDQMethods
+at lib/DBIx/Class/ResultSet/WithDQMethods.pm
+(on the system that originally ran this).
+If you do edit this file, and don't want your changes to be removed, make
+sure you change the first line.
+
+=cut
+
+=head1 INHERITED METHODS
+
+=over 4
+
+=item L<DBIx::Class::ResultSet>
+
+L<all|DBIx::Class::ResultSet/all>, L<as_query|DBIx::Class::ResultSet/as_query>, L<as_subselect_rs|DBIx::Class::ResultSet/as_subselect_rs>, L<clear_cache|DBIx::Class::ResultSet/clear_cache>, L<count|DBIx::Class::ResultSet/count>, L<count_literal|DBIx::Class::ResultSet/count_literal>, L<count_rs|DBIx::Class::ResultSet/count_rs>, L<create|DBIx::Class::ResultSet/create>, L<current_source_alias|DBIx::Class::ResultSet/current_source_alias>, L<cursor|DBIx::Class::ResultSet/cursor>, L<delete|DBIx::Class::ResultSet/delete>, L<delete_all|DBIx::Class::ResultSet/delete_all>, L<find|DBIx::Class::ResultSet/find>, L<find_or_create|DBIx::Class::ResultSet/find_or_create>, L<find_or_new|DBIx::Class::ResultSet/find_or_new>, L<first|DBIx::Class::ResultSet/first>, L<get_cache|DBIx::Class::ResultSet/get_cache>, L<get_column|DBIx::Class::ResultSet/get_column>, L<is_ordered|DBIx::Class::ResultSet/is_ordered>, L<is_paged|DBIx::Class::ResultSet/is_paged>, L<new_result|DBIx::Class::ResultSet/new_result>, L<next|DBIx::Class::ResultSet/next>, L<page|DBIx::Class::ResultSet/page>, L<pager|DBIx::Class::ResultSet/pager>, L<populate|DBIx::Class::ResultSet/populate>, L<related_resultset|DBIx::Class::ResultSet/related_resultset>, L<reset|DBIx::Class::ResultSet/reset>, L<result_class|DBIx::Class::ResultSet/result_class>, L<result_source|DBIx::Class::ResultSet/result_source>, L<search|DBIx::Class::ResultSet/search>, L<search_like|DBIx::Class::ResultSet/search_like>, L<search_literal|DBIx::Class::ResultSet/search_literal>, L<search_related|DBIx::Class::ResultSet/search_related>, L<search_related_rs|DBIx::Class::ResultSet/search_related_rs>, L<search_rs|DBIx::Class::ResultSet/search_rs>, L<set_cache|DBIx::Class::ResultSet/set_cache>, L<single|DBIx::Class::ResultSet/single>, L<slice|DBIx::Class::ResultSet/slice>, L<throw_exception|DBIx::Class::ResultSet/throw_exception>, L<update|DBIx::Class::ResultSet/update>, L<update_all|DBIx::Class::ResultSet/update_all>, L<update_or_create|DBIx::Class::ResultSet/update_or_create>, L<update_or_new|DBIx::Class::ResultSet/update_or_new>
+
+=back
+

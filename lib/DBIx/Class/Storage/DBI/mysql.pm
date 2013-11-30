@@ -111,7 +111,7 @@ sub sql_maker {
 
     # mysql 3 does not understand a bare JOIN
     my $mysql_ver = $self->_dbh_get_info('SQL_DBMS_VER');
-    $maker->{_default_jointype} = 'INNER' if $mysql_ver =~ /^3/;
+    $maker->needs_inner_join(1) if $mysql_ver =~ /^3/;
   }
 
   return $self->_sql_maker;
@@ -176,7 +176,7 @@ DBIx::Class::Storage::DBI::mysql - Storage::DBI class implementing MySQL specifi
 Storage::DBI autodetects the underlying MySQL database, and re-blesses the
 C<$storage> object into this class.
 
-  my $schema = MyDb::Schema->connect( $dsn, $user, $pass, { on_connect_call => 'set_strict_mode' } );
+  my $schema = MyApp::Schema->connect( $dsn, $user, $pass, { on_connect_call => 'set_strict_mode' } );
 
 =head1 DESCRIPTION
 

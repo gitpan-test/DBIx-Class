@@ -3,16 +3,6 @@
 source maint/travis-ci_scripts/common.bash
 if [[ -n "$SHORT_CIRCUIT_SMOKE" ]] ; then return ; fi
 
-# do some extra short-circuiting here
-
-# when smoking master do not attempt bleadperl (not release-critical)
-if [[ "$TRAVIS_BRANCH" = "master" ]] && [[ "$BREWVER" = "blead" ]]; then
-  echo_err "$(tstamp) master branch is not smoked with bleadperl - bailing out"
-  export SHORT_CIRCUIT_SMOKE=1
-fi
-
-if [[ -n "$SHORT_CIRCUIT_SMOKE" ]] ; then return ; fi
-
 # Different boxes we run on may have different amount of hw threads
 # Hence why we need to query
 # Originally we used to read /sys/devices/system/cpu/online
@@ -22,6 +12,11 @@ if [[ -n "$SHORT_CIRCUIT_SMOKE" ]] ; then return ; fi
 # slurp the entire file and get the index off the last
 # `processor    : XX` line
 export NUMTHREADS=$(( $(perl -0777 -n -e 'print (/ (?: .+ ^ processor \s+ : \s+ (\d+) ) (?! ^ processor ) /smx)' < /proc/cpuinfo) + 1 ))
+
+run_or_err "Installing common tools from APT" "sudo apt-get install --allow-unauthenticated -y libapp-nopaste-perl tree"
+# FIXME - the debian package is oddly broken - uses a bin/env based shebang
+# so nothing works under a brew. Fix here until #debian-perl patches it up
+sudo /usr/bin/perl -p -i -e 's|#!/usr/bin/env perl|#!/usr/bin/perl|' $(which nopaste)
 
 if [[ "$CLEANTEST" != "true" ]]; then
 ### apt-get invocation - faster to grab everything at once

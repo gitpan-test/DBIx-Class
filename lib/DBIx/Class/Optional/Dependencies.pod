@@ -18,7 +18,7 @@ Somewhere in your build-file (e.g. L<Module::Install>'s Makefile.PL):
 
   ...
 
-  configure_requires 'DBIx::Class' => '0.08250_02';
+  configure_requires 'DBIx::Class' => '0.08901';
 
   require DBIx::Class::Optional::Dependencies;
 
@@ -59,13 +59,15 @@ Modules required for the DBIx::Class administrative library
 
 =over
 
-=item * JSON::Any >= 1.22
+=item * JSON::Any >= 1.23
 
 =item * Moose >= 0.98
 
 =item * MooseX::Types >= 0.21
 
 =item * MooseX::Types::JSON >= 0.02
+
+=item * MooseX::Types::LoadableClass >= 0.011
 
 =item * MooseX::Types::Path::Class >= 0.05
 
@@ -83,13 +85,15 @@ Modules required for the CLI DBIx::Class interface dbicadmin
 
 =item * Getopt::Long::Descriptive >= 0.081
 
-=item * JSON::Any >= 1.22
+=item * JSON::Any >= 1.23
 
 =item * Moose >= 0.98
 
 =item * MooseX::Types >= 0.21
 
 =item * MooseX::Types::JSON >= 0.02
+
+=item * MooseX::Types::LoadableClass >= 0.011
 
 =item * MooseX::Types::Path::Class >= 0.05
 
@@ -343,6 +347,8 @@ Modules required for L<DBIx::Class::Storage::DBI::Replicated>
 
 =item * MooseX::Types >= 0.21
 
+=item * MooseX::Types::LoadableClass >= 0.011
+
 =back
 
 Requirement group: B<replicated>
@@ -441,7 +447,7 @@ from L</req_missing_for>.
 
 =back
 
-Returns a hashref containing the actual errors that occured while attempting
+Returns a hashref containing the actual errors that occurred while attempting
 to load each module in the requirement group.
 
 

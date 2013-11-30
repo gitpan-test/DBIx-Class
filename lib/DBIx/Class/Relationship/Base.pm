@@ -54,9 +54,16 @@ source, indicated by its class name.
 The condition argument describes the C<ON> clause of the C<JOIN>
 expression used to connect the two sources when creating SQL queries.
 
-To create simple equality joins, supply a hashref containing the
-remote table column name as the key(s), and the local table column
-name as the value(s), for example given:
+=head4 Simple equality
+
+To create simple equality joins, supply a hashref containing the remote
+table column name as the key(s) prefixed by C<'foreign.'>, and the
+corresponding local table column name as the value(s) prefixed by C<'self.'>.
+Both C<foreign> and C<self> are pseudo aliases and must be entered
+literally. They will be replaced with the actual correct table alias
+when the SQL is produced.
+
+For example given:
 
   My::Schema::Author->has_many(
     books => 'My::Schema::Book',
@@ -74,10 +81,6 @@ will result in the following C<JOIN> clause:
 This describes a relationship between the C<Author> table and the
 C<Book> table where the C<Book> table has a column C<author_id>
 containing the ID value of the C<Author>.
-
-C<foreign> and C<self> are pseudo aliases and must be entered
-literally. They will be replaced with the actual correct table alias
-when the SQL is produced.
 
 Similarly:
 
@@ -103,9 +106,11 @@ will result in the C<JOIN> clause:
 This describes the relationship from C<Book> to C<Edition>, where the
 C<Edition> table refers to a publisher and a type (e.g. "paperback"):
 
+=head4 Multiple groups of simple equality conditions
+
 As is the default in L<SQL::Abstract>, the key-value pairs will be
-C<AND>ed in the result. C<OR> can be achieved with an arrayref, for
-example a condition like:
+C<AND>ed in the resulting C<JOIN> clause. An C<OR> can be achieved with
+an arrayref. For example a condition like:
 
   My::Schema::Item->has_many(
     related_item_links => My::Schema::Item::Links,
@@ -126,6 +131,12 @@ C<Item::Links> is a many-to-many linking table, linking items back to
 themselves in a peer fashion (without a "parent-child" designation)
 
 =head4 Custom join conditions
+
+  NOTE: The custom join condition specification mechanism is capable of
+  generating JOIN clauses of virtually unlimited complexity. This may limit
+  your ability to traverse some of the more involved relationship chains the
+  way you expect, *and* may bring your RDBMS to its knees. Exercise care
+  when declaring relationships as described here.
 
 To specify joins which describe more than a simple equality of column
 values, the custom join condition coderef syntax can be used. For
@@ -214,7 +225,7 @@ hashref which does not depend on joins being available, but the hashref must
 contain only plain values/deflatable objects, such that the result can be
 passed directly to L<DBIx::Class::Relationship::Base/set_from_related>. For
 instance the C<year> constraint in the above example prevents the relationship
-from being used to to create related objects (an exception will be thrown).
+from being used to create related objects (an exception will be thrown).
 
 In order to allow the user to go truly crazy when generating a custom C<ON>
 clause, the C<$args> hashref passed to the subroutine contains some extra
@@ -286,7 +297,7 @@ For a 'belongs_to relationship, note the 'cascade_update':
 =item \%column
 
 A hashref where each key is the accessor you want installed in the main class,
-and its value is the name of the original in the fireign class.
+and its value is the name of the original in the foreign class.
 
   MyApp::Schema::Track->belongs_to( cd => 'DBICTest::Schema::CD', 'cd', {
       proxy => { cd_title => 'title' },
@@ -629,8 +640,10 @@ sub new_related {
   if (ref $self) {  # cdbi calls this as a class method, /me vomits
 
     my $rsrc = $self->result_source;
+    my $rel_info = $rsrc->relationship_info($rel)
+      or $self->throw_exception( "No such relationship '$rel'" );
     my (undef, $crosstable, $cond_targets) = $rsrc->_resolve_condition (
-      $rsrc->relationship_info($rel)->{cond}, $rel, $self, $rel
+      $rel_info->{cond}, $rel, $self, $rel
     );
 
     $self->throw_exception("Custom relationship '$rel' does not resolve to a join-free condition fragment")

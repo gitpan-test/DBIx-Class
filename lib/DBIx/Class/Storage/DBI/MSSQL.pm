@@ -27,22 +27,6 @@ __PACKAGE__->datetime_parser_type (
 
 __PACKAGE__->new_guid('NEWID()');
 
-sub __sql_server_x_or_higher {
-  my ($self, $version) = @_;
-
-  if (exists $_[0]->_server_info->{normalized_dbms_version}) {
-    if ($_[0]->_server_info->{normalized_dbms_version} >= $version) {
-       return 1
-    } else {
-       return 0
-    }
-  }
-  return undef;
-}
-
-sub _sql_server_2005_or_higher { shift->__sql_server_x_or_higher(9) }
-sub _sql_server_2012_or_higher { shift->__sql_server_x_or_higher(11) }
-
 sub _prep_for_execute {
   my $self = shift;
   my ($op, $ident, $args) = @_;
@@ -69,18 +53,14 @@ sub _prep_for_execute {
   my ($sql, $bind) = $self->next::method (@_);
 
   # SELECT SCOPE_IDENTITY only works within a statement scope. We
-  # must try to always use this particular idiom frist, as it is the
+  # must try to always use this particular idiom first, as it is the
   # only one that guarantees retrieving the correct id under high
   # concurrency. When this fails we will fall back to whatever secondary
   # retrieval method is specified in _identity_method, but at this
   # point we don't have many guarantees we will get what we expected.
   # http://msdn.microsoft.com/en-us/library/ms190315.aspx
   # http://davidhayden.com/blog/dave/archive/2006/01/17/2736.aspx
-  if (
-    not $self->_use_insert_returning and
-    $self->_perform_autoinc_retrieval and
-    not $self->_no_scope_identity_query
-  ) {
+  if ($self->_perform_autoinc_retrieval and not $self->_no_scope_identity_query) {
     $sql .= "\nSELECT SCOPE_IDENTITY()";
   }
 
@@ -100,9 +80,7 @@ sub _execute {
     my $identity;
 
     # we didn't even try on ftds
-    if (not $self->_use_insert_returning and
-        not $self->_no_scope_identity_query
-    ) {
+    unless ($self->_no_scope_identity_query) {
       ($identity) = try { $sth->fetchrow_array };
       $sth->finish;
     }
@@ -162,13 +140,6 @@ sub _exec_svp_begin {
 # A new SAVE TRANSACTION with the same name releases the previous one.
 sub _exec_svp_release { 1 }
 
-sub bind_attribute_by_data_type {
-  $_[1] =~ /^ (?: int(?:eger)? | (?:tiny|small|medium)int ) $/ix
-    ? DBI::SQL_INTEGER()
-    : undef
-  ;
-}
-
 sub _exec_svp_rollback {
   my ($self, $name) = @_;
 
@@ -180,23 +151,12 @@ sub sqlt_type { 'SQLServer' }
 sub sql_limit_dialect {
   my $self = shift;
 
-  my $supports_ofn = $self->_sql_server_2012_or_higher;
+  my $supports_rno = 0;
 
-  unless (defined $supports_ofn) {
-    # User is connecting via DBD::Sybase and has no permission to run
-    # stored procedures like xp_msver, or version detection failed for some
-    # other reason.
-    # So, we use a query to check if OFN is implemented.
-    try {
-      $self->_get_dbh->selectrow_array('SELECT 1 ORDER BY 1 OFFSET 0 ROWS');
-      $supports_ofn = 1;
-    };
+  if (exists $self->_server_info->{normalized_dbms_version}) {
+    $supports_rno = 1 if $self->_server_info->{normalized_dbms_version} >= 9;
   }
-  return 'OffsetFetchNext' if $supports_ofn;
-
-  my $supports_rno = $self->_sql_server_2005_or_higher;
-
-  unless (defined $supports_rno) {
+  else {
     # User is connecting via DBD::Sybase and has no permission to run
     # stored procedures like xp_msver, or version detection failed for some
     # other reason.
@@ -206,9 +166,8 @@ sub sql_limit_dialect {
       $supports_rno = 1;
     };
   }
-  return 'RowNumberOver' if $supports_rno;
 
-  return 'Top';
+  return $supports_rno ? 'RowNumberOver' : 'Top';
 }
 
 sub _ping {
@@ -226,9 +185,6 @@ sub _ping {
     0;
   };
 }
-
-# check for 2005 or greater here.
-sub _use_insert_returning { $_[0]->_sql_server_2005_or_higher }
 
 package # hide from PAUSE
   DBIx::Class::Storage::DBI::MSSQL::DateTime::Format;

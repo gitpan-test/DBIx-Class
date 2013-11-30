@@ -208,7 +208,7 @@ sub _run {
 
       $storage->ensure_connected;
       # if txn_depth is > 1 this means something was done to the
-      # original $dbh, otherwise we would not get past the preceeding if()
+      # original $dbh, otherwise we would not get past the preceding if()
       $storage->throw_exception(sprintf
         'Unexpected transaction depth of %d on freshly connected handle',
         $storage->transaction_depth,

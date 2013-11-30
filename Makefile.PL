@@ -5,6 +5,40 @@ use 5.008001;
 use inc::Module::Install 1.06;
 
 ##
+## TEMPORARY (and non-portable)
+## Get the dq stuff
+##
+my $target_libdir;
+BEGIN {
+  $target_libdir = 'lib/DBIx/Class/_TempExtlib';
+
+  if ($Module::Install::AUTHOR) {
+
+    `rm -rf $target_libdir`;
+    `mkdir $target_libdir`;
+    for (
+      [ 'Data-Query' => 'master' ],
+      [ 'SQL-Abstract' => 'dq' ],
+    ) {
+      my $tdir = "/tmp/dqlib/$_->[0]/_tmp_clone";
+
+      `rm -rf $tdir`;
+
+      `GIT_SSH=maint/careless_ssh.bash git clone --quiet git://git.shadowcat.co.uk/dbsrgits/$_->[0] $tdir`;
+      printf "\nIncluding %s git rev %s\n",
+        $_->[0],
+        scalar `GIT_DIR=$tdir/.git git rev-parse origin/$_->[1]`,
+      ;
+      `git archive --format=tar --remote=file://$tdir origin/$_->[1] lib/ | tar --strip-components=1 -xC $target_libdir`;
+
+      `rm -rf $tdir`;
+    }
+  }
+}
+
+use lib $target_libdir;
+
+##
 ## DO NOT USE THIS HACK IN YOUR DISTS!!! (it makes #toolchain sad)
 ##
 # get cpanX --installdeps . to behave in a checkout (most users do not expect
@@ -40,15 +74,18 @@ install_script (qw|
 ### All of them *MUST* go to DBIx::Class::Optional::Dependencies
 ###
 my $runtime_requires = {
-  # FIXME - temporary workaround for RT#83143 (Path::Class)
-  'File::Spec'               => '3.30',
-
   # FIXME - temporary, needs throwing out for something more efficient
   'Data::Compare'            => '1.22',
 
   # DBI itself should be capable of installation and execution in pure-perl
   # mode. However it has never been tested yet, so consider XS for the time
   # being
+###
+### IMPORTANT - do not raise this dependency
+### even though many bugfixes are present in newer versions, the general DBIC
+### rule is to bend over backwards for available DBI versions (given upgrading
+### them is often *not* easy or even possible)
+###
   'DBI'                      => '1.57',
 
   # on older versions first() leaks
@@ -71,7 +108,7 @@ my $runtime_requires = {
   'Data::Page'               => '2.00',
   'Devel::GlobalDestruction' => '0.09',
   'Hash::Merge'              => '0.12',
-  'Moo'                      => '1.000006',
+  'Moo'                      => '1.003000',
   'MRO::Compat'              => '0.12',
   'Module::Find'             => '0.07',
   'namespace::clean'         => '0.24',
@@ -84,11 +121,21 @@ my $runtime_requires = {
   # by the MySQL codepath. However this particular version is bundled
   # since 5.10.0 and is a pure-perl module anyway - let it slide
   'Text::Balanced'           => '2.00',
+
+  # deps for Data::Query
+  'SQL::ReservedWords'       => '0.8',
+  'Safe::Isa'                => '1.000003',
 };
 
 my $build_requires = {
   # needed for testing only, not for operation
   # we will move away from this dep eventually, perhaps to DBD::CSV or something
+###
+### IMPORTANT - do not raise this dependency
+### even though many bugfixes are present in newer versions, the general DBIC
+### rule is to bend over backwards for available DBDs (given upgrading them is
+### often *not* easy or even possible)
+###
   'DBD::SQLite'              => '1.29',
 };
 
@@ -105,17 +152,6 @@ my $test_requires = {
   # remove and do a manual glob-collection if n::c is no longer a dep
   'Package::Stash'           => '0.28',
 };
-
-# make strictures.pm happy (DO NOT LIKE, TOO MUCH XS!)
-# (i.e. what if the .git/.svn is *not* because of DBIC?)
-#
-# Note - this is added as test_requires *directly*, so it gets properly
-# excluded on META.yml cleansing
-if (-e '.git' or -e '.svn') {
-  test_requires 'indirect'              => '0.25';
-  test_requires 'multidimensional'      => '0.008';
-  test_requires 'bareword::filehandles' => '0.003';
-}
 
 # if the user has this env var set and no SQLT installed, tests will fail
 # same rationale for direct test_requires as the strictures stuff above

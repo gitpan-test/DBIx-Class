@@ -4,14 +4,15 @@ use warnings;
 use Test::More;
 use Test::Exception;
 use Try::Tiny;
-use DBIx::Class::SQLMaker::LimitDialects;
+
 use DBIx::Class::Optional::Dependencies ();
+plan skip_all => 'Test needs ' . DBIx::Class::Optional::Dependencies->req_missing_for ('test_rdbms_mssql_odbc')
+  unless DBIx::Class::Optional::Dependencies->req_ok_for ('test_rdbms_mssql_odbc');
+
 use lib qw(t/lib);
 use DBICTest;
 use DBIC::SqlMakerTest;
-
-plan skip_all => 'Test needs ' . DBIx::Class::Optional::Dependencies->req_missing_for ('test_rdbms_mssql_odbc')
-  unless DBIx::Class::Optional::Dependencies->req_ok_for ('test_rdbms_mssql_odbc');
+use DBIx::Class::SQLMaker::LimitDialects;
 
 my $OFFSET = DBIx::Class::SQLMaker::LimitDialects->__offset_bindtype;
 my $TOTAL  = DBIx::Class::SQLMaker::LimitDialects->__total_bindtype;
@@ -20,12 +21,6 @@ my ($dsn, $user, $pass) = @ENV{map { "DBICTEST_MSSQL_ODBC_${_}" } qw/DSN USER PA
 
 plan skip_all => 'Set $ENV{DBICTEST_MSSQL_ODBC_DSN}, _USER and _PASS to run this test'
   unless ($dsn && $user);
-my $schema;
-for my $use_insert_returning (0, 1) {
-  no warnings qw/redefine once/;
-  require DBIx::Class::Storage::DBI::MSSQL;
-  local *DBIx::Class::Storage::DBI::MSSQL::_use_insert_returning =
-    sub { $use_insert_returning };
 
 {
   my $srv_ver = DBICTest::Schema->connect($dsn, $user, $pass)->storage->_server_info->{dbms_version};
@@ -33,7 +28,7 @@ for my $use_insert_returning (0, 1) {
 }
 
 DBICTest::Schema->load_classes('ArtistGUID');
-$schema = DBICTest::Schema->connect($dsn, $user, $pass);
+my $schema = DBICTest::Schema->connect($dsn, $user, $pass);
 
 {
   no warnings 'redefine';
@@ -669,7 +664,6 @@ SQL
       }
     }
   }
-}
 }
 
 done_testing;

@@ -6,9 +6,11 @@ use base qw/DBIx::Class/;
 use DBIx::Class::Carp;
 use DBIx::Class::ResultSetColumn;
 use Scalar::Util qw/blessed weaken reftype/;
+use DBIx::Class::_Util 'fail_on_internal_wantarray';
 use Try::Tiny;
-use Data::Compare (); # no imports!!! guard against insane architecture
-
+use Data::Dumper::Concise ();
+use Data::Query::Constants;
+use Data::Query::ExprHelpers;
 # not importing first() as it will clash with our own method
 use List::Util ();
 
@@ -141,8 +143,8 @@ another.
 
 =head3 Resolving conditions and attributes
 
-When a resultset is chained from another resultset (ie:
-C<my $new_rs = $old_rs->search(\%extra_cond, \%attrs)>), conditions
+When a resultset is chained from another resultset (e.g.:
+C<< my $new_rs = $old_rs->search(\%extra_cond, \%attrs) >>), conditions
 and attributes with the same keys need resolving.
 
 If any of L</columns>, L</select>, L</as> are present, they reset the
@@ -304,7 +306,7 @@ call it as C<search(undef, \%attrs)>.
 
 For a list of attributes that can be passed to C<search>, see
 L</ATTRIBUTES>. For more examples of using this function, see
-L<Searching|DBIx::Class::Manual::Cookbook/Searching>. For a complete
+L<Searching|DBIx::Class::Manual::Cookbook/SEARCHING>. For a complete
 documentation for the first argument, see L<SQL::Abstract/"WHERE CLAUSES">
 and its extension L<DBIx::Class::SQLMaker>.
 
@@ -327,6 +329,7 @@ sub search {
   my $rs = $self->search_rs( @_ );
 
   if (wantarray) {
+    DBIx::Class::_ENV_::ASSERT_NO_INTERNAL_WANTARRAY and my $sog = fail_on_internal_wantarray($rs);
     return $rs->all;
   }
   elsif (defined wantarray) {
@@ -395,6 +398,10 @@ sub search_rs {
     $call_cond = { @_ };
   }
 
+  if (blessed($call_cond) and $call_cond->isa('Data::Query::ExprBuilder')) {
+    $call_cond = \$call_cond->{expr};
+  }
+
   # see if we can keep the cache (no $rs changes)
   my $cache;
   my %safe = (alias => 1, cache => 1);
@@ -406,6 +413,18 @@ sub search_rs {
     ref $call_cond eq 'ARRAY' && ! @$call_cond
   )) {
     $cache = $self->get_cache;
+  } elsif (
+    $self->{attrs}{cache} and
+    ($self->{attrs}{grep_cache} or $call_attrs->{grep_cache})
+  ) {
+    if (
+      keys %$call_attrs
+      and not (exists $call_attrs->{grep_cache} and !$call_attrs->{grep_cache})
+    ) {
+      die "Can't do complex search on resultset with grep_cache set";
+    }
+    my $grep_one = $self->_construct_perl_predicate($call_cond);
+    $cache = [ grep $grep_one->($_), $self->all ];
   }
 
   my $old_attrs = { %{$self->{attrs}} };
@@ -583,60 +602,104 @@ sub _normalize_selection {
 sub _stack_cond {
   my ($self, $left, $right) = @_;
 
-  # collapse single element top-level conditions
-  # (single pass only, unlikely to need recursion)
-  for ($left, $right) {
-    if (ref $_ eq 'ARRAY') {
-      if (@$_ == 0) {
-        $_ = undef;
+  my $source = $self->result_source;
+
+  my $converter = $source->schema->storage->sql_maker->converter;
+
+  my @top = map $source->_extract_top_level_conditions(
+    $converter->_expr_to_dq($_)
+  ), grep defined, $left, $right;
+
+  return undef unless @top;
+
+  my %seen;
+
+  my @uniq = grep { !$seen{Data::Dumper::Concise::Dumper($_)}++ } @top;
+
+  return \$uniq[0] if @uniq == 1;
+
+  return \Operator({ 'SQL.Naive' => 'AND' }, \@uniq);
+}
+
+my %perl_op_map = (
+  '=' => { numeric => '==', string => 'eq' },
+);
+
+sub _construct_perl_predicate {
+  my ($self, $cond) = @_;
+
+  # This shouldn't really live here but it'll do for the moment.
+
+  my %alias_map = (
+    $self->current_source_alias => {
+      join_path => [],
+      source => $self->result_source,
+      columns_info => $self->result_source->columns_info,
+    },
+  );
+
+  my $attrs = $self->_resolved_attrs;
+  foreach my $j ( @{$attrs->{from}}[1 .. $#{$attrs->{from}} ] ) {
+    next unless $j->[0]{-alias};
+    next unless $j->[0]{-join_path};
+    $alias_map{$j->[0]{-alias}} = {
+      join_path => [ map { keys %$_ } @{$j->[0]{-join_path}} ],
+      source => $j->[0]{-rsrc},
+      columns_info => $j->[0]{-rsrc}->columns_info,
+    };
+  }
+
+  my %as_map = map +($attrs->{select}[$_] => $attrs->{as}[$_]),
+                 grep !ref($attrs->{select}[$_]), 0..$#{$attrs->{select}};
+
+  my $storage = $self->result_source->schema->storage;
+  my $sql_maker = $storage->sql_maker;
+  my $tree = map_dq_tree {
+    if (is_Operator) {
+      my $op = $_->{operator}{'SQL.Naive'} or die "No operator";
+      if (lc($op) =~ /^(?:and|or|not)$/i) {
+        return Operator({ 'Perl' => lc($op) }, $op->{args});
       }
-      elsif (@$_ == 1) {
-        $_ = $_->[0];
+      if (my $op_map = $perl_op_map{$op}) {
+        die "Binop doesn't have two args - wtf?"
+          unless @{$_->{args}} == 2;
+        my $data_type;
+        my @mapped_args = map {
+          if (is_Identifier) {
+            die "Identifier not alias.colname"
+              unless @{$_->{elements}} == 2;
+            my ($alias, $col) = @{$_->{elements}};
+            die "${alias}.${col} not selected"
+              unless $as_map{"${alias}.${col}"};
+            unless ($data_type) {
+              my $colinfo = $alias_map{$alias}{columns_info}{$col};
+              unless (defined $colinfo->{is_numeric}) {
+                $colinfo->{is_numeric} = (
+                  $storage->is_datatype_numeric($colinfo->{data_type})
+                    ? 1
+                    : 0
+                );
+              }
+              $data_type = $colinfo->{is_numeric} ? 'numeric' : 'string';
+            }
+            Identifier(@{$alias_map{$alias}{join_path}}, $col);
+          } elsif (is_Value) {
+            $_;
+          } else {
+            die "Argument to operator neither identifier nor value";
+          }
+        } @{$_->{args}};
+        die "Couldn't determine numeric versus string" unless $data_type;
+        return \Operator({ Perl => $op_map->{$data_type} }, \@mapped_args);
       }
     }
-    elsif (ref $_ eq 'HASH') {
-      my ($first, $more) = keys %$_;
-
-      # empty hash
-      if (! defined $first) {
-        $_ = undef;
-      }
-      # one element hash
-      elsif (! defined $more) {
-        if ($first eq '-and' and ref $_->{'-and'} eq 'HASH') {
-          $_ = $_->{'-and'};
-        }
-        elsif ($first eq '-or' and ref $_->{'-or'} eq 'ARRAY') {
-          $_ = $_->{'-or'};
-        }
-      }
-    }
-  }
-
-  # merge hashes with weeding out of duplicates (simple cases only)
-  if (ref $left eq 'HASH' and ref $right eq 'HASH') {
-
-    # shallow copy to destroy
-    $right = { %$right };
-    for (grep { exists $right->{$_} } keys %$left) {
-      # the use of eq_deeply here is justified - the rhs of an
-      # expression can contain a lot of twisted weird stuff
-      delete $right->{$_} if Data::Compare::Compare( $left->{$_}, $right->{$_} );
-    }
-
-    $right = undef unless keys %$right;
-  }
-
-
-  if (defined $left xor defined $right) {
-    return defined $left ? $left : $right;
-  }
-  elsif (! defined $left) {
-    return undef;
-  }
-  else {
-    return { -and => [ $left, $right ] };
-  }
+    die "Unable to map node to perl";
+  } $sql_maker->converter->_where_to_dq($cond);
+  my ($code, @values) = @{$storage->perl_renderer->render($tree)};
+  my $sub = eval q!sub { !.$code.q! }!
+    or die "Failed to build sub: $@";
+  my @args = map $_->{value}, @values;
+  return sub { local $_ = $_[0]; $sub->(@args) };
 }
 
 =head2 search_literal
@@ -646,7 +709,7 @@ should only be used in that context. C<search_literal> is a convenience
 method. It is equivalent to calling C<< $schema->search(\[]) >>, but if you
 want to ensure columns are bound correctly, use L</search>.
 
-See L<DBIx::Class::Manual::Cookbook/Searching> and
+See L<DBIx::Class::Manual::Cookbook/SEARCHING> and
 L<DBIx::Class::Manual::FAQ/Searching> for searching techniques that do not
 require C<search_literal>.
 
@@ -1211,8 +1274,6 @@ sub slice {
   $attrs->{offset} += $min;
   $attrs->{rows} = ($max ? ($max - $min + 1) : 1);
   return $self->search(undef, $attrs);
-  #my $slice = (ref $self)->new($self->result_source, $attrs);
-  #return (wantarray ? $slice->all : $slice);
 }
 
 =head2 next
@@ -1358,7 +1419,7 @@ sub _construct_results {
       if (
         $aliastypes->{multiplying}{$sel_alias}
           or
-        scalar grep { $aliastypes->{multiplying}{(values %$_)[0]} } @{ $aliastypes->{selecting}{$sel_alias}{-parents} }
+        $aliastypes->{premultiplied}{$sel_alias}
       ) {
         $multiplied_selectors->{$_} = 1 for values %{$aliastypes->{selecting}{$sel_alias}{-seen_columns}}
       }
@@ -1440,7 +1501,7 @@ sub _construct_results {
       :                                           'classic_nonpruning'
     ;
 
-    # $args and $attrs to _mk_row_parser are seperated to delineate what is
+    # $args and $attrs to _mk_row_parser are separated to delineate what is
     # core collapser stuff and what is dbic $rs specific
     @{$self->{_row_parser}{$parser_type}}{qw(cref nullcheck)} = $rsrc->_mk_row_parser({
       eval => 1,
@@ -1456,7 +1517,7 @@ sub _construct_results {
     # can't work without it). Add an explicit check for the *main*
     # result, hopefully this will gradually weed out such errors
     #
-    # FIXME - this is a temporary kludge that reduces perfromance
+    # FIXME - this is a temporary kludge that reduces performance
     # It is however necessary for the time being
     my ($unrolled_non_null_cols_to_check, $err);
 
@@ -1728,15 +1789,20 @@ sub _count_subq_rs {
         $sql_maker->{name_sep} = '';
       }
 
+      # delete local is 5.12+
+      local @{$sql_maker}{qw(renderer converter)};
+      delete @{$sql_maker}{qw(renderer converter)};
+
       my ($lquote, $rquote, $sep) = map { quotemeta $_ } ($sql_maker->_quote_chars, $sql_maker->name_sep);
 
-      my $having_sql = $sql_maker->_parse_rs_attrs ({ having => $attrs->{having} });
+      my $having_sql = $sql_maker->_render_sqla(where => $attrs->{having});
+
       my %seen_having;
 
       # search for both a proper quoted qualified string, for a naive unquoted scalarref
       # and if all fails for an utterly naive quoted scalar-with-function
       while ($having_sql =~ /
-        $rquote $sep $lquote (.+?) $rquote
+        (?: $rquote $sep)? $lquote (.+?) $rquote
           |
         [\s,] \w+ \. (\w+) [\s,]
           |
@@ -1908,7 +1974,7 @@ sub _rs_update_delete {
   if (!$needs_subq and @{$attrs->{from}} > 1) {
 
     ($attrs->{from}, $join_classifications) =
-      $storage->_prune_unused_joins ($attrs->{from}, $attrs->{select}, $self->{cond}, $attrs);
+      $storage->_prune_unused_joins ($attrs);
 
     # any non-pruneable non-local restricting joins imply subq
     $needs_subq = defined List::Util::first { $_ ne $attrs->{alias} } keys %{ $join_classifications->{restricting} || {} };
@@ -1926,12 +1992,18 @@ sub _rs_update_delete {
   if (! $needs_subq) {
     # Most databases do not allow aliasing of tables in UPDATE/DELETE. Thus
     # a condition containing 'me' or other table prefixes will not work
-    # at all. Tell SQLMaker to dequalify idents via a gross hack.
-    $cond = do {
-      my $sqla = $rsrc->storage->sql_maker;
-      local $sqla->{_dequalify_idents} = 1;
-      \[ $sqla->_recurse_where($self->{cond}) ];
-    };
+    # at all - so we convert the WHERE to a dq tree now, dequalify all
+    # identifiers found therein via a scan across the tree, and then use
+    # \{} style to pass the result onwards for use in the final query
+    if ($self->{cond}) {
+      $cond = do {
+        my $converter = $rsrc->storage->sql_maker->converter;
+        scan_dq_nodes({
+          DQ_IDENTIFIER ,=> sub { $_ = [ $_->[-1] ] for $_[0]->{elements} }
+        }, my $where_dq = $converter->_where_to_dq($self->{cond}));
+        \$where_dq;
+      };
+    }
   }
   else {
     # we got this far - means it is time to wrap a subquery
@@ -1953,14 +2025,19 @@ sub _rs_update_delete {
     my $subrs = (ref $self)->new($rsrc, $attrs);
 
     if (@$idcols == 1) {
-      $cond = { $idcols->[0] => { -in => $subrs->as_query } };
+      $cond = { $idcols->[0] => { -in => \$subrs->_as_select_dq } };
     }
     elsif ($storage->_use_multicolumn_in) {
       # no syntax for calling this properly yet
       # !!! EXPERIMENTAL API !!! WILL CHANGE !!!
-      $cond = $storage->sql_maker->_where_op_multicolumn_in (
-        $idcols, # how do I convey a list of idents...? can binds reside on lhs?
-        $subrs->as_query
+      my $left = $storage->sql_maker->_render_sqla(select_select => $idcols);
+      $left =~ s/^SELECT //i;
+      my $right = $storage->sql_maker
+                          ->converter
+                          ->_literal_to_dq(${$subrs->as_query});
+      $cond = \Operator(
+        { 'SQL.Naive' => 'in' },
+        [ Literal(SQL => "( $left )"), $right ],
       ),
     }
     else {
@@ -1970,6 +2047,8 @@ sub _rs_update_delete {
       if (
         $existing_group_by
           or
+        # we do not need to check pre-multipliers, since if the premulti is there, its
+        # parent (who is multi) will be there too
         keys %{ $join_classifications->{multiplying} || {} }
       ) {
         # make sure if there is a supplied group_by it matches the columns compiled above
@@ -2189,7 +2268,7 @@ first element should be a list of column names and each subsequent
 element should be a data value in the earlier specified column order.
 For example:
 
-  $Arstist_rs->populate([
+  $schema->resultset("Artist")->populate([
     [ qw( artistid name ) ],
     [ 100, 'A Formally Unknown Singer' ],
     [ 101, 'A singer that jumped the shark two albums ago' ],
@@ -2313,6 +2392,11 @@ sub populate {
           $rel,
         );
 
+        if (ref($related) eq 'REF' and ref($$related) eq 'HASH') {
+          $related = $self->result_source
+                          ->_extract_fixed_values_for($$related, $rel);
+        }
+
         my @rows_to_add = ref $item->{$rel} eq 'ARRAY' ? @{$item->{$rel}} : ($item->{$rel});
         my @populate = map { {%$_, %$related} } @rows_to_add;
 
@@ -2322,8 +2406,7 @@ sub populate {
   }
 }
 
-
-# populate() argumnets went over several incarnations
+# populate() arguments went over several incarnations
 # What we ultimately support is AoH
 sub _normalize_populate_args {
   my ($self, $arg) = @_;
@@ -2487,17 +2570,8 @@ sub _merge_with_rscond {
   if (! defined $self->{cond}) {
     # just massage $data below
   }
-  elsif ($self->{cond} eq $DBIx::Class::ResultSource::UNRESOLVABLE_CONDITION) {
-    %new_data = %{ $self->{attrs}{related_objects} || {} };  # nothing might have been inserted yet
-    @cols_from_relations = keys %new_data;
-  }
-  elsif (ref $self->{cond} ne 'HASH') {
-    $self->throw_exception(
-      "Can't abstract implicit construct, resultset condition not a hash"
-    );
-  }
-  else {
-    # precendence must be given to passed values over values inherited from
+  elsif (ref $self->{cond} eq 'HASH') {
+    # precedence must be given to passed values over values inherited from
     # the cond, so the order here is important.
     my $collapsed_cond = $self->_collapse_cond($self->{cond});
     my %implied = %{$self->_remove_alias($collapsed_cond, $alias)};
@@ -2518,6 +2592,23 @@ sub _merge_with_rscond {
       }
     }
   }
+  elsif (ref $self->{cond} eq 'REF' and ref ${$self->{cond}} eq 'HASH') {
+    if ((${$self->{cond}})->{'DBIx::Class::ResultSource.UNRESOLVABLE'}) {
+      %new_data = %{ $self->{attrs}{related_objects} || {} };  # nothing might have been inserted yet
+      @cols_from_relations = keys %new_data;
+    } else {
+      %new_data = %{$self->_remove_alias(
+        $self->result_source
+             ->_extract_fixed_values_for(${$self->{cond}}),
+        $alias
+      )};
+    }
+  }
+  else {
+    $self->throw_exception(
+      "Can't abstract implicit construct, resultset condition not a hash"
+    );
+  }
 
   %new_data = (
     %new_data,
@@ -2532,7 +2623,7 @@ sub _merge_with_rscond {
 # determines if the resultset defines at least one
 # of the attributes supplied
 #
-# used to determine if a subquery is neccessary
+# used to determine if a subquery is necessary
 #
 # supports some virtual attributes:
 #   -join
@@ -2663,6 +2754,19 @@ sub as_query {
   $self->{_attrs}{_sqlmaker_select_args} = $attrs->{_sqlmaker_select_args};
 
   $aq;
+}
+
+sub _as_select_dq {
+  my $self = shift;
+  my $attrs = { %{ $self->_resolved_attrs } };
+  my $storage = $self->result_source->storage;
+  my (undef, $ident, @args) = $storage->_select_args(
+    $attrs->{from}, $attrs->{select}, $attrs->{where}, $attrs
+  );
+  $ident = $ident->from if blessed($ident);
+  $storage->sql_maker->converter->_select_to_dq(
+    $ident, @args
+  );
 }
 
 =head2 find_or_new
@@ -3425,6 +3529,9 @@ sub _resolved_attrs {
   my $source = $self->result_source;
   my $alias  = $attrs->{alias};
 
+  $self->throw_exception("Specifying distinct => 1 in conjunction with collapse => 1 is unsupported")
+    if $attrs->{collapse} and $attrs->{distinct};
+
   # default selection list
   $attrs->{columns} = [ $source->columns ]
     unless List::Util::first { exists $attrs->{$_} } qw/columns cols select as/;
@@ -3514,7 +3621,7 @@ sub _resolved_attrs {
         $source->_resolve_join(
           $join,
           $alias,
-          { %{ $attrs->{seen_join} || {} } },
+          ($attrs->{seen_join} = { %{ $attrs->{seen_join} || {} } }),
           ( $attrs->{seen_join} && keys %{$attrs->{seen_join}})
             ? $attrs->{from}[-1][0]{-join_path}
             : []
@@ -3535,22 +3642,9 @@ sub _resolved_attrs {
     $attrs->{group_by} = [ $attrs->{group_by} ];
   }
 
-  # generate the distinct induced group_by early, as prefetch will be carried via a
-  # subquery (since a group_by is present)
-  if (delete $attrs->{distinct}) {
-    if ($attrs->{group_by}) {
-      carp_unique ("Useless use of distinct on a grouped resultset ('distinct' is ignored when a 'group_by' is present)");
-    }
-    else {
-      $attrs->{_grouped_by_distinct} = 1;
-      # distinct affects only the main selection part, not what prefetch may
-      # add below.
-      $attrs->{group_by} = $source->storage->_group_over_selection($attrs);
-    }
-  }
 
   # generate selections based on the prefetch helper
-  my $prefetch;
+  my ($prefetch, @prefetch_select, @prefetch_as);
   $prefetch = $self->_merge_joinpref_attr( {}, delete $attrs->{prefetch} )
     if defined $attrs->{prefetch};
 
@@ -3558,6 +3652,9 @@ sub _resolved_attrs {
 
     $self->throw_exception("Unable to prefetch, resultset contains an unnamed selector $attrs->{_dark_selector}{string}")
       if $attrs->{_dark_selector};
+
+    $self->throw_exception("Specifying prefetch in conjunction with an explicit collapse => 0 is unsupported")
+      if defined $attrs->{collapse} and ! $attrs->{collapse};
 
     $attrs->{collapse} = 1;
 
@@ -3584,16 +3681,13 @@ sub _resolved_attrs {
 
     my @prefetch = $source->_resolve_prefetch( $prefetch, $alias, $join_map );
 
-    push @{ $attrs->{select} }, (map { $_->[0] } @prefetch);
-    push @{ $attrs->{as} }, (map { $_->[1] } @prefetch);
-  }
-
-  if ( List::Util::first { $_ =~ /\./ } @{$attrs->{as}} ) {
-    $attrs->{_related_results_construction} = 1;
+    # save these for after distinct resolution
+    @prefetch_select = map { $_->[0] } @prefetch;
+    @prefetch_as = map { $_->[1] } @prefetch;
   }
 
   # run through the resulting joinstructure (starting from our current slot)
-  # and unset collapse if proven unnesessary
+  # and unset collapse if proven unnecessary
   #
   # also while we are at it find out if the current root source has
   # been premultiplied by previous related_source chaining
@@ -3639,6 +3733,34 @@ sub _resolved_attrs {
       # if we can not analyze the from - err on the side of safety
       $attrs->{_main_source_premultiplied} = 1;
     }
+  }
+
+  # generate the distinct induced group_by before injecting the prefetched select/as parts
+  if (delete $attrs->{distinct}) {
+    if ($attrs->{group_by}) {
+      carp_unique ("Useless use of distinct on a grouped resultset ('distinct' is ignored when a 'group_by' is present)");
+    }
+    else {
+      $attrs->{_grouped_by_distinct} = 1;
+      # distinct affects only the main selection part, not what prefetch may add below
+      ($attrs->{group_by}, my $new_order) = $source->storage->_group_over_selection($attrs);
+
+      # FIXME possibly ignore a rewritten order_by (may turn out to be an issue)
+      # The thinking is: if we are collapsing the subquerying prefetch engine will
+      # rip stuff apart for us anyway, and we do not want to have a potentially
+      # function-converted external order_by
+      # ( there is an explicit if ( collapse && _grouped_by_distinct ) check in DBIHacks )
+      $attrs->{order_by} = $new_order unless $attrs->{collapse};
+    }
+  }
+
+  # inject prefetch-bound selection (if any)
+  push @{$attrs->{select}}, @prefetch_select;
+  push @{$attrs->{as}}, @prefetch_as;
+
+  # whether we can get away with the dumbest (possibly DBI-internal) collapser
+  if ( List::Util::first { $_ =~ /\./ } @{$attrs->{as}} ) {
+    $attrs->{_related_results_construction} = 1;
   }
 
   # if both page and offset are specified, produce a combined offset
@@ -4219,7 +4341,7 @@ object with all of its related data.
 If an L</order_by> is already declared, and orders the resultset in a way that
 makes collapsing as described above impossible (e.g. C<< ORDER BY
 has_many_rel.column >> or C<ORDER BY RANDOM()>), DBIC will automatically
-switch to "eager" mode and slurp the entire resultset before consturcting the
+switch to "eager" mode and slurp the entire resultset before constructing the
 first object returned by L</next>.
 
 Setting this attribute on a resultset that does not join any has_many
@@ -4433,8 +4555,17 @@ or with an in-place function in which case literal SQL is required:
 
 =back
 
-Set to 1 to group by all columns. If the resultset already has a group_by
-attribute, this setting is ignored and an appropriate warning is issued.
+Set to 1 to automatically generate a L</group_by> clause based on the selection
+(including intelligent handling of L</order_by> contents). Note that the group
+criteria calculation takes place over the B<final> selection. This includes
+any L</+columns>, L</+select> or L</order_by> additions in subsequent
+L</search> calls, and standalone columns selected via
+L<DBIx::Class::ResultSetColumn> (L</get_column>). A notable exception are the
+extra selections specified via L</prefetch> - such selections are explicitly
+excluded from group criteria calculations.
+
+If the final ResultSet also explicitly defines a L</group_by> attribute, this
+setting is ignored and an appropriate warning is issued.
 
 =head2 where
 
@@ -4643,7 +4774,7 @@ or to a sensible value based on the "data_type".
 =item dbic_colname
 
 Used to fill in missing sqlt_datatype and sqlt_size attributes (if they are
-explicitly specified they are never overriden).  Also used by some weird DBDs,
+explicitly specified they are never overridden).  Also used by some weird DBDs,
 where the column name should be available at bind_param time (e.g. Oracle).
 
 =back

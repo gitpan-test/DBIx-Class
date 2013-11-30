@@ -3,6 +3,8 @@ package DBIx::Class::Schema;
 use strict;
 use warnings;
 
+use base 'DBIx::Class';
+
 use DBIx::Class::Carp;
 use Try::Tiny;
 use Scalar::Util qw/weaken blessed/;
@@ -10,8 +12,6 @@ use Sub::Name 'subname';
 use B 'svref_2object';
 use Devel::GlobalDestruction;
 use namespace::clean;
-
-use base qw/DBIx::Class/;
 
 __PACKAGE__->mk_classdata('class_mappings' => {});
 __PACKAGE__->mk_classdata('source_registrations' => {});
@@ -73,12 +73,13 @@ particular which module inherits off which.
 
 =back
 
+  package MyApp::Schema;
   __PACKAGE__->load_namespaces();
 
   __PACKAGE__->load_namespaces(
      result_namespace => 'Res',
      resultset_namespace => 'RSet',
-     default_resultset_class => '+MyDB::Othernamespace::RSet',
+     default_resultset_class => '+MyApp::Othernamespace::RSet',
   );
 
 With no arguments, this method uses L<Module::Find> to load all of the
@@ -1000,7 +1001,7 @@ sub svp_rollback {
 
 Clones the schema and its associated result_source objects and returns the
 copy. The resulting copy will have the same attributes as the source schema,
-except for those attributes explicitly overriden by the provided C<%attrs>.
+except for those attributes explicitly overridden by the provided C<%attrs>.
 
 =cut
 

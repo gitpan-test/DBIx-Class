@@ -12,12 +12,13 @@ use Carp ();
 # Makefile.PL in $AUTHOR mode
 
 my $json_any = {
-  'JSON::Any'                     => '1.22',
+  'JSON::Any'                     => '1.23',
 };
 
 my $moose_basic = {
   'Moose'                         => '0.98',
   'MooseX::Types'                 => '0.21',
+  'MooseX::Types::LoadableClass'  => '0.011',
 };
 
 my $replicated = {
@@ -195,7 +196,10 @@ my $reqs = {
   test_admin_script => {
     req => {
       %$admin_script,
+      'JSON::Any' => '1.30',
       'JSON' => 0,
+      'JSON::PP' => 0,
+      'Cpanel::JSON::XS' => 0,
       'JSON::XS' => 0,
       $^O eq 'MSWin32'
         # for t/admin/10script.t
@@ -897,7 +901,7 @@ EOD
     '=item Return Value: \%list_of_loaderrors_per_module',
     '=back',
     <<'EOD',
-Returns a hashref containing the actual errors that occured while attempting
+Returns a hashref containing the actual errors that occurred while attempting
 to load each module in the requirement group.
 EOD
     '=head1 AUTHOR',

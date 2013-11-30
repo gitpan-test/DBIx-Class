@@ -118,7 +118,7 @@ with NULL as the default, and save yourself a SELECT.
 =cut
 
 ## It needs to store the new objects somewhere, and call insert on that list later when insert is called on this object. We may need an accessor for these so the user can retrieve them, if just doing ->new().
-## This only works because DBIC doesnt yet care to check whether the new_related objects have been passed all their mandatory columns
+## This only works because DBIC doesn't yet care to check whether the new_related objects have been passed all their mandatory columns
 ## When doing the later insert, we need to make sure the PKs are set.
 ## using _relationship_data in new and funky ways..
 ## check Relationship::CascadeActions and Relationship::Accessor for compat
@@ -1125,7 +1125,7 @@ sub copy {
   my $new = { _column_data => $col_data };
   bless $new, ref $self;
 
-  $new->result_source($self->result_source);
+  $new->result_source(my $source = $self->result_source);
   $new->set_inflated_columns($changes);
   $new->insert;
 
@@ -1134,17 +1134,21 @@ sub copy {
   # constraints
   my $relnames_copied = {};
 
-  foreach my $relname ($self->result_source->relationships) {
-    my $rel_info = $self->result_source->relationship_info($relname);
+  foreach my $relname ($source->relationships) {
+    my $rel_info = $source->relationship_info($relname);
 
     next unless $rel_info->{attrs}{cascade_copy};
 
-    my $resolved = $self->result_source->_resolve_condition(
+    my $resolved = $source->_resolve_condition(
       $rel_info->{cond}, $relname, $new, $relname
     );
 
+    if (ref($resolved) eq 'REF') {
+      $resolved = $source->_extract_fixed_values_for($$resolved, 'me');
+    }
+
     my $copied = $relnames_copied->{ $rel_info->{source} } ||= {};
-    foreach my $related ($self->search_related($relname)) {
+    foreach my $related ($self->search_related($relname)->all) {
       my $id_str = join("\0", $related->id);
       next if $copied->{$id_str};
       $copied->{$id_str} = 1;

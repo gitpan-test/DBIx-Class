@@ -1,10 +1,11 @@
 package # Hide from PAUSE
   DBIx::Class::SQLMaker::Oracle;
 
-use warnings;
-use strict;
+use Module::Runtime ();
+use Moo;
+use namespace::clean;
 
-use base qw( DBIx::Class::SQLMaker );
+extends 'DBIx::Class::SQLMaker';
 
 BEGIN {
   use DBIx::Class::Optional::Dependencies;
@@ -12,16 +13,18 @@ BEGIN {
     unless DBIx::Class::Optional::Dependencies->req_ok_for ('id_shortener');
 }
 
-sub new {
-  my $self = shift;
-  my %opts = (ref $_[0] eq 'HASH') ? %{$_[0]} : @_;
-  push @{$opts{special_ops}}, {
-    regex => qr/^prior$/i,
-    handler => '_where_field_PRIOR',
-  };
-
-  $self->next::method(\%opts);
+sub _build_converter_class {
+  Module::Runtime::use_module('DBIx::Class::SQLMaker::Converter::Oracle');
 }
+
+around _build_renderer_roles => sub {
+  my ($orig, $self) = (shift, shift);
+  (
+    'Data::Query::Renderer::SQL::Extension::ConnectBy',
+    'Data::Query::Renderer::SQL::Dialect::ReturnInto',
+    $self->$orig(@_),
+  );
+};
 
 sub _assemble_binds {
   my $self = shift;
