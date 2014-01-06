@@ -9,9 +9,6 @@ use Storable qw(dclone freeze nfreeze thaw);
 use Scalar::Util qw/refaddr/;
 use Carp;
 
-plan skip_all => 'Something causes this to fail on TravisCI'
-  if $ENV{TRAVIS};
-
 sub ref_ne {
   my ($refa, $refb) = map { refaddr $_ or croak "$_ is not a reference!" } @_[0,1];
   cmp_ok (
@@ -70,7 +67,8 @@ if ($ENV{DBICTEST_MEMCACHED}) {
     my $key = 'tmp_dbic_84serialize_memcached_test';
 
     $stores{memcached} = sub {
-      $memcached->set( $key, $_[0], 60 );
+      $memcached->set( $key, $_[0], 60 )
+        or die "Unable to insert into $ENV{DBICTEST_MEMCACHED} - is server running?";
       local $DBIx::Class::ResultSourceHandle::thaw_schema = $schema;
       return $memcached->get($key);
     };

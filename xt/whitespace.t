@@ -1,7 +1,7 @@
 use warnings;
 use strict;
 
-use Test::More skip_all => 'Would TODO but Test::EOL ignores $TODO';
+use Test::More;
 use File::Glob 'bsd_glob';
 use lib 't/lib';
 use DBICTest ':GlobalLock';

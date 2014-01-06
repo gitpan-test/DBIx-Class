@@ -28,7 +28,6 @@ no_index:
     - lib/DBIx/Class/Admin
     - lib/DBIx/Class/CDBICompat
     - lib/DBIx/Class/PK/Auto
-    - lib/DBIx/Class/_TempExtlib
     - maint
     - t
     - xt
@@ -37,7 +36,6 @@ no_index:
     - DBIx::Class::Storage::BlockRunner
     - DBIx::Class::Carp
     - DBIx::Class::_Util
-    - DBIx::Class::_TempExtlib
     - DBIx::Class::ResultSet::Pager
 requires:
   Class::Accessor::Grouped: 0.10010
@@ -54,11 +52,9 @@ requires:
   List::Util: 1.16
   MRO::Compat: 0.12
   Module::Find: 0.07
-  Moo: 1.003000
+  Moo: 1.000006
   Path::Class: 0.18
-  SQL::Abstract: 1.73
-  SQL::ReservedWords: 0.8
-  Safe::Isa: 1.000003
+  SQL::Abstract: 1.75
   Scope::Guard: 0.03
   Sub::Name: 0.04
   Text::Balanced: 2.00
@@ -72,5 +68,5 @@ resources:
   homepage: http://www.dbix-class.org/
   license: http://dev.perl.org/licenses/
   repository: https://github.com/dbsrgits/DBIx-Class
-version: 0.08901
+version: 0.08250_03
 x_authority: cpan:RIBASUSHI

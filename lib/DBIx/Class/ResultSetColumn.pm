@@ -114,7 +114,7 @@ sub new {
   # if it turns out to be an aggregate - at least the user will get a proper exception
   # instead of silent drop of the group_by altogether
   my $new = bless {
-    _select => \ ($rsrc->storage->sql_maker->_render_sqla(select_select => $select) =~ /^\s*SELECT\s*(.+)/i)[0],
+    _select => \ $rsrc->storage->sql_maker->_recurse_fields($select),
     _as => $column,
     _parent_resultset => $new_parent_rs }, $class;
   return $new;

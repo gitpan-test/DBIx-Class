@@ -2,9 +2,6 @@ use strict;
 use warnings;
 
 use Test::More;
-
-local $TODO = 'Temporarily todo-ed for dq2eb';
-
 use lib qw(t/lib);
 use List::Util 'min';
 use DBICTest;
@@ -118,7 +115,7 @@ is_same_sql_bind(
   '(
     SELECT "owner_name"
       FROM (
-        SELECT "owner"."name" AS "owner_name", "title" AS "ORDER__BY__001"
+        SELECT "owner"."name" AS "owner_name", "me"."title"
           FROM "books" "me"
           JOIN "owners" "owner" ON "owner"."id" = "me"."owner"
         WHERE ( "source" = ? )
@@ -127,9 +124,9 @@ is_same_sql_bind(
       (
         SELECT COUNT(*)
           FROM "books" "rownum__emulation"
-        WHERE "rownum__emulation"."title" < "ORDER__BY__001"
+        WHERE "rownum__emulation"."title" < "me"."title"
       ) BETWEEN ? AND ?
-    ORDER BY "ORDER__BY__001" ASC
+    ORDER BY "me"."title" ASC
   )',
   [
     [ { sqlt_datatype => 'varchar', sqlt_size => 100, dbic_colname => 'source' } => 'Library' ],

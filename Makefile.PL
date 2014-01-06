@@ -5,40 +5,6 @@ use 5.008001;
 use inc::Module::Install 1.06;
 
 ##
-## TEMPORARY (and non-portable)
-## Get the dq stuff
-##
-my $target_libdir;
-BEGIN {
-  $target_libdir = 'lib/DBIx/Class/_TempExtlib';
-
-  if ($Module::Install::AUTHOR) {
-
-    `rm -rf $target_libdir`;
-    `mkdir $target_libdir`;
-    for (
-      [ 'Data-Query' => 'master' ],
-      [ 'SQL-Abstract' => 'dq' ],
-    ) {
-      my $tdir = "/tmp/dqlib/$_->[0]/_tmp_clone";
-
-      `rm -rf $tdir`;
-
-      `GIT_SSH=maint/careless_ssh.bash git clone --quiet git://git.shadowcat.co.uk/dbsrgits/$_->[0] $tdir`;
-      printf "\nIncluding %s git rev %s\n",
-        $_->[0],
-        scalar `GIT_DIR=$tdir/.git git rev-parse origin/$_->[1]`,
-      ;
-      `git archive --format=tar --remote=file://$tdir origin/$_->[1] lib/ | tar --strip-components=1 -xC $target_libdir`;
-
-      `rm -rf $tdir`;
-    }
-  }
-}
-
-use lib $target_libdir;
-
-##
 ## DO NOT USE THIS HACK IN YOUR DISTS!!! (it makes #toolchain sad)
 ##
 # get cpanX --installdeps . to behave in a checkout (most users do not expect
@@ -108,23 +74,19 @@ my $runtime_requires = {
   'Data::Page'               => '2.00',
   'Devel::GlobalDestruction' => '0.09',
   'Hash::Merge'              => '0.12',
-  'Moo'                      => '1.003000',
+  'Moo'                      => '1.000006',
   'MRO::Compat'              => '0.12',
   'Module::Find'             => '0.07',
   'namespace::clean'         => '0.24',
   'Path::Class'              => '0.18',
   'Scope::Guard'             => '0.03',
-  'SQL::Abstract'            => '1.73',
+  'SQL::Abstract'            => '1.75',
   'Try::Tiny'                => '0.07',
 
   # Technically this is not a core dependency - it is only required
   # by the MySQL codepath. However this particular version is bundled
   # since 5.10.0 and is a pure-perl module anyway - let it slide
   'Text::Balanced'           => '2.00',
-
-  # deps for Data::Query
-  'SQL::ReservedWords'       => '0.8',
-  'Safe::Isa'                => '1.000003',
 };
 
 my $build_requires = {
@@ -194,9 +156,14 @@ if ($Module::Install::AUTHOR  and ! $ENV{MAKELEVEL}) {
 
   # We need the MM facilities to generate the pieces for the final MM run.
   # Just instantiate a throaway object here
+  #
+  # Also EUMM and MI disagree on what is the format of Meta->name, just
+  # punt here until a new M::I is shipped (if at all)
+  my $name = Meta->name || die 'The Module::Install metadata must be available at this point but is not - did you rearrange the Makefile.PL...?';
+  $name =~ s/\-/::/g;
   my $mm_proto = ExtUtils::MakeMaker->new({
     NORECURS => 1,
-    NAME => Meta->name || die 'The Module::Install metadata must be available at this point but is not - did you rearrange the Makefile.PL...?',
+    NAME => $name,
   });
 
   # Crutch for DISTBUILDING_IN_HELL

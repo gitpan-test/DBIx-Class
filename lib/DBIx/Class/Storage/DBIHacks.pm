@@ -16,8 +16,6 @@ use mro 'c3';
 use List::Util 'first';
 use Scalar::Util 'blessed';
 use Sub::Name 'subname';
-use Data::Query::Constants;
-use Data::Query::ExprHelpers;
 use namespace::clean;
 
 #
@@ -178,7 +176,7 @@ sub _adjust_select_args_for_complex_prefetch {
   # join collapse *will not work* on heavy data types.
   my $connecting_aliastypes = $self->_resolve_aliastypes_from_select_args({
     %$inner_attrs,
-    select => undef,
+    select => [],
   });
 
   for (sort map { keys %{$_->{-seen_columns}||{}} } map { values %$_ } values %$connecting_aliastypes) {
@@ -413,29 +411,16 @@ sub _resolve_aliastypes_from_select_args {
     $sql_maker->{name_sep} = '';
   }
 
-  # delete local is 5.12+
-  local @{$sql_maker}{qw(renderer converter)};
-  delete @{$sql_maker}{qw(renderer converter)};
-
   my ($lquote, $rquote, $sep) = map { quotemeta $_ } ($sql_maker->_quote_chars, $sql_maker->name_sep);
 
   # generate sql chunks
   my $to_scan = {
     restricting => [
-      ($attrs->{where}
-        ? ($sql_maker->_recurse_where($attrs->{where}))[0]
-        : ()
-      ),
-      ($attrs->{having}
-        ? ($sql_maker->_recurse_where($attrs->{having}))[0]
-        : ()
-      ),
+      $sql_maker->_recurse_where ($attrs->{where}),
+      $sql_maker->_parse_rs_attrs ({ having => $attrs->{having} }),
     ],
     grouping => [
-      ($attrs->{group_by}
-        ? ($sql_maker->_render_sqla(group_by => $attrs->{group_by}))[0]
-        : (),
-      )
+      $sql_maker->_parse_rs_attrs ({ group_by => $attrs->{group_by} }),
     ],
     joining => [
       $sql_maker->_recurse_from (
@@ -444,17 +429,46 @@ sub _resolve_aliastypes_from_select_args {
       ),
     ],
     selecting => [
-      ($attrs->{select}
-        ? ($sql_maker->_render_sqla(select_select => $attrs->{select}))[0]
-        : ()),
+      map { $sql_maker->_recurse_fields($_) } @{$attrs->{select}},
     ],
     ordering => [
       map { $_->[0] } $self->_extract_order_criteria ($attrs->{order_by}, $sql_maker),
     ],
   };
 
-  # throw away empty chunks
-  $_ = [ map { $_ || () } @$_ ] for values %$to_scan;
+  # throw away empty chunks and all 2-value arrayrefs: the thinking is that these are
+  # bind value specs left in by the sloppy renderer above. It is ok to do this
+  # at this point, since we are going to end up rewriting this crap anyway
+  for my $v (values %$to_scan) {
+    my @nv;
+    for (@$v) {
+      next if (
+        ! defined $_
+          or
+        (
+          ref $_ eq 'ARRAY'
+            and
+          ( @$_ == 0 or @$_ == 2 )
+        )
+      );
+
+      if (ref $_) {
+        require Data::Dumper::Concise;
+        $self->throw_exception("Unexpected ref in scan-plan: " . Data::Dumper::Concise::Dumper($v) );
+      }
+
+      push @nv, $_;
+    }
+
+    $v = \@nv;
+  }
+
+  # kill all selectors which look like a proper subquery
+  # this is a sucky heuristic *BUT* - if we get it wrong the query will simply
+  # fail to run, so we are relatively safe
+  $to_scan->{selecting} = [ grep {
+    $_ !~ / \A \s* \( \s* SELECT \s+ .+? \s+ FROM \s+ .+? \) \s* \z /xsi
+  } @{ $to_scan->{selecting} || [] } ];
 
   # first see if we have any exact matches (qualified or unqualified)
   for my $type (keys %$to_scan) {
@@ -545,8 +559,7 @@ sub _group_over_selection {
     }
   }
 
-  my $sql_maker = $self->sql_maker;
-  my @order_by = $self->_extract_order_criteria($attrs->{order_by}, $sql_maker)
+  my @order_by = $self->_extract_order_criteria($attrs->{order_by})
     or return (\@group_by, $attrs->{order_by});
 
   # add any order_by parts that are not already present in the group_by
@@ -558,7 +571,7 @@ sub _group_over_selection {
   # the proper overall order without polluting the group criteria (and
   # possibly changing the outcome entirely)
 
-  my ($leftovers, @new_order_by, $order_chunks, $aliastypes);
+  my ($leftovers, $sql_maker, @new_order_by, $order_chunks, $aliastypes);
 
   my $group_already_unique = $self->_columns_comprise_identifying_set($colinfos, \@group_by);
 
@@ -622,34 +635,21 @@ sub _group_over_selection {
       # pesky tests won't pass
       # wrap any part of the order_by that "responds" to an ordering alias
       # into a MIN/MAX
+      $sql_maker ||= $self->sql_maker;
+      $order_chunks ||= [
+        map { ref $_ eq 'ARRAY' ? $_ : [ $_ ] } $sql_maker->_order_by_chunks($attrs->{order_by})
+      ];
 
-      $order_chunks ||= do {
-        my @c;
-        my $dq_node = $sql_maker->converter->_order_by_to_dq($attrs->{order_by});
+      my ($chunk, $is_desc) = $sql_maker->_split_order_chunk($order_chunks->[$o_idx][0]);
 
-        while (is_Order($dq_node)) {
-          push @c, {
-            is_desc => $dq_node->{reverse},
-            dq_node => $dq_node->{by},
-          };
-
-          @{$c[-1]}{qw(sql bind)} = $sql_maker->_render_dq($dq_node->{by});
-
-          $dq_node = $dq_node->{from};
-        }
-
-        \@c;
-      };
-
-      $new_order_by[$o_idx] = {
-        ($order_chunks->[$o_idx]{is_desc} ? '-desc' : '-asc') => \[
-          sprintf ( '%s( %s )',
-            ($order_chunks->[$o_idx]{is_desc} ? 'MAX' : 'MIN'),
-            $order_chunks->[$o_idx]{sql},
-          ),
-          @{ $order_chunks->[$o_idx]{bind} || [] }
-        ]
-      };
+      $new_order_by[$o_idx] = \[
+        sprintf( '%s( %s )%s',
+          ($is_desc ? 'MAX' : 'MIN'),
+          $chunk,
+          ($is_desc ? ' DESC' : ''),
+        ),
+        @ {$order_chunks->[$o_idx]} [ 1 .. $#{$order_chunks->[$o_idx]} ]
+      ];
     }
   }
 
@@ -662,10 +662,7 @@ sub _group_over_selection {
 
   # recreate the untouched order parts
   if (@new_order_by) {
-    $new_order_by[$_] ||= {
-      ( $order_chunks->[$_]{is_desc} ? '-desc' : '-asc' )
-        => \ $order_chunks->[$_]{dq_node}
-    } for ( 0 .. $#$order_chunks );
+    $new_order_by[$_] ||= \ $order_chunks->[$_] for ( 0 .. $#$order_chunks );
   }
 
   return (
@@ -836,38 +833,55 @@ sub _inner_join_to_node {
 }
 
 sub _extract_order_criteria {
-  my ($self, $order_by, $sql_maker, $ident_only) = @_;
+  my ($self, $order_by, $sql_maker) = @_;
 
-  $sql_maker ||= $self->sql_maker;
+  my $parser = sub {
+    my ($sql_maker, $order_by, $orig_quote_chars) = @_;
 
-  my $order_dq = $sql_maker->converter->_order_by_to_dq($order_by);
+    return scalar $sql_maker->_order_by_chunks ($order_by)
+      unless wantarray;
 
-  my @by;
-  while (is_Order($order_dq)) {
-    push @by, $order_dq->{by};
-    $order_dq = $order_dq->{from};
-  }
+    my ($lq, $rq, $sep) = map { quotemeta($_) } (
+      ($orig_quote_chars ? @$orig_quote_chars : $sql_maker->_quote_chars),
+      $sql_maker->name_sep
+    );
 
-  # delete local is 5.12+
-  local @{$sql_maker}{qw(quote_char renderer converter)};
-  delete @{$sql_maker}{qw(quote_char renderer converter)};
+    my @chunks;
+    for ($sql_maker->_order_by_chunks ($order_by) ) {
+      my $chunk = ref $_ ? [ @$_ ] : [ $_ ];
+      ($chunk->[0]) = $sql_maker->_split_order_chunk($chunk->[0]);
 
-  return map { [ $sql_maker->_render_dq($_) ] } do {
-    if ($ident_only) {
-      my @by_ident;
-      scan_dq_nodes({ DQ_IDENTIFIER ,=> sub { push @by_ident, $_[0] } }, @by);
-      @by_ident
-    } else {
-      @by
+      # order criteria may have come back pre-quoted (literals and whatnot)
+      # this is fragile, but the best we can currently do
+      $chunk->[0] =~ s/^ $lq (.+?) $rq $sep $lq (.+?) $rq $/"$1.$2"/xe
+        or $chunk->[0] =~ s/^ $lq (.+) $rq $/$1/x;
+
+      push @chunks, $chunk;
     }
+
+    return @chunks;
   };
+
+  if ($sql_maker) {
+    return $parser->($sql_maker, $order_by);
+  }
+  else {
+    $sql_maker = $self->sql_maker;
+
+    # pass these in to deal with literals coming from
+    # the user or the deep guts of prefetch
+    my $orig_quote_chars = [$sql_maker->_quote_chars];
+
+    local $sql_maker->{quote_char};
+    return $parser->($sql_maker, $order_by, $orig_quote_chars);
+  }
 }
 
 sub _order_by_is_stable {
   my ($self, $ident, $order_by, $where) = @_;
 
   my @cols = (
-    (map { $_->[0] } $self->_extract_order_criteria($order_by, undef, 1)),
+    (map { $_->[0] } $self->_extract_order_criteria($order_by)),
     $where ? @{$self->_extract_fixed_condition_columns($where)} :(),
   ) or return undef;
 
@@ -978,12 +992,6 @@ sub _main_source_order_by_portion_is_stable {
 # Also - DQ and the mst it rode in on will save us all RSN!!!
 sub _extract_fixed_condition_columns {
   my ($self, $where) = @_;
-
-  if (ref($where) eq 'REF' and ref($$where) eq 'HASH') {
-    # Yes. I know.
-    my $fixed = DBIx::Class::ResultSource->_extract_fixed_values_for($$where);
-    return [ keys %$fixed ];
-  }
 
   return unless ref $where eq 'HASH';
 

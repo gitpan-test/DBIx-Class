@@ -102,18 +102,10 @@ BEGIN {
 
     Scalar::Util
     List::Util
+    Data::Compare
 
     Class::Accessor::Grouped
     Class::C3::Componentised
-
-    Data::Dumper::Concise
-
-    File::Spec
-
-    Module::Runtime
-    Data::Query::Constants
-    Data::Query::ExprHelpers
-    Data::Query::ExprDeclare
   ));
 
   require DBICTest::Schema;
@@ -126,7 +118,6 @@ BEGIN {
     Moo
     Sub::Quote
     Context::Preserve
-    Data::Compare
   ));
 
   my $s = DBICTest::Schema->connect('dbi:SQLite::memory:');

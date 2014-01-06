@@ -70,7 +70,7 @@ is_same_sql_bind(
             ( SELECT COUNT( * )
                 FROM owners owner
                WHERE ( count.id = owner.id )
-            ) AS owner_books, me.id
+            ) AS owner_books
               FROM books me
               JOIN owners owner ON owner.id = me.owner
              WHERE ( source = ? )
@@ -205,9 +205,9 @@ is_same_sql_bind (
                 GROUP BY title
                 ORDER BY title
               ) me
-            ORDER BY me.title DESC
+            ORDER BY title DESC
           ) me
-        ORDER BY me.title
+        ORDER BY title
       ) me
       JOIN owners owner ON owner.id = me.owner
     WHERE ( source = ? )

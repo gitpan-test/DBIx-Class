@@ -1,9 +1,6 @@
 Revision history for DBIx::Class
 
-0.08901-TRIAL (EXPERIMENTAL BETA RELEASE)
-    * Start of experimental Data::Query-based release cycle
-        - Any and all newly introduced syntax features may very well change
-          or disappear altogether before the 0.09000 release
+0.08250_03 (DEV) 2014-01-06 (pending issues listed in 251_TODO)
 
     * New Features / Changes
         - A new zero-to-DBIC style manual: DBIx::Class::Manual::QuickStart
@@ -12,7 +9,14 @@ Revision history for DBIx::Class
         - More robust handling of circular relationship declarations by loading
           foreign classes less frequently (should resolve issues like
           http://lists.scsys.co.uk/pipermail/dbix-class/2013-June/011374.html)
-        - Fix multiple edge cases steming from interaction of a non-selecting
+          Note that none of this is a manifestations of a DBIC bug, but rather
+          unexpected (but correct) behavior of load-order-dependent (hence
+          logically broken) Resultclass hierarchies. In order to deal with this
+          DBIC is scaling back a large number of sanity checks, which are to be
+          reintroduce pending a better framework for source registration
+        - Fix multiple edge cases of complex prefetch combining incorrectly
+          with correlated subquery selections
+        - Fix multiple edge cases stemming from interaction of a non-selecting
           order_by specification and distinct and/or complex prefetch
         - Clarify ambiguous behavior of distinct when used with ResultSetColumn
           i.e. $rs->search({}, { distinct => 1 })->get_column (...)
@@ -25,6 +29,7 @@ Revision history for DBIx::Class
         - Back out self-cleaning from DBIx::Class::Carp for the time being
           (as a side effect fixes RT#86267)
         - Fix incorrect internal use of implicit list context in copy()
+        - Fix 0.08250 regression in driver determination when DBI_DSN is used
         - Tests no longer fail if $ENV{DBI_DSN} is set
         - Throw clearer exception on ->new_related() with a non-existent
           relationship.

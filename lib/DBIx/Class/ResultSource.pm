@@ -13,7 +13,6 @@ use Devel::GlobalDestruction;
 use Try::Tiny;
 use List::Util 'first';
 use Scalar::Util qw/blessed weaken isweak/;
-use Data::Query::ExprHelpers;
 
 use namespace::clean;
 
@@ -1444,9 +1443,9 @@ sub reverse_relationship_info {
 
   my $ret = {};
 
-  my $stripped_cond = $self->__strip_relcond ($rel_info->{cond});
+  return $ret unless ((ref $rel_info->{cond}) eq 'HASH');
 
-  return $ret unless $stripped_cond;
+  my $stripped_cond = $self->__strip_relcond ($rel_info->{cond});
 
   my $registered_source_name = $self->source_name;
 
@@ -1478,9 +1477,8 @@ sub reverse_relationship_info {
     # this can happen when we have a self-referential class
     next if $other_rel_info eq $rel_info;
 
+    next unless ref $other_rel_info->{cond} eq 'HASH';
     my $other_stripped_cond = $self->__strip_relcond($other_rel_info->{cond});
-
-    next unless $other_stripped_cond;
 
     $ret->{$other_rel} = $other_rel_info if (
       $self->_compare_relationship_keys (
@@ -1496,110 +1494,19 @@ sub reverse_relationship_info {
   return $ret;
 }
 
-sub _join_condition_to_hashref {
-  my ($self, $dq) = @_;
-  my (@q, %found) = ($dq);
-  Q: while (my $n = shift @q) {
-    if (is_Operator($n)) {
-      if (($n->{operator}{Perl}||'') =~ /^(?:==|eq)$/) {
-        my ($l, $r) = @{$n->{args}};
-        if (
-          is_Identifier($l) and @{$l->{elements}} == 2
-          and is_Identifier($r) and @{$r->{elements}} == 2
-        ) {
-          ($l, $r) = ($r, $l) if $l->{elements}[0] eq 'self';
-          if (
-            $l->{elements}[0] eq 'foreign'
-            and $r->{elements}[0] eq 'self'
-          ) {
-            $found{$l->{elements}[1]} = $r->{elements}[1];
-            next Q;
-          }
-        }
-      } elsif (($n->{operator}{Perl}||'') eq 'and') {
-        push @q, @{$n->{args}};
-        next Q;
-      }
-    }
-    # didn't match as 'and' or 'foreign.x = self.y', can't handle this
-    return undef;
-  }
-  return keys %found ? \%found : undef;
-}
-
 # all this does is removes the foreign/self prefix from a condition
 sub __strip_relcond {
-  if (ref($_[1]) eq 'HASH') {
-    return +{
-      map
-        { map { /^ (?:foreign|self) \. (\w+) $/x } ($_, $_[1]{$_}) }
-        keys %{$_[1]}
-    };
-  } elsif (blessed($_[1]) and $_[1]->isa('Data::Query::ExprBuilder')) {
-    return $_[0]->_join_condition_to_hashref($_[1]->{expr});
+  +{
+    map
+      { map { /^ (?:foreign|self) \. (\w+) $/x } ($_, $_[1]{$_}) }
+      keys %{$_[1]}
   }
-  return undef;
 }
 
-sub _extract_fixed_values_for {
-  my ($self, $dq, $alias) = @_;
-  my $fixed = $self->_extract_fixed_conditions_for($dq, $alias);
-  return +{ map {
-    is_Value($fixed->{$_})
-      ? ($_ => $fixed->{$_}{value})
-      : (is_Literal($fixed->{$_}) ? ($_ => \($fixed->{$_})) : ())
-  } keys %$fixed };
-}
-
-sub _extract_fixed_conditions_for {
-  my ($self, $dq, $alias) = @_;
-  my (@q, %found) = ($dq);
-  foreach my $n ($self->_extract_top_level_conditions($dq)) {
-    if (
-      is_Operator($n)
-      and (
-        ($n->{operator}{Perl}||'') =~ /^(?:==|eq)$/
-        or ($n->{operator}{'SQL.Naive'}||'') eq '='
-     )
-    ) {
-      my ($l, $r) = @{$n->{args}};
-      if (
-        is_Identifier($r) and (
-          !$alias
-          or (@{$r->{elements}} == 2
-              and $r->{elements}[0] eq $alias)
-        )
-      ) {
-        ($l, $r) = ($r, $l);
-      }
-      if (
-        is_Identifier($l) and (
-          !$alias
-          or (@{$l->{elements}} == 2
-              and $l->{elements}[0] eq $alias)
-        )
-      ) {
-        $found{$alias ? $l->{elements}[1] : join('.',@{$l->{elements}})} = $r;
-      }
-    }
-  }
-  return \%found;
-}
-
-sub _extract_top_level_conditions {
-  my ($self, $dq) = @_;
-  my (@q, @found) = ($dq);
-  while (my $n = shift @q) {
-    if (
-      is_Operator($n)
-      and ($n->{operator}{Perl}||$n->{operator}{'SQL.Naive'}||'') =~ /^and$/i
-    ) {
-      push @q, @{$n->{args}};
-    } else {
-      push @found, $n;
-    }
-  }
-  return @found;
+sub compare_relationship_keys {
+  carp 'compare_relationship_keys is a private method, stop calling it';
+  my $self = shift;
+  $self->_compare_relationship_keys (@_);
 }
 
 # Returns true if both sets of keynames are the same, false otherwise.
@@ -1719,6 +1626,12 @@ sub _resolve_join {
   }
 }
 
+sub pk_depends_on {
+  carp 'pk_depends_on is a private method, stop calling it';
+  my $self = shift;
+  $self->_pk_depends_on (@_);
+}
+
 # Determines whether a relation is dependent on an object from this source
 # having already been inserted. Takes the name of the relationship and a
 # hashref of columns of the related object.
@@ -1732,19 +1645,10 @@ sub _pk_depends_on {
     if exists ($relinfo->{attrs}{is_foreign_key_constraint});
 
   my $cond = $relinfo->{cond};
-  my $keyhash = do {
-    if (ref($cond) eq 'HASH') {
+  return 0 unless ref($cond) eq 'HASH';
 
-      # map { foreign.foo => 'self.bar' } to { bar => 'foo' }
-      +{ map { my $x = $_; $x =~ s/.*\.//; $x; } reverse %$cond };
-    } elsif (ref($cond) eq 'REF' and ref($$cond) eq 'HASH') {
-      my $fixed = $self->_join_condition_to_hashref($$cond);
-      return 0 unless $fixed;
-      +{ reverse %$fixed };
-    } else {
-      return 0;
-    }
-  };
+  # map { foreign.foo => 'self.bar' } to { bar => 'foo' }
+  my $keyhash = { map { my $x = $_; $x =~ s/.*\.//; $x; } reverse %$cond };
 
   # assume anything that references our PK probably is dependent on us
   # rather than vice versa, unless the far side is (a) defined or (b)
@@ -1764,9 +1668,13 @@ sub _pk_depends_on {
   return 1;
 }
 
-our $UNRESOLVABLE_CONDITION = \Literal(SQL => '1 = 0');
+sub resolve_condition {
+  carp 'resolve_condition is a private method, stop calling it';
+  my $self = shift;
+  $self->_resolve_condition (@_);
+}
 
-${$UNRESOLVABLE_CONDITION}->{'DBIx::Class::ResultSource.UNRESOLVABLE'} = 1;
+our $UNRESOLVABLE_CONDITION = \ '1 = 0';
 
 # Resolves the passed condition to a concrete query fragment and a flag
 # indicating whether this is a cross-table condition. Also an optional
@@ -1902,73 +1810,6 @@ sub _resolve_condition {
       $crosstable ||= $crosstab;
     }
     return wantarray ? (\@ret, $crosstable) : \@ret;
-  }
-  elsif (blessed($cond) and $cond->isa('Data::Query::ExprBuilder')) {
-    my (%cross, $unresolvable);
-    my $as = blessed($for) ? 'me' : $as;
-    my %action = map {
-      my ($ident, $thing, $other) = @$_;
-      ($ident => do {
-        if ($thing and !ref($thing)) {
-          sub {
-            $cross{$thing} = 1;
-            return \Identifier($thing, $_[0]->{elements}[1]);
-          }
-        } elsif (!defined($thing)) {
-          sub {
-            \perl_scalar_value(
-              undef,
-              $_[1] ? join('.', $other, $_[1]->{elements}[1]) : ()
-            );
-          }
-        } elsif ((ref($thing)||'') eq 'HASH') {
-          sub {
-            \perl_scalar_value(
-              $thing->{$_->{elements}[1]},
-              $_[1] ? join('.', $other, $_[1]->{elements}[1]) : ()
-            );
-          }
-        } elsif (blessed($thing)) {
-          sub {
-            unless ($thing->has_column_loaded($_[0]->{elements}[1])) {
-              if ($thing->in_storage) {
-                $self->throw_exception(sprintf
-                  "Unable to resolve relationship '%s' from object %s: column '%s' not "
-                . 'loaded from storage (or not passed to new() prior to insert()). You '
-                . 'probably need to call ->discard_changes to get the server-side defaults '
-                . 'from the database.',
-                  $as,
-                  $thing,
-                  $_[0]->{elements}[1]
-                );
-              }
-              $unresolvable = 1;
-            }
-            return \perl_scalar_value(
-                      $thing->get_column($_[0]->{elements}[1]),
-                      $_[1] ? join('.', $other, $_[1]->{elements}[1]) : ()
-                    );
-          }
-        } else {
-            die "I have no idea what ${thing} is supposed to be";
-        }
-      })
-    } ([ foreign => $as, $for ], [ self => $for, $as ]);
-    my %seen;
-    my $mapped = map_dq_tree {
-      if (is_Operator and @{$_->{args}} == 2) {
-        @seen{@{$_->{args}}} = reverse @{$_->{args}};
-      }
-      if (
-        is_Identifier and @{$_->{elements}} == 2
-        and my $act = $action{$_->{elements}[0]}
-      ) {
-        return $act->($_, $seen{$_});
-      }
-      return $_;
-    } $cond->{expr};
-    return $UNRESOLVABLE_CONDITION if $unresolvable;
-    return (wantarray ? (\$mapped, (keys %cross == 2)) : \$mapped);
   }
   else {
     $self->throw_exception ("Can't handle condition $cond for relationship '$rel_name' yet :(");

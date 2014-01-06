@@ -8,9 +8,8 @@ use DBIx::Class::ResultSetColumn;
 use Scalar::Util qw/blessed weaken reftype/;
 use DBIx::Class::_Util 'fail_on_internal_wantarray';
 use Try::Tiny;
-use Data::Dumper::Concise ();
-use Data::Query::Constants;
-use Data::Query::ExprHelpers;
+use Data::Compare (); # no imports!!! guard against insane architecture
+
 # not importing first() as it will clash with our own method
 use List::Util ();
 
@@ -398,10 +397,6 @@ sub search_rs {
     $call_cond = { @_ };
   }
 
-  if (blessed($call_cond) and $call_cond->isa('Data::Query::ExprBuilder')) {
-    $call_cond = \$call_cond->{expr};
-  }
-
   # see if we can keep the cache (no $rs changes)
   my $cache;
   my %safe = (alias => 1, cache => 1);
@@ -413,18 +408,6 @@ sub search_rs {
     ref $call_cond eq 'ARRAY' && ! @$call_cond
   )) {
     $cache = $self->get_cache;
-  } elsif (
-    $self->{attrs}{cache} and
-    ($self->{attrs}{grep_cache} or $call_attrs->{grep_cache})
-  ) {
-    if (
-      keys %$call_attrs
-      and not (exists $call_attrs->{grep_cache} and !$call_attrs->{grep_cache})
-    ) {
-      die "Can't do complex search on resultset with grep_cache set";
-    }
-    my $grep_one = $self->_construct_perl_predicate($call_cond);
-    $cache = [ grep $grep_one->($_), $self->all ];
   }
 
   my $old_attrs = { %{$self->{attrs}} };
@@ -602,104 +585,60 @@ sub _normalize_selection {
 sub _stack_cond {
   my ($self, $left, $right) = @_;
 
-  my $source = $self->result_source;
-
-  my $converter = $source->schema->storage->sql_maker->converter;
-
-  my @top = map $source->_extract_top_level_conditions(
-    $converter->_expr_to_dq($_)
-  ), grep defined, $left, $right;
-
-  return undef unless @top;
-
-  my %seen;
-
-  my @uniq = grep { !$seen{Data::Dumper::Concise::Dumper($_)}++ } @top;
-
-  return \$uniq[0] if @uniq == 1;
-
-  return \Operator({ 'SQL.Naive' => 'AND' }, \@uniq);
-}
-
-my %perl_op_map = (
-  '=' => { numeric => '==', string => 'eq' },
-);
-
-sub _construct_perl_predicate {
-  my ($self, $cond) = @_;
-
-  # This shouldn't really live here but it'll do for the moment.
-
-  my %alias_map = (
-    $self->current_source_alias => {
-      join_path => [],
-      source => $self->result_source,
-      columns_info => $self->result_source->columns_info,
-    },
-  );
-
-  my $attrs = $self->_resolved_attrs;
-  foreach my $j ( @{$attrs->{from}}[1 .. $#{$attrs->{from}} ] ) {
-    next unless $j->[0]{-alias};
-    next unless $j->[0]{-join_path};
-    $alias_map{$j->[0]{-alias}} = {
-      join_path => [ map { keys %$_ } @{$j->[0]{-join_path}} ],
-      source => $j->[0]{-rsrc},
-      columns_info => $j->[0]{-rsrc}->columns_info,
-    };
-  }
-
-  my %as_map = map +($attrs->{select}[$_] => $attrs->{as}[$_]),
-                 grep !ref($attrs->{select}[$_]), 0..$#{$attrs->{select}};
-
-  my $storage = $self->result_source->schema->storage;
-  my $sql_maker = $storage->sql_maker;
-  my $tree = map_dq_tree {
-    if (is_Operator) {
-      my $op = $_->{operator}{'SQL.Naive'} or die "No operator";
-      if (lc($op) =~ /^(?:and|or|not)$/i) {
-        return Operator({ 'Perl' => lc($op) }, $op->{args});
+  # collapse single element top-level conditions
+  # (single pass only, unlikely to need recursion)
+  for ($left, $right) {
+    if (ref $_ eq 'ARRAY') {
+      if (@$_ == 0) {
+        $_ = undef;
       }
-      if (my $op_map = $perl_op_map{$op}) {
-        die "Binop doesn't have two args - wtf?"
-          unless @{$_->{args}} == 2;
-        my $data_type;
-        my @mapped_args = map {
-          if (is_Identifier) {
-            die "Identifier not alias.colname"
-              unless @{$_->{elements}} == 2;
-            my ($alias, $col) = @{$_->{elements}};
-            die "${alias}.${col} not selected"
-              unless $as_map{"${alias}.${col}"};
-            unless ($data_type) {
-              my $colinfo = $alias_map{$alias}{columns_info}{$col};
-              unless (defined $colinfo->{is_numeric}) {
-                $colinfo->{is_numeric} = (
-                  $storage->is_datatype_numeric($colinfo->{data_type})
-                    ? 1
-                    : 0
-                );
-              }
-              $data_type = $colinfo->{is_numeric} ? 'numeric' : 'string';
-            }
-            Identifier(@{$alias_map{$alias}{join_path}}, $col);
-          } elsif (is_Value) {
-            $_;
-          } else {
-            die "Argument to operator neither identifier nor value";
-          }
-        } @{$_->{args}};
-        die "Couldn't determine numeric versus string" unless $data_type;
-        return \Operator({ Perl => $op_map->{$data_type} }, \@mapped_args);
+      elsif (@$_ == 1) {
+        $_ = $_->[0];
       }
     }
-    die "Unable to map node to perl";
-  } $sql_maker->converter->_where_to_dq($cond);
-  my ($code, @values) = @{$storage->perl_renderer->render($tree)};
-  my $sub = eval q!sub { !.$code.q! }!
-    or die "Failed to build sub: $@";
-  my @args = map $_->{value}, @values;
-  return sub { local $_ = $_[0]; $sub->(@args) };
+    elsif (ref $_ eq 'HASH') {
+      my ($first, $more) = keys %$_;
+
+      # empty hash
+      if (! defined $first) {
+        $_ = undef;
+      }
+      # one element hash
+      elsif (! defined $more) {
+        if ($first eq '-and' and ref $_->{'-and'} eq 'HASH') {
+          $_ = $_->{'-and'};
+        }
+        elsif ($first eq '-or' and ref $_->{'-or'} eq 'ARRAY') {
+          $_ = $_->{'-or'};
+        }
+      }
+    }
+  }
+
+  # merge hashes with weeding out of duplicates (simple cases only)
+  if (ref $left eq 'HASH' and ref $right eq 'HASH') {
+
+    # shallow copy to destroy
+    $right = { %$right };
+    for (grep { exists $right->{$_} } keys %$left) {
+      # the use of eq_deeply here is justified - the rhs of an
+      # expression can contain a lot of twisted weird stuff
+      delete $right->{$_} if Data::Compare::Compare( $left->{$_}, $right->{$_} );
+    }
+
+    $right = undef unless keys %$right;
+  }
+
+
+  if (defined $left xor defined $right) {
+    return defined $left ? $left : $right;
+  }
+  elsif (! defined $left) {
+    return undef;
+  }
+  else {
+    return { -and => [ $left, $right ] };
+  }
 }
 
 =head2 search_literal
@@ -1789,20 +1728,15 @@ sub _count_subq_rs {
         $sql_maker->{name_sep} = '';
       }
 
-      # delete local is 5.12+
-      local @{$sql_maker}{qw(renderer converter)};
-      delete @{$sql_maker}{qw(renderer converter)};
-
       my ($lquote, $rquote, $sep) = map { quotemeta $_ } ($sql_maker->_quote_chars, $sql_maker->name_sep);
 
-      my $having_sql = $sql_maker->_render_sqla(where => $attrs->{having});
-
+      my $having_sql = $sql_maker->_parse_rs_attrs ({ having => $attrs->{having} });
       my %seen_having;
 
       # search for both a proper quoted qualified string, for a naive unquoted scalarref
       # and if all fails for an utterly naive quoted scalar-with-function
       while ($having_sql =~ /
-        (?: $rquote $sep)? $lquote (.+?) $rquote
+        $rquote $sep $lquote (.+?) $rquote
           |
         [\s,] \w+ \. (\w+) [\s,]
           |
@@ -1992,18 +1926,12 @@ sub _rs_update_delete {
   if (! $needs_subq) {
     # Most databases do not allow aliasing of tables in UPDATE/DELETE. Thus
     # a condition containing 'me' or other table prefixes will not work
-    # at all - so we convert the WHERE to a dq tree now, dequalify all
-    # identifiers found therein via a scan across the tree, and then use
-    # \{} style to pass the result onwards for use in the final query
-    if ($self->{cond}) {
-      $cond = do {
-        my $converter = $rsrc->storage->sql_maker->converter;
-        scan_dq_nodes({
-          DQ_IDENTIFIER ,=> sub { $_ = [ $_->[-1] ] for $_[0]->{elements} }
-        }, my $where_dq = $converter->_where_to_dq($self->{cond}));
-        \$where_dq;
-      };
-    }
+    # at all. Tell SQLMaker to dequalify idents via a gross hack.
+    $cond = do {
+      my $sqla = $rsrc->storage->sql_maker;
+      local $sqla->{_dequalify_idents} = 1;
+      \[ $sqla->_recurse_where($self->{cond}) ];
+    };
   }
   else {
     # we got this far - means it is time to wrap a subquery
@@ -2025,19 +1953,14 @@ sub _rs_update_delete {
     my $subrs = (ref $self)->new($rsrc, $attrs);
 
     if (@$idcols == 1) {
-      $cond = { $idcols->[0] => { -in => \$subrs->_as_select_dq } };
+      $cond = { $idcols->[0] => { -in => $subrs->as_query } };
     }
     elsif ($storage->_use_multicolumn_in) {
       # no syntax for calling this properly yet
       # !!! EXPERIMENTAL API !!! WILL CHANGE !!!
-      my $left = $storage->sql_maker->_render_sqla(select_select => $idcols);
-      $left =~ s/^SELECT //i;
-      my $right = $storage->sql_maker
-                          ->converter
-                          ->_literal_to_dq(${$subrs->as_query});
-      $cond = \Operator(
-        { 'SQL.Naive' => 'in' },
-        [ Literal(SQL => "( $left )"), $right ],
+      $cond = $storage->sql_maker->_where_op_multicolumn_in (
+        $idcols, # how do I convey a list of idents...? can binds reside on lhs?
+        $subrs->as_query
       ),
     }
     else {
@@ -2392,11 +2315,6 @@ sub populate {
           $rel,
         );
 
-        if (ref($related) eq 'REF' and ref($$related) eq 'HASH') {
-          $related = $self->result_source
-                          ->_extract_fixed_values_for($$related, $rel);
-        }
-
         my @rows_to_add = ref $item->{$rel} eq 'ARRAY' ? @{$item->{$rel}} : ($item->{$rel});
         my @populate = map { {%$_, %$related} } @rows_to_add;
 
@@ -2405,6 +2323,7 @@ sub populate {
     }
   }
 }
+
 
 # populate() arguments went over several incarnations
 # What we ultimately support is AoH
@@ -2570,7 +2489,16 @@ sub _merge_with_rscond {
   if (! defined $self->{cond}) {
     # just massage $data below
   }
-  elsif (ref $self->{cond} eq 'HASH') {
+  elsif ($self->{cond} eq $DBIx::Class::ResultSource::UNRESOLVABLE_CONDITION) {
+    %new_data = %{ $self->{attrs}{related_objects} || {} };  # nothing might have been inserted yet
+    @cols_from_relations = keys %new_data;
+  }
+  elsif (ref $self->{cond} ne 'HASH') {
+    $self->throw_exception(
+      "Can't abstract implicit construct, resultset condition not a hash"
+    );
+  }
+  else {
     # precedence must be given to passed values over values inherited from
     # the cond, so the order here is important.
     my $collapsed_cond = $self->_collapse_cond($self->{cond});
@@ -2591,23 +2519,6 @@ sub _merge_with_rscond {
         $new_data{$col} = $value;
       }
     }
-  }
-  elsif (ref $self->{cond} eq 'REF' and ref ${$self->{cond}} eq 'HASH') {
-    if ((${$self->{cond}})->{'DBIx::Class::ResultSource.UNRESOLVABLE'}) {
-      %new_data = %{ $self->{attrs}{related_objects} || {} };  # nothing might have been inserted yet
-      @cols_from_relations = keys %new_data;
-    } else {
-      %new_data = %{$self->_remove_alias(
-        $self->result_source
-             ->_extract_fixed_values_for(${$self->{cond}}),
-        $alias
-      )};
-    }
-  }
-  else {
-    $self->throw_exception(
-      "Can't abstract implicit construct, resultset condition not a hash"
-    );
   }
 
   %new_data = (
@@ -2754,19 +2665,6 @@ sub as_query {
   $self->{_attrs}{_sqlmaker_select_args} = $attrs->{_sqlmaker_select_args};
 
   $aq;
-}
-
-sub _as_select_dq {
-  my $self = shift;
-  my $attrs = { %{ $self->_resolved_attrs } };
-  my $storage = $self->result_source->storage;
-  my (undef, $ident, @args) = $storage->_select_args(
-    $attrs->{from}, $attrs->{select}, $attrs->{where}, $attrs
-  );
-  $ident = $ident->from if blessed($ident);
-  $storage->sql_maker->converter->_select_to_dq(
-    $ident, @args
-  );
 }
 
 =head2 find_or_new
@@ -3621,7 +3519,7 @@ sub _resolved_attrs {
         $source->_resolve_join(
           $join,
           $alias,
-          ($attrs->{seen_join} = { %{ $attrs->{seen_join} || {} } }),
+          { %{ $attrs->{seen_join} || {} } },
           ( $attrs->{seen_join} && keys %{$attrs->{seen_join}})
             ? $attrs->{from}[-1][0]{-join_path}
             : []

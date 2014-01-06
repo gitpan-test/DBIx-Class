@@ -2,9 +2,6 @@ use strict;
 use warnings;
 
 use Test::More;
-
-local $TODO = 'Temporarily todo-ed for dq2eb';
-
 use Test::Exception;
 use Storable 'dclone';
 use lib qw(t/lib);
@@ -510,8 +507,10 @@ my $tests = {
             WHERE source != ? AND me.title = ? AND source = ?
             GROUP BY (me.id / ?), owner.id
             HAVING ?
+            ORDER BY me.id
             FETCH FIRST 7 ROWS ONLY
           ) me
+        ORDER BY me.id DESC
         FETCH FIRST 4 ROWS ONLY
       )',
       [
