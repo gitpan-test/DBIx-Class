@@ -205,6 +205,12 @@ sub new {
   my %seek_and_destroy;
 
   sub _arm_global_destructor {
+
+    # quick "garbage collection" pass - prevents the registry
+    # from slowly growing with a bunch of undef-valued keys
+    defined $seek_and_destroy{$_} or delete $seek_and_destroy{$_}
+      for keys %seek_and_destroy;
+
     weaken (
       $seek_and_destroy{ refaddr($_[0]) } = $_[0]
     );
@@ -816,7 +822,7 @@ Example:
 
 sub dbh_do {
   my $self = shift;
-  my $run_target = shift;
+  my $run_target = shift; # either a coderef or a method name
 
   # short circuit when we know there is no need for a runner
   #
@@ -833,10 +839,15 @@ sub dbh_do {
 
   DBIx::Class::Storage::BlockRunner->new(
     storage => $self,
-    run_code => sub { $self->$run_target ($self->_get_dbh, @$args ) },
     wrap_txn => 0,
-    retry_handler => sub { ! ( $_[0]->retried_count or $_[0]->storage->connected ) },
-  )->run;
+    retry_handler => sub {
+      $_[0]->failed_attempt_count == 1
+        and
+      ! $_[0]->storage->connected
+    },
+  )->run(sub {
+    $self->$run_target ($self->_get_dbh, @$args )
+  });
 }
 
 sub txn_do {
@@ -2396,8 +2407,8 @@ sub _select_args {
   # soooooo much better now. But that is also another
   # battle...
   #return (
-  #  'select', @{$orig_attrs->{_sqlmaker_select_args}}
-  #) if $orig_attrs->{_sqlmaker_select_args};
+  #  'select', $orig_attrs->{!args_as_stored_at_the_end_of_this_method!}
+  #) if $orig_attrs->{!args_as_stored_at_the_end_of_this_method!};
 
   my $sql_maker = $self->sql_maker;
   my $alias2source = $self->_resolve_ident_sources ($ident);
@@ -2493,6 +2504,16 @@ sub _select_args {
     ($attrs->{from}, $attrs->{_aliastypes}) = $self->_prune_unused_joins ($attrs);
   }
 
+  # FIXME this is a gross, inefficient, largely incorrect and fragile hack
+  # during the result inflation stage we *need* to know what was the aliastype
+  # map as sqla saw it when the final pieces of SQL were being assembled
+  # Originally we simply carried around the entirety of $attrs, but this
+  # resulted in resultsets that are being reused growing continuously, as
+  # the hash in question grew deeper and deeper.
+  # Instead hand-pick what to take with us here (we actually don't need much
+  # at this point just the map itself)
+  $orig_attrs->{_last_sqlmaker_alias_map} = $attrs->{_aliastypes};
+
 ###
   # This would be the point to deflate anything found in $attrs->{where}
   # (and leave $attrs->{bind} intact). Problem is - inflators historically
@@ -2503,9 +2524,7 @@ sub _select_args {
   # invoked, and that's just bad...
 ###
 
-  return ( 'select', @{ $orig_attrs->{_sqlmaker_select_args} = [
-    @{$attrs}{qw(from select where)}, $attrs, @limit_args
-  ]} );
+  return ( 'select', @{$attrs}{qw(from select where)}, $attrs, @limit_args );
 }
 
 # Returns a counting SELECT for a simple count

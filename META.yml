@@ -52,9 +52,9 @@ requires:
   List::Util: 1.16
   MRO::Compat: 0.12
   Module::Find: 0.07
-  Moo: 1.000006
+  Moo: 1.002
   Path::Class: 0.18
-  SQL::Abstract: 1.75
+  SQL::Abstract: 1.77
   Scope::Guard: 0.03
   Sub::Name: 0.04
   Text::Balanced: 2.00
@@ -68,5 +68,5 @@ resources:
   homepage: http://www.dbix-class.org/
   license: http://dev.perl.org/licenses/
   repository: https://github.com/dbsrgits/DBIx-Class
-version: 0.08250_03
+version: 0.08250_04
 x_authority: cpan:RIBASUSHI

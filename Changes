@@ -1,7 +1,6 @@
 Revision history for DBIx::Class
 
-0.08250_03 (DEV) 2014-01-06 (pending issues listed in 251_TODO)
-
+0.08250_04 (DEV) 2014-01-22 (pending issues listed in 251_TODO)
     * New Features / Changes
         - A new zero-to-DBIC style manual: DBIx::Class::Manual::QuickStart
 
@@ -18,6 +17,8 @@ Revision history for DBIx::Class
           with correlated subquery selections
         - Fix multiple edge cases stemming from interaction of a non-selecting
           order_by specification and distinct and/or complex prefetch
+        - Fix unbound growth of a resultset during repeated execute/exhaust
+          cycles (GHPR#29)
         - Clarify ambiguous behavior of distinct when used with ResultSetColumn
           i.e. $rs->search({}, { distinct => 1 })->get_column (...)
         - Setting quote_names propagates to SQL::Translator when producing
@@ -32,11 +33,19 @@ Revision history for DBIx::Class
         - Fix 0.08250 regression in driver determination when DBI_DSN is used
         - Tests no longer fail if $ENV{DBI_DSN} is set
         - Throw clearer exception on ->new_related() with a non-existent
-          relationship.
+          relationship
+        - Fix incorrect parethesis unroll with multicolumn in, (never noticed
+          before fixing false positive in SQLA::Test 1.77)
         - Fix t/storage/replicated.t class loading problem
         - Stop using the deprecated Class::MOP::load_class()
+        - Fix warning in t/54taint.t with explicitly unset PERL5LIB (RT#91972)
 
     * Misc
+        - Massive incompatible change of ::BlockRunner internals (was never
+          documented as usable externally, this last set of changes settles
+          the design for proper documentation and opening up)
+        - Adjust exceptions in tests to accommodate changes in the upcoming
+          DBD::SQLite based on libsqlite 3.8.2
         - Replace $row with $result in all docs to be consistent and to
           clarify various return values
 

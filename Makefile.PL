@@ -74,13 +74,13 @@ my $runtime_requires = {
   'Data::Page'               => '2.00',
   'Devel::GlobalDestruction' => '0.09',
   'Hash::Merge'              => '0.12',
-  'Moo'                      => '1.000006',
+  'Moo'                      => '1.002',
   'MRO::Compat'              => '0.12',
   'Module::Find'             => '0.07',
   'namespace::clean'         => '0.24',
   'Path::Class'              => '0.18',
   'Scope::Guard'             => '0.03',
-  'SQL::Abstract'            => '1.75',
+  'SQL::Abstract'            => '1.77',
   'Try::Tiny'                => '0.07',
 
   # Technically this is not a core dependency - it is only required
