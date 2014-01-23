@@ -45,6 +45,7 @@ use Carp;
 use Path::Class::File ();
 use File::Spec;
 use Fcntl qw/:DEFAULT :flock/;
+use Config;
 
 =head1 NAME
 
@@ -100,20 +101,8 @@ sub import {
 
     {
       my $u = local_umask(0); # so that the file opens as 666, and any user can lock
-      sysopen ($global_lock_fh, $lockpath, O_RDWR|O_CREAT) or do {
-        my $err = $!;
-
-        my @x_tests = map { (defined $_) ? ( $_ ? 1 : 0 ) : 'U' } map {(-e, -d, -f, -r, -w, -x, -o)} ($tmpdir, $lockpath);
-
-        die sprintf <<"EOE", $lockpath, $err, scalar $>, scalar $), (stat($tmpdir))[4,5,2], @x_tests;
-Unable to open %s: %s
-Process EUID/EGID: %s / %s
-TmpDir UID/GID:    %s / %s
-TmpDir StatMode:   %o
-TmpDir X-tests:    -e:%s -d:%s -f:%s -r:%s -w:%s -x:%s -o:%s
-TmpFile X-tests:   -e:%s -d:%s -f:%s -r:%s -w:%s -x:%s -o:%s
-EOE
-      };
+      sysopen ($global_lock_fh, $lockpath, O_RDWR|O_CREAT)
+        or die "Unable to open $lockpath: $!";
     }
 
     for (@_) {
@@ -209,23 +198,12 @@ sub _database {
       );
     }
 
-    # MASSIVE FIXME - this seems necessary, but I do not yet know why
-    # without an external variable on the pad the on_connect_do cref
-    # (starting just below) is being considered a const of some sorts
-    # and persists indefinitely... wtf --ribasushi
-    my $such_var = 'very closure... much wtf... wow!!!';
-
     return ("dbi:SQLite:${db_file}", '', '', {
       AutoCommit => 1,
 
       # this is executed on every connect, and thus installs a disconnect/DESTROY
       # guard for every new $dbh
       on_connect_do => sub {
-        # MASSIVE FIXME - this seems necessary, but I do not yet know why
-        # without an external variable on the pad the on_connect_do cref
-        # (starting just above) is being considered a const of some sorts
-        # and persists indefinitely... wtf --ribasushi
-        $such_var if 0;
 
         my $storage = shift;
         my $dbh = $storage->_get_dbh;
@@ -245,7 +223,7 @@ sub _database {
         # set a *DBI* disconnect callback, to make sure the physical SQLite
         # file is still there (i.e. the test does not attempt to delete
         # an open database, which fails on Win32)
-        if (my $guard_cb = __mk_disconnect_guard($dbh->sqlite_db_filename)) {
+        if (my $guard_cb = __mk_disconnect_guard($db_file)) {
           $dbh->{Callbacks} = {
             connect => sub { $guard_cb->('connect') },
             disconnect => sub { $guard_cb->('disconnect') },
@@ -301,10 +279,16 @@ sub __mk_disconnect_guard {
       my $cur_inode = (stat($db_file))[1];
 
       if ($orig_inode != $cur_inode) {
-        # pack/unpack to match the unsigned longs returned by `stat`
-        $fail_reason = sprintf 'was recreated (initially inode %s, now %s)', (
-          map { unpack ('L', pack ('l', $_) ) } ($orig_inode, $cur_inode )
-        );
+        my @inodes = ($orig_inode, $cur_inode);
+        # unless this is a fixed perl (P5RT#84590) pack/unpack before display
+        # to match the unsigned longs returned by `stat`
+        @inodes = map { unpack ('L', pack ('l', $_) ) } @inodes
+          unless $Config{st_ino_size};
+
+        $fail_reason = sprintf
+          'was recreated (initially inode %s, now %s)',
+          @inodes
+        ;
       }
     }
 

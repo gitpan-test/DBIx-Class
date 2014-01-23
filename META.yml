@@ -68,5 +68,5 @@ resources:
   homepage: http://www.dbix-class.org/
   license: http://dev.perl.org/licenses/
   repository: https://github.com/dbsrgits/DBIx-Class
-version: 0.08250_04
+version: 0.08250_05
 x_authority: cpan:RIBASUSHI

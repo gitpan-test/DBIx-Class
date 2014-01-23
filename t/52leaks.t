@@ -47,10 +47,10 @@ if ($ENV{DBICTEST_IN_PERSISTENT_ENV}) {
 
 use lib qw(t/lib);
 use DBICTest::RunMode;
-use DBICTest::Util::LeakTracer qw(populate_weakregistry assert_empty_weakregistry visit_refs hrefaddr);
+use DBICTest::Util::LeakTracer qw(populate_weakregistry assert_empty_weakregistry visit_refs);
 use Scalar::Util qw(weaken blessed reftype);
 use DBIx::Class;
-use DBIx::Class::_Util 'sigwarn_silencer';
+use DBIx::Class::_Util qw(hrefaddr sigwarn_silencer);
 BEGIN {
   plan skip_all => "Your perl version $] appears to leak like a sieve - skipping test"
     if DBIx::Class::_ENV_::PEEPEENESS;
@@ -324,7 +324,7 @@ unless (DBICTest::RunMode->is_plain) {
     # do a heavy-duty fire-and-compare loop on all resultsets
     # this is expensive - not running on install
     my $typecounts = {};
-    unless (DBICTest::RunMode->is_plain) {
+    unless (DBICTest::RunMode->is_plain or $ENV{DBICTEST_IN_PERSISTENT_ENV}) {
 
       # FIXME - ideally we should be able to just populate an alternative
       # registry, subtract everything from the main one, and arrive at
@@ -359,13 +359,6 @@ unless (DBICTest::RunMode->is_plain) {
         #
         ## anything we have seen so far is cool
         #delete @{$interim_wr}{keys %$weak_registry};
-        #
-        ## I still don't get any of this...
-        #delete $interim_wr->{$_} for grep {
-        #  ref ($interim_wr->{$_}{weakref}) eq 'SCALAR'
-        #    and
-        #  ${$interim_wr->{$_}{weakref}} eq 'very closure... much wtf... wow!!!'
-        #} keys %$interim_wr;
         #
         ## moment of truth - the rest ought to be gone
         #assert_empty_weakregistry($interim_wr);
@@ -457,6 +450,17 @@ for my $addr (keys %$weak_registry) {
     # only clear one object of a specific behavior - more would indicate trouble
     delete $weak_registry->{$addr}
       unless $cleared->{hash_merge_singleton}{$weak_registry->{$addr}{weakref}{behavior}}++;
+  }
+  elsif (
+    # if we can look at closed over pieces - we will register it as a global
+    !DBICTest::Util::LeakTracer::CV_TRACING
+      and
+    $names =~ /^SQL::Translator::Generator::DDL::SQLite/m
+  ) {
+    # SQLT::Producer::SQLite keeps global generators around for quoted
+    # and non-quoted DDL, allow one for each quoting style
+    delete $weak_registry->{$addr}
+      unless $cleared->{sqlt_ddl_sqlite}->{@{$weak_registry->{$addr}{weakref}->quote_chars}}++;
   }
 }
 
