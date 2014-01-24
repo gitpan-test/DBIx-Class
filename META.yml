@@ -6,7 +6,6 @@ build_requires:
   DBD::SQLite: 1.29
   File::Temp: 0.22
   Package::Stash: 0.28
-  Test::Builder: 0.94
   Test::Deep: 0.101
   Test::Exception: 0.31
   Test::More: 0.94
@@ -14,7 +13,7 @@ build_requires:
 configure_requires:
   ExtUtils::MakeMaker: 6.59
 distribution_type: module
-dynamic_config: 1
+dynamic_config: 0
 generated_by: 'Module::Install version 1.06'
 license: perl
 meta-spec:
@@ -68,5 +67,5 @@ resources:
   homepage: http://www.dbix-class.org/
   license: http://dev.perl.org/licenses/
   repository: https://github.com/dbsrgits/DBIx-Class
-version: 0.08250_05
+version: 0.08250_06
 x_authority: cpan:RIBASUSHI
