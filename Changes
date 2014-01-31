@@ -1,10 +1,17 @@
 Revision history for DBIx::Class
 
-0.08260_01 (DEV-REL loosely related to 4f6eb3d8) 2014-01-29 16:35 (UTC)
+0.08270 2014-01-30 21:54 (PST)
     * Fixes
         - Fix 0.08260 regression in DBD::SQLite bound int handling. Inserted
           data was not affected, but any function <=> integer comparison would
           have failed (originally fixed way back in 0e773352)
+        - Fix failure to load DateTime formatter when connecting to Firebird
+          over ODBC
+
+    * Misc
+        - All drivers based on ::Storage::DBI::Firebird::Common now return the
+          same sqlt_type value (affects ::DBI::Interbase, ::DBI::Firebird and
+          ::DBI::ODBC::Firebird)
 
 0.08260 2014-01-28 18:52 (UTC)
     * New Features
