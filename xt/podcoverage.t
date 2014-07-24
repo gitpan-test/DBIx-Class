@@ -57,6 +57,7 @@ my $exceptions = {
             store_column
             get_column
             get_columns
+            has_column_loaded
         /],
     },
     'DBIx::Class::ResultSource' => {
@@ -112,6 +113,8 @@ my $exceptions = {
             disconnect_call_do_sql
         /]
     },
+
+    'DBIx::Class::_TempExtlib*'                     => { skip => 1 },
 
     'DBIx::Class::Admin::*'                         => { skip => 1 },
     'DBIx::Class::ClassResolver::PassThrough'       => { skip => 1 },

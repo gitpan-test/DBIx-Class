@@ -3,10 +3,45 @@ package DBICTest::Util;
 use warnings;
 use strict;
 
+# this noop trick initializes the STDOUT, so that the TAP::Harness
+# issued IO::Select->can_read calls (which are blocking wtf wtf wtf)
+# keep spinning and scheduling jobs
+# This results in an overall much smoother job-queue drainage, since
+# the Harness blocks less
+# (ideally this needs to be addressed in T::H, but a quick patchjob
+# broke everything so tabling it for now)
+BEGIN {
+  if ($INC{'Test/Builder.pm'}) {
+    local $| = 1;
+    print "#\n";
+  }
+}
+
+use Module::Runtime 'module_notional_filename';
+BEGIN {
+  for my $mod (qw( SQL::Abstract::Test SQL::Abstract )) {
+    if ( $INC{ module_notional_filename($mod) } ) {
+      # FIXME this does not seem to work in BEGIN - why?!
+      #require Carp;
+      #$Carp::Internal{ (__PACKAGE__) }++;
+      #Carp::croak( __PACKAGE__ . " must be loaded before $mod" );
+
+      my ($fr, @frame) = 1;
+      while (@frame = caller($fr++)) {
+        last if $frame[1] !~ m|^t/lib/DBICTest|;
+      }
+
+      die __PACKAGE__ . " must be loaded before $mod (or modules using $mod) at $frame[1] line $frame[2]\n";
+    }
+  }
+}
+
 use Config;
+use Carp 'confess';
+use Scalar::Util qw(blessed refaddr);
 
 use base 'Exporter';
-our @EXPORT_OK = qw/local_umask stacktrace/;
+our @EXPORT_OK = qw(local_umask stacktrace check_customcond_args);
 
 sub local_umask {
   return unless defined $Config{d_umask};
@@ -42,6 +77,52 @@ sub stacktrace {
 
   $stack[0][0] = '';
   return join "\tinvoked as ", map { sprintf ("%s at %s line %d\n", @$_ ) } @stack;
+}
+
+sub check_customcond_args ($) {
+  my $args = shift;
+
+  confess "Expecting a hashref"
+    unless ref $args eq 'HASH';
+
+  for (qw(rel_name foreign_relname self_alias foreign_alias)) {
+    confess "Custom condition argument '$_' must be a plain string"
+      if length ref $args->{$_} or ! length $args->{$_};
+  }
+
+  confess "Current and legacy rel_name arguments do not match"
+    if $args->{rel_name} ne $args->{foreign_relname};
+
+  confess "Custom condition argument 'self_resultsource' must be a rsrc instance"
+    unless defined blessed $args->{self_resultsource} and $args->{self_resultsource}->isa('DBIx::Class::ResultSource');
+
+  confess "Passed resultsource has no record of the supplied rel_name - likely wrong \$rsrc"
+    unless ref $args->{self_resultsource}->relationship_info($args->{rel_name});
+
+  my $rowobj_cnt = 0;
+
+  if (defined $args->{self_result_object} or defined $args->{self_rowobj} ) {
+    $rowobj_cnt++;
+    for (qw(self_result_object self_rowobj)) {
+      confess "Custom condition argument '$_' must be a result instance"
+        unless defined blessed $args->{$_} and $args->{$_}->isa('DBIx::Class::Row');
+    }
+
+    confess "Current and legacy self_result_object arguments do not match"
+      if refaddr($args->{self_result_object}) != refaddr($args->{self_rowobj});
+  }
+
+  if (defined $args->{foreign_result_object}) {
+    $rowobj_cnt++;
+
+    confess "Custom condition argument 'foreign_result_object' must be a result instance"
+      unless defined blessed $args->{foreign_result_object} and $args->{foreign_result_object}->isa('DBIx::Class::Row');
+  }
+
+  confess "Result objects supplied on both ends of a relationship"
+    if $rowobj_cnt == 2;
+
+  $args;
 }
 
 1;

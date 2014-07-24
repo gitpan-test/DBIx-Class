@@ -15,7 +15,7 @@ use MooseX::Types::JSON qw(JSON);
 use MooseX::Types::Path::Class qw(Dir File);
 use MooseX::Types::LoadableClass qw(LoadableClass);
 use Try::Tiny;
-use namespace::autoclean;
+use namespace::clean;
 
 =head1 NAME
 
@@ -451,7 +451,7 @@ sub insert {
   $rs ||= $self->resultset();
   $set ||= $self->set();
   my $resultset = $self->schema->resultset($rs);
-  my $obj = $resultset->create( $set );
+  my $obj = $resultset->new_result($set)->insert;
   print ''.ref($resultset).' ID: '.join(',',$obj->id())."\n" if (!$self->quiet);
 }
 

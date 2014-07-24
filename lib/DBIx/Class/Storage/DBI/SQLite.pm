@@ -6,6 +6,7 @@ use warnings;
 use base qw/DBIx::Class::Storage::DBI/;
 use mro 'c3';
 
+use SQL::Abstract 'is_plain_value';
 use DBIx::Class::_Util qw(modver_gt_or_eq sigwarn_silencer);
 use DBIx::Class::Carp;
 use Try::Tiny;
@@ -126,11 +127,23 @@ sub _exec_svp_release {
 sub _exec_svp_rollback {
   my ($self, $name) = @_;
 
-  # For some reason this statement changes the value of $dbh->{AutoCommit}, so
-  # we localize it here to preserve the original value.
-  local $self->_dbh->{AutoCommit} = $self->_dbh->{AutoCommit};
+  $self->_dbh->do("ROLLBACK TO SAVEPOINT $name");
+}
 
-  $self->_dbh->do("ROLLBACK TRANSACTION TO SAVEPOINT $name");
+# older SQLite has issues here too - both of these are in fact
+# completely benign warnings (or at least so say the tests)
+sub _exec_txn_rollback {
+  local $SIG{__WARN__} = sigwarn_silencer( qr/rollback ineffective/ )
+    unless $DBD::SQLite::__DBIC_TXN_SYNC_SANE__;
+
+  shift->next::method(@_);
+}
+
+sub _exec_txn_commit {
+  local $SIG{__WARN__} = sigwarn_silencer( qr/commit ineffective/ )
+    unless $DBD::SQLite::__DBIC_TXN_SYNC_SANE__;
+
+  shift->next::method(@_);
 }
 
 sub _ping {
@@ -314,7 +327,7 @@ sub _dbi_attrs_for_bind {
 
   for my $i (0.. $#$bindattrs) {
 
-    $stringifiable++ if ( length ref $bind->[$i][1] and overload::Method($bind->[$i][1], '""') );
+    $stringifiable++ if ( length ref $bind->[$i][1] and is_plain_value($bind->[$i][1]) );
 
     if (
       defined $bindattrs->[$i]

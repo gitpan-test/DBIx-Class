@@ -27,6 +27,7 @@ no_index:
     - lib/DBIx/Class/Admin
     - lib/DBIx/Class/CDBICompat
     - lib/DBIx/Class/PK/Auto
+    - lib/DBIx/Class/_TempExtlib
     - maint
     - t
     - xt
@@ -51,9 +52,9 @@ requires:
   List::Util: 1.16
   MRO::Compat: 0.12
   Module::Find: 0.07
-  Moo: 1.002
+  Moo: 1.004005
   Path::Class: 0.18
-  SQL::Abstract: 1.77
+  SQL::Abstract: 1.78
   Scope::Guard: 0.03
   Sub::Name: 0.04
   Text::Balanced: 2.00
@@ -61,11 +62,12 @@ requires:
   namespace::clean: 0.24
   perl: 5.8.1
 resources:
-  IRC: irc://irc.perl.org/#dbix-class
   MailingList: http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class
   bugtracker: http://rt.cpan.org/NoAuth/Bugs.html?Dist=DBIx-Class
   homepage: http://www.dbix-class.org/
   license: http://dev.perl.org/licenses/
   repository: https://github.com/dbsrgits/DBIx-Class
-version: 0.08270
+  x_IRC: irc://irc.perl.org/#dbix-class
+  x_WebIRC: https://chat.mibbit.com/#dbix-class@irc.perl.org
+version: 0.082700_01
 x_authority: cpan:RIBASUSHI

@@ -11,7 +11,6 @@ use DBIx::Class::Optional::Dependencies ();
 
 use lib qw(t/lib);
 use DBICTest;
-use DBIC::SqlMakerTest;
 
 plan skip_all => 'Test needs ' . DBIx::Class::Optional::Dependencies->req_missing_for ('test_rdbms_mysql')
   unless DBIx::Class::Optional::Dependencies->req_ok_for ('test_rdbms_mysql');
@@ -199,20 +198,6 @@ lives_ok { $cd->set_producers ([ $producer ]) } 'set_relationship doesnt die';
     my $cd = $rs->next;
     is ($cd->artist->name, $artist->name, 'Prefetched artist');
   }, 'join does not throw (mysql 3 test)';
-
-  # induce a jointype override, make sure it works even if we don't have mysql3
-  local $schema->storage->sql_maker->{_default_jointype} = 'inner';
-  is_same_sql_bind (
-    $rs->as_query,
-    '(
-      SELECT `me`.`cdid`, `me`.`artist`, `me`.`title`, `me`.`year`, `me`.`genreid`, `me`.`single_track`,
-             `artist`.`artistid`, `artist`.`name`, `artist`.`rank`, `artist`.`charfield`
-        FROM cd `me`
-        INNER JOIN `artist` `artist` ON `artist`.`artistid` = `me`.`artist`
-    )',
-    [],
-    'overridden default join type works',
-  );
 }
 
 ## Can we properly deal with the null search problem?
@@ -299,15 +284,9 @@ NULLINSEARCH: {
 
   is ($rs->count, 10, '10 artists present');
 
-  my $orig_debug = $schema->storage->debug;
-  $schema->storage->debug(1);
-  my $query_count;
-  $schema->storage->debugcb(sub { $query_count++ });
-
-  $query_count = 0;
-  $complex_rs->delete;
-
-  is ($query_count, 1, 'One delete query fired');
+  $schema->is_executed_querycount( sub {
+    $complex_rs->delete;
+  }, 1, 'One delete query fired' );
   is ($rs->count, 0, '10 Artists correctly deleted');
 
   $rs->create({
@@ -316,15 +295,13 @@ NULLINSEARCH: {
   });
   is ($rs->count, 1, 'Artist with cd created');
 
-  $query_count = 0;
-  $schema->resultset('CD')->search_related('artist',
-    { 'artist.name' => { -like => 'baby_with_%' } }
-  )->delete;
-  is ($query_count, 1, 'And one more delete query fired');
-  is ($rs->count, 0, 'Artist with cd deleted');
 
-  $schema->storage->debugcb(undef);
-  $schema->storage->debug($orig_debug);
+  $schema->is_executed_querycount( sub {
+    $schema->resultset('CD')->search_related('artist',
+      { 'artist.name' => { -like => 'baby_with_%' } }
+    )->delete;
+  }, 1, 'And one more delete query fired');
+  is ($rs->count, 0, 'Artist with cd deleted');
 }
 
 ZEROINSEARCH: {
@@ -375,8 +352,8 @@ ZEROINSEARCH: {
   ]});
 
   warnings_exist { is_deeply (
-    [ $restrict_rs->get_column('y')->all ],
-    [ $y_rs->all ],
+    [ sort $restrict_rs->get_column('y')->all ],
+    [ sort $y_rs->all ],
     'Zero year was correctly excluded from resultset',
   ) } qr/
     \QUse of distinct => 1 while selecting anything other than a column \E

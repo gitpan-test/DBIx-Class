@@ -4,15 +4,13 @@ use warnings;
 use Test::More;
 
 use lib qw(t/lib);
-use DBICTest;
-use DBIC::SqlMakerTest;
+use DBICTest ':DiffSQL';
 use DBIx::Class::SQLMaker::LimitDialects;
 
 my $ROWS = DBIx::Class::SQLMaker::LimitDialects->__rows_bindtype;
 my $OFFSET = DBIx::Class::SQLMaker::LimitDialects->__offset_bindtype;
 
 my $schema = DBICTest->init_schema();
-my $sdebug = $schema->storage->debug;
 
 my $cd_rs = $schema->resultset('CD')->search (
   { 'tracks.cd' => { '!=', undef } },
@@ -25,10 +23,12 @@ for ($cd_rs->all) {
   is ($_->tracks->count, 3, '3 tracks for CD' . $_->id );
 }
 
+my @cdids = sort $cd_rs->get_column ('cdid')->all;
+
 # Test a belongs_to prefetch of a has_many
 {
   my $track_rs = $schema->resultset ('Track')->search (
-    { 'me.cd' => { -in => [ $cd_rs->get_column ('cdid')->all ] } },
+    { 'me.cd' => { -in => \@cdids } },
     {
       select => [
         'me.cd',
@@ -49,21 +49,13 @@ for ($cd_rs->all) {
   is($track_rs->count, 5, 'Prefetched count with groupby');
   is($track_rs->all, 5, 'Prefetched objects with groupby');
 
-  {
-    my $query_cnt = 0;
-    $schema->storage->debugcb ( sub { $query_cnt++ } );
-    $schema->storage->debug (1);
-
+  $schema->is_executed_querycount( sub {
     while (my $collapsed_track = $track_rs->next) {
       my $cdid = $collapsed_track->get_column('cd');
       is($collapsed_track->get_column('track_count'), 3, "Correct count of tracks for CD $cdid" );
       ok($collapsed_track->cd->title, "Prefetched title for CD $cdid" );
     }
-
-    is ($query_cnt, 1, 'Single query on prefetched titles');
-    $schema->storage->debugcb (undef);
-    $schema->storage->debug ($sdebug);
-  }
+  }, 1, 'Single query on prefetched titles');
 
   # Test sql by hand, as the sqlite db will simply paper over
   # improper group/select combinations
@@ -82,7 +74,7 @@ for ($cd_rs->all) {
       me
     )',
     [ map { [ { sqlt_datatype => 'integer', dbic_colname => 'me.cd' }
-      => $_ ] } ($cd_rs->get_column ('cdid')->all) ],
+      => $_ ] } @cdids ],
     'count() query generated expected SQL',
   );
 
@@ -101,7 +93,7 @@ for ($cd_rs->all) {
       WHERE ( me.cd IN ( ?, ?, ?, ?, ? ) )
     )',
     [ map { [ { sqlt_datatype => 'integer', dbic_colname => 'me.cd' }
-      => $_ ] } ( ($cd_rs->get_column ('cdid')->all) x 2 ) ],
+      => $_ ] } (@cdids) x 2 ],
     'next() query generated expected SQL',
   );
 
@@ -190,22 +182,16 @@ for ($cd_rs->all) {
   my ($top_cd) = $most_tracks_rs->all;
   is ($top_cd->id, 2, 'Correct cd fetched on top'); # 2 because of the slice(1,1) earlier
 
-  my $query_cnt = 0;
-  $schema->storage->debugcb ( sub { $query_cnt++ } );
-  $schema->storage->debug (1);
-
-  is ($top_cd->get_column ('track_count'), 4, 'Track count fetched correctly');
-  is ($top_cd->tracks->count, 4, 'Count of prefetched tracks rs still correct');
-  is ($top_cd->tracks->all, 4, 'Number of prefetched track objects still correct');
-  is (
-    $top_cd->liner_notes->notes,
-    'Buy Whiskey!',
-    'Correct liner pre-fetched with top cd',
-  );
-
-  is ($query_cnt, 0, 'No queries executed during prefetched data access');
-  $schema->storage->debugcb (undef);
-  $schema->storage->debug ($sdebug);
+  $schema->is_executed_querycount( sub {
+    is ($top_cd->get_column ('track_count'), 4, 'Track count fetched correctly');
+    is ($top_cd->tracks->count, 4, 'Count of prefetched tracks rs still correct');
+    is ($top_cd->tracks->all, 4, 'Number of prefetched track objects still correct');
+    is (
+      $top_cd->liner_notes->notes,
+      'Buy Whiskey!',
+      'Correct liner pre-fetched with top cd',
+    );
+  }, 0, 'No queries executed during prefetched data access');
 }
 
 {
@@ -256,20 +242,14 @@ for ($cd_rs->all) {
   my ($top_cd) = $most_tracks_rs->all;
   is ($top_cd->id, 2, 'Correct cd fetched on top'); # 2 because of the slice(1,1) earlier
 
-  my $query_cnt = 0;
-  $schema->storage->debugcb ( sub { $query_cnt++ } );
-  $schema->storage->debug (1);
-
-  is ($top_cd->get_column ('track_count'), 4, 'Track count fetched correctly');
-  is (
-    $top_cd->liner_notes->notes,
-    'Buy Whiskey!',
-    'Correct liner pre-fetched with top cd',
-  );
-
-  is ($query_cnt, 0, 'No queries executed during prefetched data access');
-  $schema->storage->debugcb (undef);
-  $schema->storage->debug ($sdebug);
+  $schema->is_executed_querycount( sub {
+    is ($top_cd->get_column ('track_count'), 4, 'Track count fetched correctly');
+    is (
+      $top_cd->liner_notes->notes,
+      'Buy Whiskey!',
+      'Correct liner pre-fetched with top cd',
+    );
+  }, 0, 'No queries executed during prefetched data access');
 }
 
 
@@ -305,7 +285,7 @@ for ($cd_rs->all) {
 # RT 47779, test group_by as a scalar ref
 {
   my $track_rs = $schema->resultset ('Track')->search (
-    { 'me.cd' => { -in => [ $cd_rs->get_column ('cdid')->all ] } },
+    { 'me.cd' => { -in => \@cdids } },
     {
       select => [
         'me.cd',
@@ -334,7 +314,7 @@ for ($cd_rs->all) {
       me
     )',
     [ map { [ { sqlt_datatype => 'integer', dbic_colname => 'me.cd' }
-      => $_ ] } ($cd_rs->get_column ('cdid')->all) ],
+      => $_ ] } (@cdids) ],
     'count() query generated expected SQL',
   );
 }

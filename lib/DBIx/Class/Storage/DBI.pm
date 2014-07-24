@@ -10,11 +10,11 @@ use mro 'c3';
 use DBIx::Class::Carp;
 use Scalar::Util qw/refaddr weaken reftype blessed/;
 use List::Util qw/first/;
-use Sub::Name 'subname';
 use Context::Preserve 'preserve_context';
 use Try::Tiny;
-use overload ();
 use Data::Compare (); # no imports!!! guard against insane architecture
+use SQL::Abstract qw(is_plain_value is_literal_value);
+use DBIx::Class::_Util qw(quote_sub perlstring);
 use namespace::clean;
 
 # default cursor class, overridable in connect_info attributes
@@ -79,20 +79,24 @@ __PACKAGE__->_use_join_optimizer (1);
 sub _determine_supports_join_optimizer { 1 };
 
 # Each of these methods need _determine_driver called before itself
-# in order to function reliably. This is a purely DRY optimization
+# in order to function reliably. We also need to separate accessors
+# from plain old method calls, since an accessor called as a setter
+# does *not* need the driver determination loop fired (and in fact
+# can produce hard to find bugs, like e.g. losing on_connect_*
+# semantics on fresh connections)
 #
-# get_(use)_dbms_capability need to be called on the correct Storage
-# class, as _use_X may be hardcoded class-wide, and _supports_X calls
-# _determine_supports_X which obv. needs a correct driver as well
-my @rdbms_specific_methods = qw/
+# The construct below is simply a parameterized around()
+my $storage_accessor_idx = { map { $_ => 1 } qw(
   sqlt_type
-  deployment_statements
+  datetime_parser_type
 
   sql_maker
   cursor_class
+)};
+for my $meth (keys %$storage_accessor_idx, qw(
+  deployment_statements
 
   build_datetime_parser
-  datetime_parser_type
 
   txn_begin
 
@@ -110,16 +114,16 @@ my @rdbms_specific_methods = qw/
 
   _server_info
   _get_server_version
-/;
-
-for my $meth (@rdbms_specific_methods) {
+)) {
 
   my $orig = __PACKAGE__->can ($meth)
     or die "$meth is not a ::Storage::DBI method!";
 
-  no strict qw/refs/;
-  no warnings qw/redefine/;
-  *{__PACKAGE__ ."::$meth"} = subname $meth => sub {
+  my $is_getter = $storage_accessor_idx->{$meth} ? 0 : 1;
+
+  quote_sub
+    __PACKAGE__ ."::$meth", sprintf( <<'EOC', $is_getter, perlstring $meth ), { '$orig' => \$orig };
+
     if (
       # only fire when invoked on an instance, a valid class-based invocation
       # would e.g. be setting a default for an inherited accessor
@@ -129,6 +133,10 @@ for my $meth (@rdbms_specific_methods) {
         and
       ! $_[0]->{_in_determine_driver}
         and
+      # if this is a known *setter* - just set it, no need to connect
+      # and determine the driver
+      ( %1$s or @_ <= 1 )
+        and
       # Only try to determine stuff if we have *something* that either is or can
       # provide a DSN. Allows for bare $schema's generated with a plain ->connect()
       # to still be marginally useful
@@ -136,16 +144,15 @@ for my $meth (@rdbms_specific_methods) {
     ) {
       $_[0]->_determine_driver;
 
-      # This for some reason crashes and burns on perl 5.8.1
-      # IFF the method ends up throwing an exception
-      #goto $_[0]->can ($meth);
+      # work around http://rt.perl.org/rt3/Public/Bug/Display.html?id=35878
+      goto $_[0]->can(%2$s) unless DBIx::Class::_ENV_::BROKEN_GOTO;
 
-      my $cref = $_[0]->can ($meth);
+      my $cref = $_[0]->can(%2$s);
       goto $cref;
     }
 
     goto $orig;
-  };
+EOC
 }
 
 =head1 NAME
@@ -985,8 +992,13 @@ sub _get_dbh {
   return $self->_dbh;
 }
 
+# *DELIBERATELY* not a setter (for the time being)
+# Too intertwined with everything else for any kind of sanity
 sub sql_maker {
-  my ($self) = @_;
+  my $self = shift;
+
+  $self->throw_exception('sql_maker() is not a setter method') if @_;
+
   unless ($self->_sql_maker) {
     my $sql_maker_class = $self->sql_maker_class;
 
@@ -1050,6 +1062,7 @@ sub _populate_dbh {
 
   $self->_dbh(undef); # in case ->connected failed we might get sent here
   $self->_dbh_details({}); # reset everything we know
+  $self->_sql_maker(undef); # this may also end up being different
 
   $self->_dbh($self->_connect);
 
@@ -1298,7 +1311,7 @@ sub _determine_driver {
         "Your storage subclass @{[ ref $self ]} provides (or inherits) the method "
       . 'source_bind_attributes() for which support has been removed as of Jan 2013. '
       . 'If you are not sure how to proceed please contact the development team via '
-      . 'http://search.cpan.org/dist/DBIx-Class/lib/DBIx/Class.pm#GETTING_HELP/SUPPORT'
+      . DBIx::Class::_ENV_::HELP_URL
       );
     }
 
@@ -1621,17 +1634,13 @@ sub _exec_txn_rollback {
   shift->_dbh->rollback;
 }
 
-# generate some identical methods
-for my $meth (qw/svp_begin svp_release svp_rollback/) {
-  no strict qw/refs/;
-  *{__PACKAGE__ ."::$meth"} = subname $meth => sub {
-    my $self = shift;
-    $self->_verify_pid unless DBIx::Class::_ENV_::BROKEN_FORK;
-    $self->throw_exception("Unable to $meth() on a disconnected storage")
-      unless $self->_dbh;
-    $self->next::method(@_);
-  };
-}
+# generate the DBI-specific stubs, which then fallback to ::Storage proper
+quote_sub __PACKAGE__ . "::$_" => sprintf (<<'EOS', $_) for qw(svp_begin svp_release svp_rollback);
+  $_[0]->_verify_pid unless DBIx::Class::_ENV_::BROKEN_FORK;
+  $_[0]->throw_exception('Unable to %s() on a disconnected storage')
+    unless $_[0]->_dbh;
+  shift->next::method(@_);
+EOS
 
 # This used to be the top-half of _execute.  It was split out to make it
 #  easier to override in NoBindVars without duping the rest.  It takes up
@@ -1683,13 +1692,10 @@ sub _gen_sql_bind {
 sub _resolve_bindattrs {
   my ($self, $ident, $bind, $colinfos) = @_;
 
-  $colinfos ||= {};
-
   my $resolve_bindinfo = sub {
     #my $infohash = shift;
 
-    %$colinfos = %{ $self->_resolve_column_info($ident) }
-      unless keys %$colinfos;
+    $colinfos ||= { %{ $self->_resolve_column_info($ident) } };
 
     my $ret;
     if (my $col = $_[0]->{dbic_colname}) {
@@ -1709,10 +1715,16 @@ sub _resolve_bindattrs {
     my $resolved =
       ( ref $_ ne 'ARRAY' or @$_ != 2 ) ? [ {}, $_ ]
     : ( ! defined $_->[0] )             ? [ {}, $_->[1] ]
-    : (ref $_->[0] eq 'HASH')           ? [ (exists $_->[0]{dbd_attrs} or $_->[0]{sqlt_datatype})
-                                              ? $_->[0]
-                                              : $resolve_bindinfo->($_->[0])
-                                            , $_->[1] ]
+    : (ref $_->[0] eq 'HASH')           ? [(
+                                            ! keys %{$_->[0]}
+                                              or
+                                            exists $_->[0]{dbd_attrs}
+                                              or
+                                            $_->[0]{sqlt_datatype}
+                                           ) ? $_->[0]
+                                             : $resolve_bindinfo->($_->[0])
+                                           , $_->[1]
+                                          ]
     : (ref $_->[0] eq 'SCALAR')         ? [ { sqlt_datatype => ${$_->[0]} }, $_->[1] ]
     :                                     [ $resolve_bindinfo->(
                                               { dbic_colname => $_->[0] }
@@ -1726,7 +1738,7 @@ sub _resolve_bindattrs {
         and
       length ref $resolved->[1]
         and
-      ! overload::Method($resolved->[1], '""')
+      ! is_plain_value $resolved->[1]
     ) {
       require Data::Dumper;
       local $Data::Dumper::Maxdepth = 1;
@@ -1880,14 +1892,15 @@ sub _bind_sth_params {
       );
     }
     else {
-      # FIXME SUBOPTIMAL - most likely this is not necessary at all
-      # confirm with dbi-dev whether explicit stringification is needed
-      my $v = ( length ref $bind->[$i][1] and overload::Method($bind->[$i][1], '""') )
+      # FIXME SUBOPTIMAL - DBI needs fixing to always stringify regardless of DBD
+      my $v = ( length ref $bind->[$i][1] and is_plain_value $bind->[$i][1] )
         ? "$bind->[$i][1]"
         : $bind->[$i][1]
       ;
+
       $sth->bind_param(
         $i + 1,
+        # The temp-var is CRUCIAL - DO NOT REMOVE IT, breaks older DBD::SQLite RT#79576
         $v,
         $bind_attrs->[$i],
       );
@@ -1908,9 +1921,7 @@ sub _prefetch_autovalues {
       (
         ! exists $to_insert->{$col}
           or
-        ref $to_insert->{$col} eq 'SCALAR'
-          or
-        (ref $to_insert->{$col} eq 'REF' and ref ${$to_insert->{$col}} eq 'ARRAY')
+        is_literal_value($to_insert->{$col})
       )
     ) {
       $values{$col} = $self->_sequence_fetch(
@@ -1947,11 +1958,9 @@ sub insert {
     }
 
     # nothing to retrieve when explicit values are supplied
-    next if (defined $to_insert->{$col} and ! (
-      ref $to_insert->{$col} eq 'SCALAR'
-        or
-      (ref $to_insert->{$col} eq 'REF' and ref ${$to_insert->{$col}} eq 'ARRAY')
-    ));
+    next if (
+      defined $to_insert->{$col} and ! is_literal_value($to_insert->{$col})
+    );
 
     # the 'scalar keys' is a trick to preserve the ->columns declaration order
     $retrieve_cols{$col} = scalar keys %retrieve_cols if (
@@ -2031,15 +2040,13 @@ sub insert_bulk {
 
   my @col_range = (0..$#$cols);
 
-  # FIXME SUBOPTIMAL - most likely this is not necessary at all
-  # confirm with dbi-dev whether explicit stringification is needed
-  #
-  # forcibly stringify whatever is stringifiable
+  # FIXME SUBOPTIMAL - DBI needs fixing to always stringify regardless of DBD
+  # For the time being forcibly stringify whatever is stringifiable
   # ResultSet::populate() hands us a copy - safe to mangle
   for my $r (0 .. $#$data) {
     for my $c (0 .. $#{$data->[$r]}) {
       $data->[$r][$c] = "$data->[$r][$c]"
-        if ( length ref $data->[$r][$c] and overload::Method($data->[$r][$c], '""') );
+        if ( length ref $data->[$r][$c] and is_plain_value $data->[$r][$c] );
     }
   }
 
@@ -2169,7 +2176,7 @@ sub insert_bulk {
         }
       }
       elsif (! defined $value_type_by_col_idx->{$col_idx} ) {  # regular non-literal value
-        if (ref $val eq 'SCALAR' or (ref $val eq 'REF' and ref $$val eq 'ARRAY') ) {
+        if (is_literal_value($val)) {
           $bad_slice_report_cref->("Literal SQL found where a plain bind value is expected", $row_idx, $col_idx);
         }
       }
@@ -2279,12 +2286,21 @@ sub _dbh_execute_for_fetch {
   my $fetch_tuple = sub {
     return undef if ++$fetch_row_idx > $#$data;
 
-    return [ map { defined $_->{_literal_bind_subindex}
-      ? ${ $data->[ $fetch_row_idx ]->[ $_->{_bind_data_slice_idx} ]}
-         ->[ $_->{_literal_bind_subindex} ]
-          ->[1]
-      : $data->[ $fetch_row_idx ]->[ $_->{_bind_data_slice_idx} ]
-    } map { $_->[0] } @$proto_bind];
+    return [ map {
+      ! defined $_->{_literal_bind_subindex}
+
+        ? $data->[ $fetch_row_idx ]->[ $_->{_bind_data_slice_idx} ]
+
+        # There are no attributes to resolve here - we already did everything
+        # when we constructed proto_bind. However we still want to sanity-check
+        # what the user supplied, so pass stuff through to the resolver *anyway*
+        : $self->_resolve_bindattrs (
+            undef,  # a fake rsrc
+            [ ${ $data->[ $fetch_row_idx ]->[ $_->{_bind_data_slice_idx} ]}->[ $_->{_literal_bind_subindex} ] ],
+            {},     # a fake column_info bag
+          )->[0][1]
+
+    } map { $_->[0] } @$proto_bind ];
   };
 
   my $tuple_status = [];
@@ -2411,20 +2427,12 @@ sub _select_args {
   #) if $orig_attrs->{!args_as_stored_at_the_end_of_this_method!};
 
   my $sql_maker = $self->sql_maker;
-  my $alias2source = $self->_resolve_ident_sources ($ident);
 
   my $attrs = {
     %$orig_attrs,
     select => $select,
     from => $ident,
     where => $where,
-
-    # limit dialects use this stuff
-    # yes, some CDBICompat crap does not supply an {alias} >.<
-    ( $orig_attrs->{alias} and $alias2source->{$orig_attrs->{alias}} )
-      ? ( _rsroot_rsrc => $alias2source->{$orig_attrs->{alias}} )
-      : ()
-    ,
   };
 
   # Sanity check the attributes (SQLMaker does it too, but
@@ -2515,6 +2523,8 @@ sub _select_args {
   $orig_attrs->{_last_sqlmaker_alias_map} = $attrs->{_aliastypes};
 
 ###
+  #   my $alias2source = $self->_resolve_ident_sources ($ident);
+  #
   # This would be the point to deflate anything found in $attrs->{where}
   # (and leave $attrs->{bind} intact). Problem is - inflators historically
   # expect a result object. And all we have is a resultsource (it is trivial

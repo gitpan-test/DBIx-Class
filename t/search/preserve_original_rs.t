@@ -5,11 +5,9 @@ use Test::More;
 use Test::Exception;
 
 use lib qw(t/lib);
-use DBICTest;
-use DBIC::SqlMakerTest;
-use DBIC::DebugObj;
+use DBICTest ':DiffSQL';
 
-use Storable qw/dclone/;
+use Storable 'dclone';
 
 my $schema = DBICTest->init_schema();
 

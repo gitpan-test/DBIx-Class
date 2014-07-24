@@ -406,7 +406,7 @@ sub func {
   my $cursor = $self->func_rs($function)->cursor;
 
   if( wantarray ) {
-    DBIx::Class::_ENV_::ASSERT_NO_INTERNAL_WANTARRAY and my $sog = fail_on_internal_wantarray($self);
+    DBIx::Class::_ENV_::ASSERT_NO_INTERNAL_WANTARRAY and my $sog = fail_on_internal_wantarray;
     return map { $_->[ 0 ] } $cursor->all;
   }
 
@@ -487,14 +487,14 @@ sub _resultset {
       unless( $cols{$select} ) {
         carp_unique(
           'Use of distinct => 1 while selecting anything other than a column '
-        . 'declared on the primary ResultSource is deprecated - please supply '
-        . 'an explicit group_by instead'
+        . 'declared on the primary ResultSource is deprecated (you selected '
+        . "'$self->{_as}') - please supply an explicit group_by instead"
         );
 
         # collapse the selector to a literal so that it survives the distinct parse
         # if it turns out to be an aggregate - at least the user will get a proper exception
         # instead of silent drop of the group_by altogether
-        $select = \ $rsrc->storage->sql_maker->_recurse_fields($select);
+        $select = \[ $rsrc->storage->sql_maker->_recurse_fields($select) ];
       }
     }
 

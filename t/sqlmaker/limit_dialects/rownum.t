@@ -4,8 +4,7 @@ use warnings;
 use Test::More;
 
 use lib qw(t/lib);
-use DBICTest;
-use DBIC::SqlMakerTest;
+use DBICTest ':DiffSQL';
 use DBIx::Class::SQLMaker::LimitDialects;
 
 my ($TOTAL, $OFFSET, $ROWS) = (
@@ -42,7 +41,7 @@ for my $test_set (
     sql => '(
       SELECT id, artist__id, bleh
       FROM (
-        SELECT id, artist__id, bleh, ROWNUM rownum__index
+        SELECT id, artist__id, bleh, ROWNUM AS rownum__index
         FROM (
           SELECT foo.id AS id, bar.id AS artist__id, TO_CHAR (foo.womble, "blah") AS bleh
             FROM cd me
@@ -70,7 +69,7 @@ for my $test_set (
     sql => '(
       SELECT id, artist__id, bleh
       FROM (
-        SELECT id, artist__id, bleh, ROWNUM rownum__index
+        SELECT id, artist__id, bleh, ROWNUM AS rownum__index
         FROM (
           SELECT foo.id AS id, bar.id AS artist__id, TO_CHAR(foo.womble, "blah") AS bleh
             FROM cd me
@@ -102,7 +101,7 @@ for my $test_set (
     sql => '(
       SELECT id, artist__id, bleh
       FROM (
-        SELECT id, artist__id, bleh, ROWNUM rownum__index
+        SELECT id, artist__id, bleh, ROWNUM AS rownum__index
         FROM (
           SELECT foo.id AS id, bar.id AS artist__id, TO_CHAR(foo.womble, "blah") AS bleh
             FROM cd me
@@ -130,7 +129,7 @@ for my $test_set (
     sql => '(
       SELECT id, ends_with_me__id
       FROM (
-        SELECT id, ends_with_me__id, ROWNUM rownum__index
+        SELECT id, ends_with_me__id, ROWNUM AS rownum__index
         FROM (
           SELECT foo.id AS id, ends_with_me.id AS ends_with_me__id
             FROM cd me
@@ -157,7 +156,7 @@ for my $test_set (
     sql => '(
       SELECT id, ends_with_me__id
       FROM (
-        SELECT id, ends_with_me__id, ROWNUM rownum__index
+        SELECT id, ends_with_me__id, ROWNUM AS rownum__index
         FROM (
           SELECT foo.id AS id, ends_with_me.id AS ends_with_me__id
             FROM cd me
@@ -202,7 +201,7 @@ is_same_sql_bind(
   '(
     SELECT owner_name, owner_books
       FROM (
-        SELECT owner_name, owner_books, ROWNUM rownum__index
+        SELECT owner_name, owner_books, ROWNUM AS rownum__index
           FROM (
             SELECT  owner.name AS owner_name,
               ( SELECT COUNT( * ) FROM owners owner WHERE (count.id = owner.id)) AS owner_books

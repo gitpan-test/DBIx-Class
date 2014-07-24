@@ -4,9 +4,14 @@ use warnings;
 use Test::More;
 use Test::Warn;
 use Test::Exception;
+
+# MASSIVE FIXME - there is a hole in ::RSC / as_subselect_rs
+# losing the order. Needs a rework/extract of the realiaser,
+# and that's a whole another bag of dicks
+BEGIN { $ENV{DBIC_SHUFFLE_UNORDERED_RESULTSETS} = 0 }
+
 use lib qw(t/lib);
-use DBICTest;
-use DBIC::SqlMakerTest;
+use DBICTest ':DiffSQL';
 
 my $schema = DBICTest->init_schema();
 
@@ -248,17 +253,23 @@ is_same_sql_bind (
 
   $schema->resultset('CD')->create({ artist => 1, title => 'dealbroker no tracks', year => 2001 });
 
+  my $yp1 = \[ 'year + ?', 1 ];
+
   my $rs = $schema->resultset ('CD')->search (
     { 'artist.name' => { '!=', 'evancarrol' }, 'tracks.trackid' => { '!=', undef } },
     {
       order_by => 'me.year',
       join => [qw(artist tracks)],
-      columns => [ 'year', { cnt => { count => 'me.cdid' }} ],
+      columns => [
+        'year',
+        { cnt => { count => 'me.cdid' } },
+        {  year_plus_one => $yp1 },
+      ],
     },
   );
 
   my $rstypes = {
-    'explicitly grouped' => $rs->search_rs({}, { group_by => 'year' }),
+    'explicitly grouped' => $rs->search_rs({}, { group_by => [ 'year', $yp1 ] } ),
     'implicitly grouped' => $rs->search_rs({}, { distinct => 1 }),
   };
 
@@ -277,27 +288,37 @@ is_same_sql_bind (
   # would silently drop the group_by entirely, likely ending up with nonsensival results
   # With the current behavior the user will at least get a nice fat exception from the
   # RDBMS (or maybe the RDBMS will even decide to handle the situation sensibly...)
-  warnings_exist { is_same_sql_bind(
-    $rstypes->{'implicitly grouped'}->get_column('cnt')->as_query,
-    '(
-      SELECT COUNT( me.cdid )
-        FROM cd me
-        JOIN artist artist
-          ON artist.artistid = me.artist
-        LEFT JOIN track tracks
-          ON tracks.cd = me.cdid
-      WHERE artist.name != ? AND tracks.trackid IS NOT NULL
-      GROUP BY COUNT( me.cdid )
-      ORDER BY MIN(me.year)
-    )',
-    [ [ { dbic_colname => 'artist.name', sqlt_datatype => 'varchar', sqlt_size => 100 }
-        => 'evancarrol'
-    ] ],
-    'Expected (though nonsensical) SQL generated on rscol-with-distinct-over-function',
-  ) } qr/
-    \QUse of distinct => 1 while selecting anything other than a column \E
-    \Qdeclared on the primary ResultSource is deprecated\E
-  /x, 'deprecation warning';
+  for (
+    [ cnt => 'COUNT( me.cdid )' ],
+    [ year_plus_one => 'year + ?' => [ {} => 1 ] ],
+  ) {
+    my ($col, $sel_grp_sql, @sel_grp_bind) = @$_;
+
+    warnings_exist { is_same_sql_bind(
+      $rstypes->{'implicitly grouped'}->get_column($col)->as_query,
+      "(
+        SELECT $sel_grp_sql
+          FROM cd me
+          JOIN artist artist
+            ON artist.artistid = me.artist
+          LEFT JOIN track tracks
+            ON tracks.cd = me.cdid
+        WHERE artist.name != ? AND tracks.trackid IS NOT NULL
+        GROUP BY $sel_grp_sql
+        ORDER BY MIN(me.year)
+      )",
+      [
+        @sel_grp_bind,
+        [ { dbic_colname => 'artist.name', sqlt_datatype => 'varchar', sqlt_size => 100 }
+          => 'evancarrol' ],
+        @sel_grp_bind,
+      ],
+      'Expected (though nonsensical) SQL generated on rscol-with-distinct-over-function',
+    ) } qr/
+      \QUse of distinct => 1 while selecting anything other than a column \E
+      \Qdeclared on the primary ResultSource is deprecated (you selected '$col')\E
+    /x, 'deprecation warning';
+  }
 
   {
     local $TODO = 'multiplying join leaks through to the count aggregate... this may never actually work';

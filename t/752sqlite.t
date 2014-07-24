@@ -11,40 +11,6 @@ use lib qw(t/lib);
 use DBICTest;
 use DBIx::Class::_Util qw(sigwarn_silencer modver_gt_or_eq);
 
-# savepoints test
-{
-  my $schema = DBICTest->init_schema(auto_savepoint => 1);
-
-  my $ars = $schema->resultset('Artist');
-
-  # test two-phase commit and inner transaction rollback from nested transactions
-  $schema->txn_do(sub {
-    $ars->create({ name => 'in_outer_transaction' });
-    $schema->txn_do(sub {
-      $ars->create({ name => 'in_inner_transaction' });
-    });
-    ok($ars->search({ name => 'in_inner_transaction' })->first,
-      'commit from inner transaction visible in outer transaction');
-    throws_ok {
-      $schema->txn_do(sub {
-        $ars->create({ name => 'in_inner_transaction_rolling_back' });
-        die 'rolling back inner transaction';
-      });
-    } qr/rolling back inner transaction/, 'inner transaction rollback executed';
-    $ars->create({ name => 'in_outer_transaction2' });
-  });
-
-  ok($ars->search({ name => 'in_outer_transaction' })->first,
-    'commit from outer transaction');
-  ok($ars->search({ name => 'in_outer_transaction2' })->first,
-    'second commit from outer transaction');
-  ok($ars->search({ name => 'in_inner_transaction' })->first,
-    'commit from inner transaction');
-  is $ars->search({ name => 'in_inner_transaction_rolling_back' })->first,
-    undef,
-    'rollback from inner transaction';
-}
-
 # check that we work somewhat OK with braindead SQLite transaction handling
 #
 # As per https://metacpan.org/source/ADAMK/DBD-SQLite-1.37/lib/DBD/SQLite.pm#L921
@@ -53,6 +19,7 @@ use DBIx::Class::_Util qw(sigwarn_silencer modver_gt_or_eq);
 # However DBD::SQLite 1.38_02 seems to fix this, with an accompanying test:
 # https://metacpan.org/source/ADAMK/DBD-SQLite-1.38_02/t/54_literal_txn.t
 
+require DBD::SQLite;
 my $lit_txn_todo = modver_gt_or_eq('DBD::SQLite', '1.38_02')
   ? undef
   : "DBD::SQLite before 1.38_02 is retarded wrt detecting literal BEGIN/COMMIT statements"
@@ -124,6 +91,46 @@ DDL
   }
 }
 
+# test blank begin/svp/commit/begin cycle
+warnings_are {
+  my $schema = DBICTest->init_schema( no_populate => 1 );
+  my $rs = $schema->resultset('Artist');
+  is ($rs->count, 0, 'Start with empty table');
+
+  for my $do_commit (1, 0) {
+    $schema->txn_begin;
+    $schema->svp_begin;
+    $schema->svp_rollback;
+
+    $schema->svp_begin;
+    $schema->svp_rollback;
+
+    $schema->svp_release;
+
+    $schema->svp_begin;
+
+    $schema->txn_rollback;
+
+    $schema->txn_begin;
+    $schema->svp_begin;
+    $schema->svp_rollback;
+
+    $schema->svp_begin;
+    $schema->svp_rollback;
+
+    $schema->svp_release;
+
+    $schema->svp_begin;
+
+    $do_commit ? $schema->txn_commit : $schema->txn_rollback;
+
+    is_deeply $schema->storage->savepoints, [], 'Savepoint names cleared away'
+  }
+
+  $schema->txn_do(sub {
+    ok (1, 'all seems fine');
+  });
+} [], 'No warnings emitted';
 
 my $schema = DBICTest->init_schema();
 
@@ -215,7 +222,20 @@ for my $bi ( qw(
   my $v_desc = sprintf '%s (%d bit signed int)', $bi, $v_bits;
 
   my @w;
-  local $SIG{__WARN__} = sub { $_[0] =~ /datatype mismatch/ ? push @w, @_ : warn @_ };
+  local $SIG{__WARN__} = sub {
+    if ($_[0] =~ /datatype mismatch/) {
+      push @w, @_;
+    }
+    elsif ($_[0] =~ /An integer value occupying more than 32 bits was supplied .+ can not bind properly so DBIC will treat it as a string instead/ ) {
+      # do nothing, this warning will pop up here and there depending on
+      # DBD/bitness combination
+      # we don't want to test for it explicitly, we are just interested
+      # in the results matching at the end
+    }
+    else {
+      warn @_;
+    }
+  };
 
   # some combinations of SQLite 1.35 and older 5.8 faimly is wonky
   # instead of a warning we get a full exception. Sod it

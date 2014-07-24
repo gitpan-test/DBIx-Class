@@ -6,7 +6,9 @@ use base qw/DBIx::Class/;
 use DBIx::Class::Carp;
 use DBIx::Class::ResultSetColumn;
 use Scalar::Util qw/blessed weaken reftype/;
-use DBIx::Class::_Util 'fail_on_internal_wantarray';
+use DBIx::Class::_Util qw(
+  fail_on_internal_wantarray fail_on_internal_call UNRESOLVABLE_CONDITION
+);
 use Try::Tiny;
 use Data::Compare (); # no imports!!! guard against insane architecture
 
@@ -77,34 +79,6 @@ If a resultset is used in a numeric context it returns the L</count>.
 However, if it is used in a boolean context it is B<always> true.  So if
 you want to check if a resultset has any results, you must use C<if $rs
 != 0>.
-
-=head1 CUSTOM ResultSet CLASSES THAT USE Moose
-
-If you want to make your custom ResultSet classes with L<Moose>, use a template
-similar to:
-
-    package MyApp::Schema::ResultSet::User;
-
-    use Moose;
-    use namespace::autoclean;
-    use MooseX::NonMoose;
-    extends 'DBIx::Class::ResultSet';
-
-    sub BUILDARGS { $_[2] }
-
-    ...your code...
-
-    __PACKAGE__->meta->make_immutable;
-
-    1;
-
-The L<MooseX::NonMoose> is necessary so that the L<Moose> constructor does not
-clash with the regular ResultSet constructor. Alternatively, you can use:
-
-    __PACKAGE__->meta->make_immutable(inline_constructor => 0);
-
-The L<BUILDARGS|Moose::Manual::Construction/BUILDARGS> is necessary because the
-signature of the ResultSet C<new> is C<< ->new($source, \%args) >>.
 
 =head1 EXAMPLES
 
@@ -193,6 +167,93 @@ Which is the same as:
 
 See: L</search>, L</count>, L</get_column>, L</all>, L</create>.
 
+=head2 Custom ResultSet classes
+
+To add methods to your resultsets, you can subclass L<DBIx::Class::ResultSet>, similar to:
+
+  package MyApp::Schema::ResultSet::User;
+
+  use strict;
+  use warnings;
+
+  use base 'DBIx::Class::ResultSet';
+
+  sub active {
+    my $self = shift;
+    $self->search({ $self->current_source_alias . '.active' => 1 });
+  }
+
+  sub unverified {
+    my $self = shift;
+    $self->search({ $self->current_source_alias . '.verified' => 0 });
+  }
+
+  sub created_n_days_ago {
+    my ($self, $days_ago) = @_;
+    $self->search({
+      $self->current_source_alias . '.create_date' => {
+        '<=',
+      $self->result_source->schema->storage->datetime_parser->format_datetime(
+        DateTime->now( time_zone => 'UTC' )->subtract( days => $days_ago )
+      )}
+    });
+  }
+
+  sub users_to_warn { shift->active->unverified->created_n_days_ago(7) }
+
+  1;
+
+See L<DBIx::Class::Schema/load_namespaces> on how DBIC can discover and
+automatically attach L<Result|DBIx::Class::Manual::ResultClass>-specific
+L<ResulSet|DBIx::Class::ResultSet> classes.
+
+=head3 ResultSet subclassing with Moose and similar constructor-providers
+
+Using L<Moose> or L<Moo> in your ResultSet classes is usually overkill, but
+you may find it useful if your ResultSets contain a lot of business logic
+(e.g. C<has xml_parser>, C<has json>, etc) or if you just prefer to organize
+your code via roles.
+
+In order to write custom ResultSet classes with L<Moo> you need to use the
+following template. The L<BUILDARGS|Moo/BUILDARGS> is necessary due to the
+unusual signature of the L<constructor provided by DBIC
+|DBIx::Class::ResultSet/new> C<< ->new($source, \%args) >>.
+
+  use Moo;
+  extends 'DBIx::Class::ResultSet';
+  sub BUILDARGS { $_[2] } # ::RS::new() expects my ($class, $rsrc, $args) = @_
+
+  ...your code...
+
+  1;
+
+If you want to build your custom ResultSet classes with L<Moose>, you need
+a similar, though a little more elaborate template in order to interface the
+inlining of the L<Moose>-provided
+L<object constructor|Moose::Manual::Construction/WHERE'S THE CONSTRUCTOR?>,
+with the DBIC one.
+
+  package MyApp::Schema::ResultSet::User;
+
+  use Moose;
+  use MooseX::NonMoose;
+  extends 'DBIx::Class::ResultSet';
+
+  sub BUILDARGS { $_[2] } # ::RS::new() expects my ($class, $rsrc, $args) = @_
+
+  ...your code...
+
+  __PACKAGE__->meta->make_immutable;
+
+  1;
+
+The L<MooseX::NonMoose> is necessary so that the L<Moose> constructor does not
+entirely overwrite the DBIC one (in contrast L<Moo> does this automatically).
+Alternatively, you can skip L<MooseX::NonMoose> and get by with just L<Moose>
+instead by doing:
+
+  __PACKAGE__->meta->make_immutable(inline_constructor => 0);
+
 =head1 METHODS
 
 =head2 new
@@ -240,7 +301,11 @@ creation B<will not work>. See also warning pertaining to L</create>.
 
 sub new {
   my $class = shift;
-  return $class->new_result(@_) if ref $class;
+
+  if (ref $class) {
+    DBIx::Class::_ENV_::ASSERT_NO_INTERNAL_INDIRECT_CALLS and fail_on_internal_call;
+    return $class->new_result(@_);
+  }
 
   my ($source, $attrs) = @_;
   $source = $source->resolve
@@ -328,7 +393,7 @@ sub search {
   my $rs = $self->search_rs( @_ );
 
   if (wantarray) {
-    DBIx::Class::_ENV_::ASSERT_NO_INTERNAL_WANTARRAY and my $sog = fail_on_internal_wantarray($rs);
+    DBIx::Class::_ENV_::ASSERT_NO_INTERNAL_WANTARRAY and my $sog = fail_on_internal_wantarray;
     return $rs->all;
   }
   elsif (defined wantarray) {
@@ -585,60 +650,32 @@ sub _normalize_selection {
 sub _stack_cond {
   my ($self, $left, $right) = @_;
 
-  # collapse single element top-level conditions
-  # (single pass only, unlikely to need recursion)
-  for ($left, $right) {
-    if (ref $_ eq 'ARRAY') {
-      if (@$_ == 0) {
-        $_ = undef;
-      }
-      elsif (@$_ == 1) {
-        $_ = $_->[0];
-      }
-    }
-    elsif (ref $_ eq 'HASH') {
-      my ($first, $more) = keys %$_;
+  (
+    (ref $_ eq 'ARRAY' and !@$_)
+      or
+    (ref $_ eq 'HASH' and ! keys %$_)
+  ) and $_ = undef for ($left, $right);
 
-      # empty hash
-      if (! defined $first) {
-        $_ = undef;
-      }
-      # one element hash
-      elsif (! defined $more) {
-        if ($first eq '-and' and ref $_->{'-and'} eq 'HASH') {
-          $_ = $_->{'-and'};
-        }
-        elsif ($first eq '-or' and ref $_->{'-or'} eq 'ARRAY') {
-          $_ = $_->{'-or'};
-        }
-      }
-    }
-  }
-
-  # merge hashes with weeding out of duplicates (simple cases only)
-  if (ref $left eq 'HASH' and ref $right eq 'HASH') {
-
-    # shallow copy to destroy
-    $right = { %$right };
-    for (grep { exists $right->{$_} } keys %$left) {
-      # the use of eq_deeply here is justified - the rhs of an
-      # expression can contain a lot of twisted weird stuff
-      delete $right->{$_} if Data::Compare::Compare( $left->{$_}, $right->{$_} );
-    }
-
-    $right = undef unless keys %$right;
-  }
-
-
-  if (defined $left xor defined $right) {
+  # either on of the two undef or both undef
+  if ( ( (defined $left) xor (defined $right) ) or ! defined $left ) {
     return defined $left ? $left : $right;
   }
-  elsif (! defined $left) {
-    return undef;
+
+  my $cond = $self->result_source->schema->storage->_collapse_cond({ -and => [$left, $right] });
+
+  for my $c (grep { ref $cond->{$_} eq 'ARRAY' and ($cond->{$_}[0]||'') eq '-and' } keys %$cond) {
+
+    my @vals = sort @{$cond->{$c}}[ 1..$#{$cond->{$c}} ];
+    my @fin = shift @vals;
+
+    for my $v (@vals) {
+      push @fin, $v unless Data::Compare::Compare( $fin[-1], $v );
+    }
+
+    $cond->{$c} = (@fin == 1) ? $fin[0] : [-and => @fin ];
   }
-  else {
-    return { -and => [ $left, $right ] };
-  }
+
+  $cond;
 }
 
 =head2 search_literal
@@ -799,11 +836,15 @@ sub find {
 
       next if $keyref eq 'ARRAY'; # has_many for multi_create
 
-      my $rel_q = $rsrc->_resolve_condition(
+      my ($rel_cond, $crosstable) = $rsrc->_resolve_condition(
         $relinfo->{cond}, $val, $key, $key
       );
-      die "Can't handle complex relationship conditions in find" if ref($rel_q) ne 'HASH';
-      @related{keys %$rel_q} = values %$rel_q;
+
+      $self->throw_exception("Complex condition via relationship '$key' is unsupported in find()")
+         if $crosstable or ref($rel_cond) ne 'HASH';
+
+      # supplement
+      @related{keys %$rel_cond} = values %$rel_cond;
     }
   }
 
@@ -1090,39 +1131,6 @@ sub single {
   $self->_construct_results->[0];
 }
 
-
-# _collapse_query
-#
-# Recursively collapse the query, accumulating values for each column.
-
-sub _collapse_query {
-  my ($self, $query, $collapsed) = @_;
-
-  $collapsed ||= {};
-
-  if (ref $query eq 'ARRAY') {
-    foreach my $subquery (@$query) {
-      next unless ref $subquery;  # -or
-      $collapsed = $self->_collapse_query($subquery, $collapsed);
-    }
-  }
-  elsif (ref $query eq 'HASH') {
-    if (keys %$query and (keys %$query)[0] eq '-and') {
-      foreach my $subquery (@{$query->{-and}}) {
-        $collapsed = $self->_collapse_query($subquery, $collapsed);
-      }
-    }
-    else {
-      foreach my $col (keys %$query) {
-        my $value = $query->{$col};
-        $collapsed->{$col}{$value}++;
-      }
-    }
-  }
-
-  return $collapsed;
-}
-
 =head2 get_column
 
 =over 4
@@ -1323,7 +1331,7 @@ sub _construct_results {
           and
         $rsrc->schema
               ->storage
-               ->_main_source_order_by_portion_is_stable($rsrc, $attrs->{order_by}, $attrs->{where})
+               ->_extract_colinfo_of_stable_main_source_order_by_portion($attrs)
       ) ? 1 : 0
     ) unless defined $attrs->{_ordered_for_collapse};
 
@@ -2003,7 +2011,6 @@ sub _rs_update_delete {
 
       $guard = $storage->txn_scope_guard;
 
-      $cond = [];
       for my $row ($subrs->cursor->all) {
         push @$cond, { map
           { $idcols->[$_] => $row->[$_] }
@@ -2013,11 +2020,11 @@ sub _rs_update_delete {
     }
   }
 
-  my $res = $storage->$op (
+  my $res = $cond ? $storage->$op (
     $rsrc,
     $op eq 'update' ? $values : (),
     $cond,
-  );
+  ) : '0E0';
 
   $guard->commit if $guard;
 
@@ -2227,127 +2234,266 @@ case there are obviously no benefits to using this method over L</create>.
 sub populate {
   my $self = shift;
 
-  # cruft placed in standalone method
-  my $data = $self->_normalize_populate_args(@_);
+  my ($data, $guard);
 
-  return unless @$data;
+  # this is naive and just a quick check
+  # the types will need to be checked more thoroughly when the
+  # multi-source populate gets added
+  if (ref $_[0] eq 'ARRAY') {
+    return unless @{$_[0]};
+
+    $data = $_[0] if (ref $_[0][0] eq 'HASH' or ref $_[0][0] eq 'ARRAY');
+  }
+
+  $self->throw_exception('Populate expects an arrayref of hashrefs or arrayref of arrayrefs')
+    unless $data;
+
+  # FIXME - no cref handling
+  # At this point assume either hashes or arrays
 
   if(defined wantarray) {
-    my @created = map { $self->create($_) } @$data;
-    return wantarray ? @created : \@created;
-  }
-  else {
-    my $first = $data->[0];
+    my @results;
 
-    # if a column is a registered relationship, and is a non-blessed hash/array, consider
-    # it relationship data
-    my (@rels, @columns);
-    my $rsrc = $self->result_source;
-    my $rels = { map { $_ => $rsrc->relationship_info($_) } $rsrc->relationships };
-    for (keys %$first) {
-      my $ref = ref $first->{$_};
-      $rels->{$_} && ($ref eq 'ARRAY' or $ref eq 'HASH')
-        ? push @rels, $_
-        : push @columns, $_
+    $guard = $self->result_source->schema->storage->txn_scope_guard
+      if ( @$data > 2 or ( @$data == 2 and ref $data->[0] eq 'ARRAY' ) );
+
+    if (ref $data->[0] eq 'ARRAY') {
+      @results = map
+        { my $vals = $_; $self->new_result({ map { $data->[0][$_] => $vals->[$_] } 0..$#{$data->[0]} })->insert }
+        @{$data}[1 .. $#$data]
       ;
     }
+    else {
+      @results = map { $self->new_result($_)->insert } @$data;
+    }
 
-    my @pks = $rsrc->primary_columns;
+    $guard->commit if $guard;
+    return wantarray ? @results : \@results;
+  }
 
-    ## do the belongs_to relationships
-    foreach my $index (0..$#$data) {
+  # we have to deal with *possibly incomplete* related data
+  # this means we have to walk the data structure twice
+  # whether we want this or not
+  # jnap, I hate you ;)
+  my $rsrc = $self->result_source;
+  my $rel_info = { map { $_ => $rsrc->relationship_info($_) } $rsrc->relationships };
 
-      # delegate to create() for any dataset without primary keys with specified relationships
-      if (grep { !defined $data->[$index]->{$_} } @pks ) {
-        for my $r (@rels) {
-          if (grep { ref $data->[$index]{$r} eq $_ } qw/HASH ARRAY/) {  # a related set must be a HASH or AoH
-            my @ret = $self->populate($data);
-            return;
+  my ($colinfo, $colnames, $slices_with_rels);
+  my $data_start = 0;
+
+  DATA_SLICE:
+  for my $i (0 .. $#$data) {
+
+    my $current_slice_seen_rel_infos;
+
+### Determine/Supplement collists
+### BEWARE - This is a hot piece of code, a lot of weird idioms were used
+    if( ref $data->[$i] eq 'ARRAY' ) {
+
+      # positional(!) explicit column list
+      if ($i == 0) {
+
+        $colinfo->{$data->[0][$_]} = { pos => $_, name => $data->[0][$_] } and push @$colnames, $data->[0][$_]
+          for 0 .. $#{$data->[0]};
+
+        $data_start = 1;
+
+        next DATA_SLICE;
+      }
+      else {
+        for (values %$colinfo) {
+          if ($_->{is_rel} ||= (
+            $rel_info->{$_->{name}}
+              and
+            (
+              ref $data->[$i][$_->{pos}] eq 'ARRAY'
+                or
+              ref $data->[$i][$_->{pos}] eq 'HASH'
+                or
+              ( defined blessed $data->[$i][$_->{pos}] and $data->[$i][$_->{pos}]->isa('DBIx::Class::Row') )
+            )
+              and
+            1
+          )) {
+
+            # moar sanity check... sigh
+            for ( ref $data->[$i][$_->{pos}] eq 'ARRAY' ? @{$data->[$i][$_->{pos}]} : $data->[$i][$_->{pos}] ) {
+              if ( defined blessed $_ and $_->isa('DBIx::Class::Row' ) ) {
+                carp_unique("Fast-path populate() with supplied related objects is not possible - falling back to regular create()");
+                return my $throwaway = $self->populate(@_);
+              }
+            }
+
+            push @$current_slice_seen_rel_infos, $rel_info->{$_->{name}};
           }
         }
       }
 
-      foreach my $rel (@rels) {
-        next unless ref $data->[$index]->{$rel} eq "HASH";
-        my $result = $self->related_resultset($rel)->create($data->[$index]->{$rel});
-        my ($reverse_relname, $reverse_relinfo) = %{$rsrc->reverse_relationship_info($rel)};
-        my $related = $result->result_source->_resolve_condition(
-          $reverse_relinfo->{cond},
-          $self,
-          $result,
-          $rel,
-        );
+     if ($current_slice_seen_rel_infos) {
+        push @$slices_with_rels, { map { $colnames->[$_] => $data->[$i][$_] } 0 .. $#$colnames };
 
-        delete $data->[$index]->{$rel};
-        $data->[$index] = {%{$data->[$index]}, %$related};
-
-        push @columns, keys %$related if $index == 0;
+        # this is needed further down to decide whether or not to fallback to create()
+        $colinfo->{$colnames->[$_]}{seen_null} ||= ! defined $data->[$i][$_]
+          for 0 .. $#$colnames;
       }
     }
+    elsif( ref $data->[$i] eq 'HASH' ) {
 
-    ## inherit the data locked in the conditions of the resultset
-    my ($rs_data) = $self->_merge_with_rscond({});
-    delete @{$rs_data}{@columns};
+      for ( sort keys %{$data->[$i]} ) {
 
-    ## do bulk insert on current row
-    $rsrc->storage->insert_bulk(
-      $rsrc,
-      [@columns, keys %$rs_data],
-      [ map { [ @$_{@columns}, values %$rs_data ] } @$data ],
-    );
+        $colinfo->{$_} ||= do {
 
-    ## do the has_many relationships
-    foreach my $item (@$data) {
+          $self->throw_exception("Column '$_' must be present in supplied explicit column list")
+            if $data_start; # it will be 0 on AoH, 1 on AoA
 
-      my $main_row;
+          push @$colnames, $_;
 
-      foreach my $rel (@rels) {
-        next unless ref $item->{$rel} eq "ARRAY" && @{ $item->{$rel} };
+          # RV
+          { pos => $#$colnames, name => $_ }
+        };
 
-        $main_row ||= $self->new_result({map { $_ => $item->{$_} } @pks});
+        if ($colinfo->{$_}{is_rel} ||= (
+          $rel_info->{$_}
+            and
+          (
+            ref $data->[$i]{$_} eq 'ARRAY'
+              or
+            ref $data->[$i]{$_} eq 'HASH'
+              or
+            ( defined blessed $data->[$i]{$_} and $data->[$i]{$_}->isa('DBIx::Class::Row') )
+          )
+            and
+          1
+        )) {
 
-        my $child = $main_row->$rel;
+          # moar sanity check... sigh
+          for ( ref $data->[$i]{$_} eq 'ARRAY' ? @{$data->[$i]{$_}} : $data->[$i]{$_} ) {
+            if ( defined blessed $_ and $_->isa('DBIx::Class::Row' ) ) {
+              carp_unique("Fast-path populate() with supplied related objects is not possible - falling back to regular create()");
+              return my $throwaway = $self->populate(@_);
+            }
+          }
 
-        my $related = $child->result_source->_resolve_condition(
-          $rels->{$rel}{cond},
-          $child,
-          $main_row,
-          $rel,
-        );
+          push @$current_slice_seen_rel_infos, $rel_info->{$_};
+        }
+      }
 
-        my @rows_to_add = ref $item->{$rel} eq 'ARRAY' ? @{$item->{$rel}} : ($item->{$rel});
-        my @populate = map { {%$_, %$related} } @rows_to_add;
+      if ($current_slice_seen_rel_infos) {
+        push @$slices_with_rels, $data->[$i];
 
-        $child->populate( \@populate );
+        # this is needed further down to decide whether or not to fallback to create()
+        $colinfo->{$_}{seen_null} ||= ! defined $data->[$i]{$_}
+          for keys %{$data->[$i]};
       }
     }
-  }
-}
-
-
-# populate() arguments went over several incarnations
-# What we ultimately support is AoH
-sub _normalize_populate_args {
-  my ($self, $arg) = @_;
-
-  if (ref $arg eq 'ARRAY') {
-    if (!@$arg) {
-      return [];
+    else {
+      $self->throw_exception('Unexpected populate() data structure member type: ' . ref $data->[$i] );
     }
-    elsif (ref $arg->[0] eq 'HASH') {
-      return $arg;
-    }
-    elsif (ref $arg->[0] eq 'ARRAY') {
-      my @ret;
-      my @colnames = @{$arg->[0]};
-      foreach my $values (@{$arg}[1 .. $#$arg]) {
-        push @ret, { map { $colnames[$_] => $values->[$_] } (0 .. $#colnames) };
-      }
-      return \@ret;
+
+    if ( grep
+      { $_->{attrs}{is_depends_on} }
+      @{ $current_slice_seen_rel_infos || [] }
+    ) {
+      carp_unique("Fast-path populate() of belongs_to relationship data is not possible - falling back to regular create()");
+      return my $throwaway = $self->populate(@_);
     }
   }
 
-  $self->throw_exception('Populate expects an arrayref of hashrefs or arrayref of arrayrefs');
+  if( $slices_with_rels ) {
+
+    # need to exclude the rel "columns"
+    $colnames = [ grep { ! $colinfo->{$_}{is_rel} } @$colnames ];
+
+    # extra sanity check - ensure the main source is in fact identifiable
+    # the localizing of nullability is insane, but oh well... the use-case is legit
+    my $ci = $rsrc->columns_info($colnames);
+
+    $ci->{$_} = { %{$ci->{$_}}, is_nullable => 0 }
+      for grep { ! $colinfo->{$_}{seen_null} } keys %$ci;
+
+    unless( $rsrc->_identifying_column_set($ci) ) {
+      carp_unique("Fast-path populate() of non-uniquely identifiable rows with related data is not possible - falling back to regular create()");
+      return my $throwaway = $self->populate(@_);
+    }
+  }
+
+### inherit the data locked in the conditions of the resultset
+  my ($rs_data) = $self->_merge_with_rscond({});
+  delete @{$rs_data}{@$colnames};  # passed-in stuff takes precedence
+
+  # if anything left - decompose rs_data
+  my $rs_data_vals;
+  if (keys %$rs_data) {
+     push @$rs_data_vals, $rs_data->{$_}
+      for sort keys %$rs_data;
+  }
+
+### start work
+  $guard = $rsrc->schema->storage->txn_scope_guard
+    if $slices_with_rels;
+
+### main source data
+  # FIXME - need to switch entirely to a coderef-based thing,
+  # so that large sets aren't copied several times... I think
+  $rsrc->storage->insert_bulk(
+    $rsrc,
+    [ @$colnames, sort keys %$rs_data ],
+    [ map {
+      ref $data->[$_] eq 'ARRAY'
+      ? (
+          $slices_with_rels ? [ @{$data->[$_]}[0..$#$colnames], @{$rs_data_vals||[]} ]  # the collist changed
+        : $rs_data_vals     ? [ @{$data->[$_]}, @$rs_data_vals ]
+        :                     $data->[$_]
+      )
+      : [ @{$data->[$_]}{@$colnames}, @{$rs_data_vals||[]} ]
+    } $data_start .. $#$data ],
+  );
+
+### do the children relationships
+  if ( $slices_with_rels ) {
+    my @rels = grep { $colinfo->{$_}{is_rel} } keys %$colinfo
+      or die 'wtf... please report a bug with DBIC_TRACE=1 output (stacktrace)';
+
+    for my $sl (@$slices_with_rels) {
+
+      my ($main_proto, $main_proto_rs);
+      for my $rel (@rels) {
+        next unless defined $sl->{$rel};
+
+        $main_proto ||= {
+          %$rs_data,
+          (map { $_ => $sl->{$_} } @$colnames),
+        };
+
+        unless (defined $colinfo->{$rel}{rs}) {
+
+          $colinfo->{$rel}{rs} = $rsrc->related_source($rel)->resultset;
+
+          $colinfo->{$rel}{fk_map} = { reverse %{ $rsrc->_resolve_relationship_condition(
+            rel_name => $rel,
+            self_alias => "\xFE", # irrelevant
+            foreign_alias => "\xFF", # irrelevant
+          )->{identity_map} || {} } };
+
+        }
+
+        $colinfo->{$rel}{rs}->search({ map # only so that we inherit them values properly, no actual search
+          {
+            $_ => { '=' =>
+              ( $main_proto_rs ||= $rsrc->resultset->search($main_proto) )
+                ->get_column( $colinfo->{$rel}{fk_map}{$_} )
+                 ->as_query
+            }
+          }
+          keys %{$colinfo->{$rel}{fk_map}}
+        })->populate( ref $sl->{$rel} eq 'ARRAY' ? $sl->{$rel} : [ $sl->{$rel} ] );
+
+        1;
+      }
+    }
+  }
+
+  $guard->commit if $guard;
 }
 
 =head2 pager
@@ -2443,7 +2589,7 @@ sub new_result {
   $self->throw_exception( "new_result takes only one argument - a hashref of values" )
     if @_ > 2;
 
-  $self->throw_exception( "new_result expects a hashref" )
+  $self->throw_exception( "Result object instantiation requires a hashref as argument" )
     unless (ref $values eq 'HASH');
 
   my ($merged_cond, $cols_from_relations) = $self->_merge_with_rscond($values);
@@ -2482,51 +2628,33 @@ sub new_result {
 sub _merge_with_rscond {
   my ($self, $data) = @_;
 
-  my (%new_data, @cols_from_relations);
+  my ($implied_data, @cols_from_relations);
 
   my $alias = $self->{attrs}{alias};
 
   if (! defined $self->{cond}) {
     # just massage $data below
   }
-  elsif ($self->{cond} eq $DBIx::Class::ResultSource::UNRESOLVABLE_CONDITION) {
-    %new_data = %{ $self->{attrs}{related_objects} || {} };  # nothing might have been inserted yet
-    @cols_from_relations = keys %new_data;
-  }
-  elsif (ref $self->{cond} ne 'HASH') {
-    $self->throw_exception(
-      "Can't abstract implicit construct, resultset condition not a hash"
-    );
+  elsif ($self->{cond} eq UNRESOLVABLE_CONDITION) {
+    $implied_data = $self->{attrs}{related_objects};  # nothing might have been inserted yet
+    @cols_from_relations = keys %{ $implied_data || {} };
   }
   else {
-    # precedence must be given to passed values over values inherited from
-    # the cond, so the order here is important.
-    my $collapsed_cond = $self->_collapse_cond($self->{cond});
-    my %implied = %{$self->_remove_alias($collapsed_cond, $alias)};
-
-    while ( my($col, $value) = each %implied ) {
-      my $vref = ref $value;
-      if (
-        $vref eq 'HASH'
-          and
-        keys(%$value) == 1
-          and
-        (keys %$value)[0] eq '='
-      ) {
-        $new_data{$col} = $value->{'='};
-      }
-      elsif( !$vref or $vref eq 'SCALAR' or blessed($value) ) {
-        $new_data{$col} = $value;
-      }
-    }
+    my $eqs = $self->result_source->schema->storage->_extract_fixed_condition_columns($self->{cond}, 'consider_nulls');
+    $implied_data = { map {
+      ( ($eqs->{$_}||'') eq UNRESOLVABLE_CONDITION ) ? () : ( $_ => $eqs->{$_} )
+    } keys %$eqs };
   }
 
-  %new_data = (
-    %new_data,
-    %{ $self->_remove_alias($data, $alias) },
+  return (
+    { map
+      { %{ $self->_remove_alias($_, $alias) } }
+      # precedence must be given to passed values over values inherited from
+      # the cond, so the order here is important.
+      ( $implied_data||(), $data)
+    },
+    \@cols_from_relations
   );
-
-  return (\%new_data, \@cols_from_relations);
 }
 
 # _has_resolved_attr
@@ -2580,38 +2708,6 @@ sub _has_resolved_attr {
   );
 
   return 0;
-}
-
-# _collapse_cond
-#
-# Recursively collapse the condition.
-
-sub _collapse_cond {
-  my ($self, $cond, $collapsed) = @_;
-
-  $collapsed ||= {};
-
-  if (ref $cond eq 'ARRAY') {
-    foreach my $subcond (@$cond) {
-      next unless ref $subcond;  # -or
-      $collapsed = $self->_collapse_cond($subcond, $collapsed);
-    }
-  }
-  elsif (ref $cond eq 'HASH') {
-    if (keys %$cond and (keys %$cond)[0] eq '-and') {
-      foreach my $subcond (@{$cond->{-and}}) {
-        $collapsed = $self->_collapse_cond($subcond, $collapsed);
-      }
-    }
-    else {
-      foreach my $col (keys %$cond) {
-        my $value = $cond->{$col};
-        $collapsed->{$col} = $value;
-      }
-    }
-  }
-
-  return $collapsed;
 }
 
 # _remove_alias
@@ -2794,10 +2890,9 @@ L</new>.
 =cut
 
 sub create {
-  my ($self, $col_data) = @_;
-  $self->throw_exception( "create needs a hashref" )
-    unless ref $col_data eq 'HASH';
-  return $self->new_result($col_data)->insert;
+  #my ($self, $col_data) = @_;
+  DBIx::Class::_ENV_::ASSERT_NO_INTERNAL_INDIRECT_CALLS and fail_on_internal_call;
+  return shift->new_result(shift)->insert;
 }
 
 =head2 find_or_create
@@ -2879,7 +2974,7 @@ sub find_or_create {
   if (keys %$hash and my $row = $self->find($hash, $attrs) ) {
     return $row;
   }
-  return $self->create($hash);
+  return $self->new_result($hash)->insert;
 }
 
 =head2 update_or_create
@@ -2949,7 +3044,7 @@ sub update_or_create {
     return $row;
   }
 
-  return $self->create($cond);
+  return $self->new_result($cond)->insert;
 }
 
 =head2 update_or_new
@@ -3186,11 +3281,11 @@ sub related_resultset {
 
     if (my $cache = $self->get_cache) {
       my @related_cache = map
-        { @{$_->related_resultset($rel)->get_cache||[]} }
+        { $_->related_resultset($rel)->get_cache || () }
         @$cache
       ;
 
-      $new->set_cache(\@related_cache) if @related_cache;
+      $new->set_cache([ map @$_, @related_cache ]) if @related_cache == @$cache;
     }
 
     $new;
@@ -3422,7 +3517,7 @@ sub _resolved_attrs {
   return $self->{_attrs} if $self->{_attrs};
 
   my $attrs  = { %{ $self->{attrs} || {} } };
-  my $source = $self->result_source;
+  my $source = $attrs->{result_source} = $self->result_source;
   my $alias  = $attrs->{alias};
 
   $self->throw_exception("Specifying distinct => 1 in conjunction with collapse => 1 is unsupported")
@@ -3977,32 +4072,50 @@ syntax as outlined above.
 Shortcut to request a particular set of columns to be retrieved. Each
 column spec may be a string (a table column name), or a hash (in which
 case the key is the C<as> value, and the value is used as the C<select>
-expression). Adds C<me.> onto the start of any column without a C<.> in
+expression). Adds the L</current_source_alias> onto the start of any column without a C<.> in
 it and sets C<select> from that, then auto-populates C<as> from
 C<select> as normal. (You may also use the C<cols> attribute, as in
-earlier versions of DBIC, but this is deprecated.)
+earlier versions of DBIC, but this is deprecated)
 
 Essentially C<columns> does the same as L</select> and L</as>.
 
-    columns => [ 'foo', { bar => 'baz' } ]
+    columns => [ 'some_column', { dbic_slot => 'another_column' } ]
 
 is the same as
 
-    select => [qw/foo baz/],
-    as => [qw/foo bar/]
+    select => [qw(some_column another_column)],
+    as     => [qw(some_column dbic_slot)]
+
+If you want to individually retrieve related columns (in essence perform
+manual prefetch) you have to make sure to specify the correct inflation slot
+chain such that it matches existing relationships:
+
+    my $rs = $schema->resultset('Artist')->search({}, {
+        # required to tell DBIC to collapse has_many relationships
+        collapse => 1,
+        join     => { cds => 'tracks'},
+        '+columns'  => {
+          'cds.cdid'         => 'cds.cdid',
+          'cds.tracks.title' => 'tracks.title',
+        },
+    });
 
 =head2 +columns
 
+B<NOTE:> You B<MUST> explicitly quote C<'+columns'> when using this attribute.
+Not doing so causes Perl to incorrectly interpret C<+columns> as a bareword
+with a unary plus operator before it, which is the same as simply C<columns>.
+
 =over 4
 
-=item Value: \@columns
+=item Value: \@extra_columns
 
 =back
 
 Indicates additional columns to be selected from storage. Works the same as
-L</columns> but adds columns to the selection. (You may also use the
+L</columns> but adds columns to the current selection. (You may also use the
 C<include_columns> attribute, as in earlier versions of DBIC, but this is
-deprecated). For example:-
+deprecated)
 
   $schema->resultset('CD')->search(undef, {
     '+columns' => ['artist.name'],
@@ -4013,20 +4126,6 @@ would return all CDs and include a 'name' column to the information
 passed to object inflation. Note that the 'artist' is the name of the
 column (or relationship) accessor, and 'name' is the name of the column
 accessor in the related table.
-
-B<NOTE:> You need to explicitly quote '+columns' when defining the attribute.
-Not doing so causes Perl to incorrectly interpret +columns as a bareword with a
-unary plus operator before it.
-
-=head2 include_columns
-
-=over 4
-
-=item Value: \@columns
-
-=back
-
-Deprecated.  Acts as a synonym for L</+columns> for backward compatibility.
 
 =head2 select
 
@@ -4058,19 +4157,21 @@ identifier aliasing. You can however alias a function, so you can use it in
 e.g. an C<ORDER BY> clause. This is done via the C<-as> B<select function
 attribute> supplied as shown in the example above.
 
-B<NOTE:> You need to explicitly quote '+select'/'+as' when defining the attributes.
-Not doing so causes Perl to incorrectly interpret them as a bareword with a
-unary plus operator before it.
-
 =head2 +select
+
+B<NOTE:> You B<MUST> explicitly quote C<'+select'> when using this attribute.
+Not doing so causes Perl to incorrectly interpret C<+select> as a bareword
+with a unary plus operator before it, which is the same as simply C<select>.
 
 =over 4
 
-Indicates additional columns to be selected from storage.  Works the same as
-L</select> but adds columns to the default selection, instead of specifying
-an explicit list.
+=item Value: \@extra_select_columns
 
 =back
+
+Indicates additional columns to be selected from storage.  Works the same as
+L</select> but adds columns to the current selection, instead of specifying
+a new explicit list.
 
 =head2 as
 
@@ -4080,7 +4181,7 @@ an explicit list.
 
 =back
 
-Indicates column names for object inflation. That is L</as> indicates the
+Indicates DBIC-side names for object inflation. That is L</as> indicates the
 slot name in which the column value will be stored within the
 L<Row|DBIx::Class::Row> object. The value will then be accessible via this
 identifier by the C<get_column> method (or via the object accessor B<if one
@@ -4116,11 +4217,17 @@ L<DBIx::Class::Manual::Cookbook> for details.
 
 =head2 +as
 
+B<NOTE:> You B<MUST> explicitly quote C<'+as'> when using this attribute.
+Not doing so causes Perl to incorrectly interpret C<+as> as a bareword
+with a unary plus operator before it, which is the same as simply C<as>.
+
 =over 4
 
-Indicates additional column names for those added via L</+select>. See L</as>.
+=item Value: \@extra_inflation_names
 
 =back
+
+Indicates additional inflation names for selectors added via L</+select>. See L</as>.
 
 =head2 join
 

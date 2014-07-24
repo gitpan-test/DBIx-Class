@@ -18,7 +18,7 @@ Somewhere in your build-file (e.g. L<Module::Install>'s Makefile.PL):
 
   ...
 
-  configure_requires 'DBIx::Class' => '0.08270';
+  configure_requires 'DBIx::Class' => '0.082700_01';
 
   require DBIx::Class::Optional::Dependencies;
 
@@ -71,8 +71,6 @@ Modules required for the DBIx::Class administrative library
 
 =item * MooseX::Types::Path::Class >= 0.05
 
-=item * namespace::autoclean >= 0.09
-
 =back
 
 Requirement group: B<admin>
@@ -98,8 +96,6 @@ Modules required for the CLI DBIx::Class interface dbicadmin
 =item * MooseX::Types::Path::Class >= 0.05
 
 =item * Text::CSV >= 1.16
-
-=item * namespace::autoclean >= 0.09
 
 =back
 

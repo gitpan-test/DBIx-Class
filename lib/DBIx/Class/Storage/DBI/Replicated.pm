@@ -37,7 +37,7 @@ also define your arguments, such as which balancer you want and any arguments
 that the Pool object should get.
 
   my $schema = Schema::Class->clone;
-  $schema->storage_type( ['::DBI::Replicated', {balancer=>'::Random'}] );
+  $schema->storage_type(['::DBI::Replicated', { balancer_type => '::Random' }]);
   $schema->connection(...);
 
 Next, you need to add in the Replicants.  Basically this is an array of
@@ -1080,7 +1080,8 @@ sub _get_server_version {
 Due to the fact that replicants can lag behind a master, you must take care to
 make sure you use one of the methods to force read queries to a master should
 you need realtime data integrity.  For example, if you insert a row, and then
-immediately re-read it from the database (say, by doing $result->discard_changes)
+immediately re-read it from the database (say, by doing
+L<< $result->discard_changes|DBIx::Class::Row/discard_changes >>)
 or you insert a row and then immediately build a query that expects that row
 to be an item, you should force the master to handle reads.  Otherwise, due to
 the lag, there is no certainty your data will be in the expected state.
@@ -1094,7 +1095,7 @@ attribute:
 
   my $result = $resultset->search(undef, {force_pool=>'master'})->find($pk);
 
-This attribute will safely be ignore by non replicated storages, so you can use
+This attribute will safely be ignored by non replicated storages, so you can use
 the same code for both types of systems.
 
 Lastly, you can use the L</execute_reliably> method, which works very much like

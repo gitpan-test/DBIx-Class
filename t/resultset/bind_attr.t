@@ -3,8 +3,7 @@ use warnings;
 
 use Test::More;
 use lib qw(t/lib);
-use DBICTest;
-use DBIC::SqlMakerTest;
+use DBICTest ':DiffSQL';
 
 my $schema = DBICTest->init_schema;
 
@@ -16,8 +15,6 @@ my $where_bind = {
 my $rs;
 
 {
-    local $TODO = 'bind args order needs fixing (semifor)';
-
     # First, the simple cases...
     $rs = $schema->resultset('Artist')->search(
             { artistid => 1 },
@@ -37,7 +34,6 @@ my $rs;
     is ( $rs->count, 1, 'where/bind last' );
 
     # and the complex case
-    local $TODO = 'bind args order needs fixing (semifor)';
     $rs = $schema->resultset('CustomSql')->search({}, { bind => [ 1999 ] })
         ->search({ 'artistid' => 1 }, {
             where => \'title like ?',

@@ -4,43 +4,9 @@ package # hide from PAUSE
 use strict;
 use warnings;
 
-# this noop trick initializes the STDOUT, so that the TAP::Harness
-# issued IO::Select->can_read calls (which are blocking wtf wtf wtf)
-# keep spinning and scheduling jobs
-# This results in an overall much smoother job-queue drainage, since
-# the Harness blocks less
-# (ideally this needs to be addressed in T::H, but a quick patchjob
-# broke everything so tabling it for now)
-BEGIN {
-  if ($INC{'Test/Builder.pm'}) {
-    local $| = 1;
-    print "#\n";
-  }
-}
-
-use Module::Runtime 'module_notional_filename';
-BEGIN {
-  for my $mod (qw( DBIC::SqlMakerTest SQL::Abstract )) {
-    if ( $INC{ module_notional_filename($mod) } ) {
-      # FIXME this does not seem to work in BEGIN - why?!
-      #require Carp;
-      #$Carp::Internal{ (__PACKAGE__) }++;
-      #Carp::croak( __PACKAGE__ . " must be loaded before $mod" );
-
-      my ($fr, @frame) = 1;
-      while (@frame = caller($fr++)) {
-        last if $frame[1] !~ m|^t/lib/DBICTest|;
-      }
-
-      die __PACKAGE__ . " must be loaded before $mod (or modules using $mod) at $frame[1] line $frame[2]\n";
-    }
-  }
-}
-
-use DBICTest::RunMode;
+use DBICTest::Util 'local_umask';
 use DBICTest::Schema;
 use DBICTest::Util::LeakTracer qw/populate_weakregistry assert_empty_weakregistry/;
-use DBICTest::Util 'local_umask';
 use Carp;
 use Path::Class::File ();
 use File::Spec;
@@ -49,7 +15,7 @@ use Config;
 
 =head1 NAME
 
-DBICTest - Library to be used by DBIx::Class test scripts.
+DBICTest - Library to be used by DBIx::Class test scripts
 
 =head1 SYNOPSIS
 
@@ -63,6 +29,26 @@ DBICTest - Library to be used by DBIx::Class test scripts.
 
 This module provides the basic utilities to write tests against
 DBIx::Class.
+
+=head1 EXPORTS
+
+The module does not export anything by default, nor provides individual
+function exports in the conventional sense. Instead the following tags are
+recognized:
+
+=head2 :DiffSQL
+
+Same as C<use SQL::Abstract::Test
+qw(L<is_same_sql_bind|SQL::Abstract::Test/is_same_sql_bind>
+L<is_same_sql|SQL::Abstract::Test/is_same_sql>
+L<is_same_bind|SQL::Abstract::Test/is_same_bind>)>
+
+=head2 :GlobalLock
+
+Some tests are very time sensitive and need to run on their own, without
+being disturbed by anything else grabbing CPU or disk IO. Hence why everything
+using C<DBICTest> grabs a shared lock, and the few tests that request a
+C<:GlobalLock> will ask for an exclusive one and block until they can get it.
 
 =head1 METHODS
 
@@ -80,18 +66,15 @@ DBIx::Class.
 This method removes the test SQLite database in t/var/DBIxClass.db
 and then creates a new, empty database.
 
-This method will call deploy_schema() by default, unless the
-no_deploy flag is set.
+This method will call L<deploy_schema()|/deploy_schema> by default, unless the
+C<no_deploy> flag is set.
 
-Also, by default, this method will call populate_schema() by
-default, unless the no_deploy or no_populate flags are set.
+Also, by default, this method will call L<populate_schema()|/populate_schema>
+by default, unless the C<no_deploy> or C<no_populate> flags are set.
 
 =cut
 
-# some tests are very time sensitive and need to run on their own, without
-# being disturbed by anything else grabbing CPU or disk IO. Hence why everything
-# using DBICTest grabs a shared lock, and the few tests that request a :GlobalLock
-# will ask for an exclusive one and block until they can get it
+# see L</:GlobalLock>
 our ($global_lock_fh, $global_exclusive_lock);
 sub import {
     my $self = shift;
@@ -104,13 +87,21 @@ sub import {
         or die "Unable to open $lockpath: $!";
     }
 
-    for (@_) {
-        if ($_ eq ':GlobalLock') {
+    for my $exp (@_) {
+        if ($exp eq ':GlobalLock') {
             flock ($global_lock_fh, LOCK_EX) or die "Unable to lock $lockpath: $!";
             $global_exclusive_lock = 1;
         }
+        elsif ($exp eq ':DiffSQL') {
+            require SQL::Abstract::Test;
+            my $into = caller(0);
+            for (qw(is_same_sql_bind is_same_sql is_same_bind)) {
+              no strict 'refs';
+              *{"${into}::$_"} = \&{"SQL::Abstract::Test::$_"};
+            }
+        }
         else {
-            croak "Unknown export $_ requested from $self";
+            croak "Unknown export $exp requested from $self";
         }
     }
 
@@ -235,10 +226,16 @@ sub _database {
 }
 
 sub __mk_disconnect_guard {
-  return if DBIx::Class::_ENV_::PEEPEENESS; # leaks handles, delaying DESTROY, can't work right
 
   my $db_file = shift;
-  return unless -f $db_file;
+
+  return if (
+    # this perl leaks handles, delaying DESTROY, can't work right
+    DBIx::Class::_ENV_::PEEPEENESS
+      or
+    ! -f $db_file
+  );
+
 
   my $orig_inode = (stat($db_file))[1]
     or return;

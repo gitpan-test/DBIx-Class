@@ -4,8 +4,7 @@ use warnings;
 use Test::More;
 use Test::Exception;
 use lib qw(t/lib);
-use DBICTest;
-use DBIC::SqlMakerTest;
+use DBICTest ':DiffSQL';
 
 my $schema = DBICTest->init_schema();
 
@@ -44,7 +43,7 @@ is_same_sql_bind(
   )',
   [
     [
-      { sqlt_datatype => 'integer', dbic_colname => 'me.artist' }
+      {}
         => 21
     ],
     [
@@ -152,15 +151,20 @@ is_deeply(
 
 } 'prefetchy-fetchy-fetch';
 
+# create_related a plain cd via the equoivalent coderef cond, with no extra conditions
+lives_ok {
+  $artist->create_related('cds_cref_cond', { title => 'related creation via coderef cond', year => '2010' } );
+} 'created_related with simple condition works';
 
 # try to create_related a 80s cd
 throws_ok {
   $artist->create_related('cds_80s', { title => 'related creation 1' });
-} qr/\QCustom relationship 'cds_80s' not definitive - returns conditions instead of values for column(s): 'year'/,
+} qr/\QUnable to complete value inferrence - custom relationship 'cds_80s' on source 'Artist' returns conditions instead of values for column(s): 'year'/,
 'Create failed - complex cond';
 
 # now supply an explicit arg overwriting the ambiguous cond
-my $id_2020 = $artist->create_related('cds_80s', { title => 'related creation 2', year => '2020' })->id;
+my $cd_2020 = $artist->create_related('cds_80s', { title => 'related creation 2', year => '2020' });
+my $id_2020 = $cd_2020->id;
 is(
   $schema->resultset('CD')->find($id_2020)->title,
   'related creation 2',
@@ -178,7 +182,7 @@ is(
 # try a specific everything via a non-simplified rel
 throws_ok {
   $artist->create_related('cds_90s', { title => 'related_creation 4', year => '2038' });
-} qr/\QCustom relationship 'cds_90s' does not resolve to a join-free condition fragment/,
+} qr/\QRelationship 'cds_90s' on source 'Artist' does not resolve to a join-free condition fragment/,
 'Create failed - non-simplified rel';
 
 # Do a self-join last-entry search
@@ -267,6 +271,23 @@ is_deeply (
   [ map { $_->cd_single->title } $last_tracks_rs->search({}, { prefetch => 'cd_single' })->all ],
   [ map { $_->title } @singles ],
   'Prefetched singles in proper order'
+);
+
+# test set_from_related with a belongs_to custom condition
+my $cd = $schema->resultset("CD")->find(4);
+$artist = $cd->search_related('artist');
+my $track = $schema->resultset("Track")->create( {
+  trackid => 1,
+  cd => 3,
+  position => 99,
+  title => 'Some Track'
+} );
+$track->set_from_related( cd_cref_cond => $cd );
+is ($track->get_column('cd'), 4, 'set from related via coderef cond');
+is_deeply (
+  { $track->cd->get_columns },
+  { $cd->get_columns },
+  'set from related via coderef cond inflates properly',
 );
 
 done_testing;

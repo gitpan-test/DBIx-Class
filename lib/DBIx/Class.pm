@@ -11,7 +11,7 @@ our $VERSION;
 # $VERSION declaration must stay up here, ahead of any other package
 # declarations, as to not confuse various modules attempting to determine
 # this ones version, whether that be s.c.o. or Module::Metadata, etc
-$VERSION = '0.08270';
+$VERSION = '0.082700_01';
 
 $VERSION = eval $VERSION if $VERSION =~ /_/; # numify for warning-free dev releases
 
@@ -59,8 +59,6 @@ sub _attr_cache {
 
 1;
 
-__END__
-
 =encoding UTF-8
 
 =head1 NAME
@@ -74,13 +72,21 @@ To get the most out of DBIx::Class with the least confusion it is strongly
 recommended to read (at the very least) the
 L<Manuals|DBIx::Class::Manual::DocMap/Manuals> in the order presented there.
 
-=head1 HOW TO GET HELP
+=cut
 
-Due to the complexity of its problem domain, DBIx::Class is a relatively
+# *DO NOT* change this heading - it is linked throughout the ecosystem
+
+sub DBIx::Class::_ENV_::HELP_URL () {
+  'http://p3rl.org/DBIx::Class#GETTING_HELP/SUPPORT'
+}
+
+=head1 GETTING HELP/SUPPORT
+
+Due to the sheer size of its problem domain, DBIx::Class is a relatively
 complex framework. After you start using DBIx::Class questions will inevitably
 arise. If you are stuck with a problem or have doubts about a particular
-approach do not hesitate to contact the community with your questions. The
-list below is sorted by "fastest response time":
+approach do not hesitate to contact us via any of the following options (the
+list is sorted by "fastest response time"):
 
 =over
 
@@ -300,6 +306,8 @@ amiri: Amiri Barksdale <amiri@metalabel.com>
 
 amoore: Andrew Moore <amoore@cpan.org>
 
+Andrew Mehta <Andrew@unitedgames.co.uk>
+
 andrewalker: Andre Walker <andre@andrewalker.net>
 
 andyg: Andy Grundman <andy@hybridized.org>
@@ -313,6 +321,8 @@ arcanez: Justin Hunter <justin.d.hunter@gmail.com>
 ash: Ash Berlin <ash@cpan.org>
 
 bert: Norbert Csongrádi <bert@cpan.org>
+
+bfwg: Colin Newell <colin.newell@gmail.com>
 
 blblack: Brandon L. Black <blblack@gmail.com>
 
@@ -338,6 +348,8 @@ claco: Christopher H. Laco
 
 clkao: CL Kao
 
+Ctrl-o L<http://ctrlo.com/>
+
 da5id: David Jack Olrik <djo@cpan.org>
 
 dariusj: Darius Jokilehto <dariusjokilehto@yahoo.co.uk>
@@ -350,17 +362,23 @@ debolaz: Anders Nor Berle <berle@cpan.org>
 
 dew: Dan Thomas <dan@godders.org>
 
+dim0xff: Dmitry Latin <dim0xff@gmail.com>
+
 dkubb: Dan Kubb <dan.kubb-cpan@onautopilot.com>
 
 dnm: Justin Wheeler <jwheeler@datademons.com>
 
 dpetrov: Dimitar Petrov <mitakaa@gmail.com>
 
+duncan_dmg: Duncan Garland <Duncan.Garland@motortrak.com>
+
 dwc: Daniel Westermann-Clark <danieltwc@cpan.org>
 
 dyfrgi: Michael Leuchtenburg <michael@slashhome.org>
 
 edenc: Eden Cardim <edencardim@gmail.com>
+
+Eligo L<http://eligo.co.uk/>
 
 ether: Karen Etheridge <ether@cpan.org>
 
@@ -382,6 +400,8 @@ Haarg: Graham Knop <haarg@haarg.org>
 
 hobbs: Andrew Rodland <arodland@cpan.org>
 
+idn: Ian Norton <i.norton@shadowcat.co.uk>
+
 ilmari: Dagfinn Ilmari MannsE<aring>ker <ilmari@ilmari.org>
 
 initself: Mike Baas <mike@initselftech.com>
@@ -391,6 +411,8 @@ ironcamel: Naveed Massjouni <naveedm9@gmail.com>
 jawnsy: Jonathan Yu <jawnsy@cpan.org>
 
 jasonmay: Jason May <jason.a.may@gmail.com>
+
+jegade: Jens Gassmann <jens.gassmann@atomix.de>
 
 jesper: Jesper Krogh
 
@@ -422,13 +444,21 @@ mattlaw: Matt Lawrence
 
 mattp: Matt Phillips <mattp@cpan.org>
 
+mdk: Mark Keating <m.keating@shadowcat.co.uk>
+
+mna: Maya
+
 michaelr: Michael Reddick <michael.reddick@gmail.com>
 
 milki: Jonathan Chu <milki@rescomp.berkeley.edu>
 
+minty: Murray Walker <perl@minty.org>
+
 mithaldu: Christian Walde <walde.christian@gmail.com>
 
 mjemmeson: Michael Jemmeson <michael.jemmeson@gmail.com>
+
+mrf: Mike Francis <ungrim97@gmail.com>
 
 mstratman: Mark A. Stratman <stratman@gmail.com>
 
@@ -466,6 +496,8 @@ phaylon: Robert Sedlacek <phaylon@dunkelheit.at>
 
 plu: Johannes Plunien <plu@cpan.org>
 
+pplu: Jose Luis Martinez <jlmartinez@capside.com>
+
 Possum: Daniel LeWarne <possum@cpan.org>
 
 quicksilver: Jules Bean
@@ -500,6 +532,8 @@ semifor: Marc Mims <marc@questright.com>
 
 SineSwiper: Brendan Byrd <bbyrd@cpan.org>
 
+skaufman: Samuel Kaufman <sam@socialflow.com>
+
 solomon: Jared Johnson <jaredj@nmgi.com>
 
 spb: Stephen Bennett <stephen@freenode.net>
@@ -508,11 +542,17 @@ Squeeks <squeek@cpan.org>
 
 sszabo: Stephan Szabo <sszabo@bigpanda.com>
 
+Stephen Peters <steve@stephenpeters.me>
+
 talexb: Alex Beamish <talexb@gmail.com>
 
 tamias: Ronald J Kimball <rjk@tamias.net>
 
+TBSliver: Tom Bloor <t.bloor@shadowcat.co.uk>
+
 teejay : Aaron Trevena <teejay@cpan.org>
+
+theorbtwo: James Mastros <james@mastros.biz>
 
 Todd Lipcon
 
@@ -535,6 +575,8 @@ willert: Sebastian Willert <willert@cpan.org>
 wreis: Wallace Reis <wreis@cpan.org>
 
 xenoterracide: Caleb Cushing <xenoterracide@gmail.com>
+
+uree: Oriol Soriano <oriol.soriano@capside.com>
 
 yrlnry: Mark Jason Dominus <mjd@plover.com>
 

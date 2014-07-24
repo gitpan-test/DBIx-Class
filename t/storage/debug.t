@@ -4,10 +4,10 @@ no warnings 'once';
 
 use Test::More;
 use Test::Exception;
+use Try::Tiny;
+use File::Spec;
 use lib qw(t/lib);
 use DBICTest;
-use DBIC::DebugObj;
-use DBIC::SqlMakerTest;
 use Path::Class qw/file/;
 
 BEGIN { delete @ENV{qw(DBIC_TRACE DBIC_TRACE_PROFILE DBICTEST_SQLITE_USE_FILE)} }
@@ -19,11 +19,11 @@ unlink $lfn or die $!
   if -e $lfn;
 
 # make sure we are testing the vanilla debugger and not ::PrettyPrint
+require DBIx::Class::Storage::Statistics;
 $schema->storage->debugobj(DBIx::Class::Storage::Statistics->new);
 
 ok ( $schema->storage->debug(1), 'debug' );
 $schema->storage->debugfh($lfn->openw);
-$schema->storage->debugfh->autoflush(1);
 $schema->resultset('CD')->count;
 
 my @loglines = $lfn->slurp;
@@ -54,32 +54,86 @@ END {
 }
 
 open(STDERRCOPY, '>&STDERR');
-close(STDERR);
-dies_ok {
+
+my $exception_line_number;
+# STDERR will be closed, no T::B diag in blocks
+my $exception = try {
+  close(STDERR);
+  $exception_line_number = __LINE__ + 1;  # important for test, do not reformat
   $schema->resultset('CD')->search({})->count;
-} 'Died on closed FH';
+} catch {
+  $_
+} finally {
+  # restore STDERR
+  open(STDERR, '>&STDERRCOPY');
+};
 
-open(STDERR, '>&STDERRCOPY');
+like $exception, qr/
+  \QDuplication of STDERR for debug output failed (perhaps your STDERR is closed?)\E
+    .+
+  \Qat @{[__FILE__]} line $exception_line_number\E$
+/xms;
 
-# test trace output correctness for bind params
+my @warnings;
+$exception = try {
+  local $SIG{__WARN__} = sub { push @warnings, @_ if $_[0] =~ /character/i };
+  close STDERR;
+  open(STDERR, '>', File::Spec->devnull) or die $!;
+  $schema->resultset('CD')->search({ title => "\x{1f4a9}" })->count;
+  '';
+} catch {
+  $_;
+} finally {
+  # restore STDERR
+  close STDERR;
+  open(STDERR, '>&STDERRCOPY');
+};
+
+die "How did that fail... $exception"
+  if $exception;
+
+is_deeply(\@warnings, [], 'No warnings with unicode on STDERR');
+
+
+# test debugcb and debugobj protocol
 {
-    my ($sql, @bind);
-    $schema->storage->debugobj(DBIC::DebugObj->new(\$sql, \@bind));
+  my $rs = $schema->resultset('CD')->search( {
+    artist => 1,
+    cdid => { -between => [ 1, 3 ] },
+    title => { '!=' => \[ '?', undef ] }
+  });
 
-    my @cds = $schema->resultset('CD')->search( { artist => 1, cdid => { -between => [ 1, 3 ] }, } );
-    is_same_sql_bind(
-        $sql, \@bind,
-        "SELECT me.cdid, me.artist, me.title, me.year, me.genreid, me.single_track FROM cd me WHERE ( artist = ? AND (cdid BETWEEN ? AND ?) )",
-        [qw/'1' '1' '3'/],
-        'got correct SQL with all bind parameters (debugcb)'
-    );
+  my $sql_trace = 'SELECT me.cdid, me.artist, me.title, me.year, me.genreid, me.single_track FROM cd me WHERE ( ( artist = ? AND ( cdid BETWEEN ? AND ? ) AND title != ? ) )';
+  my @bind_trace = qw( '1' '1' '3' NULL );  # quotes are in fact part of the trace </facepalm>
 
-    @cds = $schema->resultset('CD')->search( { artist => 1, cdid => { -between => [ 1, 3 ] }, } );
-    is_same_sql_bind(
-        $sql, \@bind,
-        "SELECT me.cdid, me.artist, me.title, me.year, me.genreid, me.single_track FROM cd me WHERE ( artist = ? AND (cdid BETWEEN ? AND ?) )", ["'1'", "'1'", "'3'"],
-        'got correct SQL with all bind parameters (debugobj)'
-    );
+
+  my @args;
+  $schema->storage->debugcb(sub { push @args, @_ } );
+
+  $rs->all;
+
+  is_deeply( \@args, [
+    "SELECT",
+    sprintf( "%s: %s\n", $sql_trace, join ', ', @bind_trace ),
+  ]);
+
+  {
+    package DBICTest::DebugObj;
+    our @ISA = 'DBIx::Class::Storage::Statistics';
+
+    sub query_start {
+      my $self = shift;
+      ( $self->{_traced_sql}, @{$self->{_traced_bind}} ) = @_;
+    }
+  }
+
+  my $do = $schema->storage->debugobj(DBICTest::DebugObj->new);
+
+  $rs->all;
+
+  is( $do->{_traced_sql}, $sql_trace );
+
+  is_deeply ( $do->{_traced_bind}, \@bind_trace );
 }
 
 done_testing;

@@ -36,8 +36,14 @@ use warnings;
 use Test::More;
 
 use lib 't/lib';
-use DBICTest;
 
+BEGIN {
+  require DBICTest::RunMode;
+  plan( skip_all => "Skipping test on plain module install" )
+    if DBICTest::RunMode->is_plain;
+}
+
+use DBICTest;
 use File::Find;
 use File::Spec;
 use B qw/svref_2object/;
@@ -86,6 +92,8 @@ my $skip_idx = { map { $_ => 1 } (
 ) };
 
 my $has_moose = eval { require Moose::Util };
+
+Sub::Defer::undefer_all();
 
 # can't use Class::Inspector for the mundane parts as it does not
 # distinguish imports from anything else, what a crock of...
@@ -143,9 +151,18 @@ for my $mod (@modules) {
             last;
           }
         }
-        fail ("${mod}::${name} appears to have entered inheritance chain by import into "
-            . ($via || 'UNKNOWN')
-        );
+
+        # exception time
+        if (
+          ( $name eq 'import' and $via = 'Exporter' )
+        ) {
+          pass("${mod}::${name} is a valid uncleaned import from ${name}");
+        }
+        else {
+          fail ("${mod}::${name} appears to have entered inheritance chain by import into "
+              . ($via || 'UNKNOWN')
+          );
+        }
       }
     }
 

@@ -15,7 +15,8 @@ use mro 'c3';
 
 use List::Util 'first';
 use Scalar::Util 'blessed';
-use Sub::Name 'subname';
+use DBIx::Class::_Util 'UNRESOLVABLE_CONDITION';
+use SQL::Abstract qw(is_plain_value is_literal_value);
 use namespace::clean;
 
 #
@@ -389,7 +390,6 @@ sub _resolve_aliastypes_from_select_args {
   my $sql_maker = $self->sql_maker;
 
   # these are throw away results, do not pollute the bind stack
-  local $sql_maker->{select_bind};
   local $sql_maker->{where_bind};
   local $sql_maker->{group_bind};
   local $sql_maker->{having_bind};
@@ -429,7 +429,7 @@ sub _resolve_aliastypes_from_select_args {
       ),
     ],
     selecting => [
-      map { $sql_maker->_recurse_fields($_) } @{$attrs->{select}},
+      map { ($sql_maker->_recurse_fields($_))[0] } @{$attrs->{select}},
     ],
     ordering => [
       map { $_->[0] } $self->_extract_order_criteria ($attrs->{order_by}, $sql_maker),
@@ -654,9 +654,10 @@ sub _group_over_selection {
   }
 
   $self->throw_exception ( sprintf
-    'A required group_by clause could not be constructed automatically due to a complex '
-  . 'order_by criteria (%s). Either order_by columns only (no functions) or construct a suitable '
-  . 'group_by by hand',
+    'Unable to programatically derive a required group_by from the supplied '
+  . 'order_by criteria. To proceed either add an explicit group_by, or '
+  . 'simplify your order_by to only include plain columns '
+  . '(supplied order_by: %s)',
     join ', ', map { "'$_'" } @$leftovers,
   ) if $leftovers;
 
@@ -710,6 +711,9 @@ sub _resolve_ident_sources {
 # for all sources
 sub _resolve_column_info {
   my ($self, $ident, $colnames) = @_;
+
+  return {} if $colnames and ! @$colnames;
+
   my $alias2src = $self->_resolve_ident_sources($ident);
 
   my (%seen_cols, @auto_colnames);
@@ -780,31 +784,9 @@ sub _resolve_column_info {
 sub _inner_join_to_node {
   my ($self, $from, $alias) = @_;
 
-  # subqueries and other oddness are naturally not supported
-  return $from if (
-    ref $from ne 'ARRAY'
-      ||
-    @$from <= 1
-      ||
-    ref $from->[0] ne 'HASH'
-      ||
-    ! $from->[0]{-alias}
-      ||
-    $from->[0]{-alias} eq $alias  # this last bit means $alias is the head of $from - nothing to do
-  );
+  my $switch_branch = $self->_find_join_path_to_node($from, $alias);
 
-  # find the current $alias in the $from structure
-  my $switch_branch;
-  JOINSCAN:
-  for my $j (@{$from}[1 .. $#$from]) {
-    if ($j->[0]{-alias} eq $alias) {
-      $switch_branch = $j->[0]{-join_path};
-      last JOINSCAN;
-    }
-  }
-
-  # something else went quite wrong
-  return $from unless $switch_branch;
+  return $from unless @{$switch_branch||[]};
 
   # So it looks like we will have to switch some stuff around.
   # local() is useless here as we will be leaving the scope
@@ -830,6 +812,29 @@ sub _inner_join_to_node {
   }
 
   return \@new_from;
+}
+
+sub _find_join_path_to_node {
+  my ($self, $from, $target_alias) = @_;
+
+  # subqueries and other oddness are naturally not supported
+  return undef if (
+    ref $from ne 'ARRAY'
+      ||
+    ref $from->[0] ne 'HASH'
+      ||
+    ! defined $from->[0]{-alias}
+  );
+
+  # no path - the head is the alias
+  return [] if $from->[0]{-alias} eq $target_alias;
+
+  for my $i (1 .. $#$from) {
+    return $from->[$i][0]{-join_path} if ( ($from->[$i][0]{-alias}||'') eq $target_alias );
+  }
+
+  # something else went quite wrong
+  return undef;
 }
 
 sub _extract_order_criteria {
@@ -881,15 +886,15 @@ sub _order_by_is_stable {
   my ($self, $ident, $order_by, $where) = @_;
 
   my @cols = (
-    (map { $_->[0] } $self->_extract_order_criteria($order_by)),
-    $where ? @{$self->_extract_fixed_condition_columns($where)} :(),
-  ) or return undef;
+    ( map { $_->[0] } $self->_extract_order_criteria($order_by) ),
+    ( $where ? keys %{ $self->_extract_fixed_condition_columns($where) } : () ),
+  ) or return 0;
 
   my $colinfo = $self->_resolve_column_info($ident, \@cols);
 
   return keys %$colinfo
     ? $self->_columns_comprise_identifying_set( $colinfo,  \@cols )
-    : undef
+    : 0
   ;
 }
 
@@ -905,115 +910,357 @@ sub _columns_comprise_identifying_set {
     return 1 if $src->_identifying_column_set($_);
   }
 
-  return undef;
+  return 0;
 }
 
-# this is almost identical to the above, except it accepts only
+# this is almost similar to _order_by_is_stable, except it takes
 # a single rsrc, and will succeed only if the first portion of the order
 # by is stable.
 # returns that portion as a colinfo hashref on success
-sub _main_source_order_by_portion_is_stable {
-  my ($self, $main_rsrc, $order_by, $where) = @_;
+sub _extract_colinfo_of_stable_main_source_order_by_portion {
+  my ($self, $attrs) = @_;
 
-  die "Huh... I expect a blessed result_source..."
-    if ref($main_rsrc) eq 'ARRAY';
+  my $nodes = $self->_find_join_path_to_node($attrs->{from}, $attrs->{alias});
+
+  return unless defined $nodes;
 
   my @ord_cols = map
     { $_->[0] }
-    ( $self->_extract_order_criteria($order_by) )
+    ( $self->_extract_order_criteria($attrs->{order_by}) )
   ;
   return unless @ord_cols;
 
-  my $colinfos = $self->_resolve_column_info($main_rsrc);
+  my $valid_aliases = { map { $_ => 1 } (
+    $attrs->{from}[0]{-alias},
+    map { values %$_ } @$nodes,
+  ) };
 
-  for (0 .. $#ord_cols) {
-    if (
-      ! $colinfos->{$ord_cols[$_]}
-        or
-      $colinfos->{$ord_cols[$_]}{-result_source} != $main_rsrc
-    ) {
-      $#ord_cols =  $_ - 1;
-      last;
-    }
+  my $colinfos = $self->_resolve_column_info($attrs->{from});
+
+  my ($colinfos_to_return, $seen_main_src_cols);
+
+  for my $col (@ord_cols) {
+    # if order criteria is unresolvable - there is nothing we can do
+    my $colinfo = $colinfos->{$col} or last;
+
+    # if we reached the end of the allowed aliases - also nothing we can do
+    last unless $valid_aliases->{$colinfo->{-source_alias}};
+
+    $colinfos_to_return->{$col} = $colinfo;
+
+    $seen_main_src_cols->{$colinfo->{-colname}} = 1
+      if $colinfo->{-source_alias} eq $attrs->{alias};
   }
 
-  # we just truncated it above
-  return unless @ord_cols;
+  # FIXME the condition may be singling out things on its own, so we
+  # conceivable could come back wi "stable-ordered by nothing"
+  # not confient enough in the parser yet, so punt for the time being
+  return unless $seen_main_src_cols;
 
-  my $order_portion_ci = { map {
-    $colinfos->{$_}{-colname} => $colinfos->{$_},
-    $colinfos->{$_}{-fq_colname} => $colinfos->{$_},
-  } @ord_cols };
+  my $main_src_fixed_cols_from_cond = [ $attrs->{where}
+    ? (
+      map
+      {
+        ( $colinfos->{$_} and $colinfos->{$_}{-source_alias} eq $attrs->{alias} )
+          ? $colinfos->{$_}{-colname}
+          : ()
+      }
+      keys %{ $self->_extract_fixed_condition_columns($attrs->{where}) }
+    )
+    : ()
+  ];
 
-  # since all we check here are the start of the order_by belonging to the
-  # top level $rsrc, a present identifying set will mean that the resultset
-  # is ordered by its leftmost table in a stable manner
-  #
-  # RV of _identifying_column_set contains unqualified names only
-  my $unqualified_idset = $main_rsrc->_identifying_column_set({
-    ( $where ? %{
-      $self->_resolve_column_info(
-        $main_rsrc, $self->_extract_fixed_condition_columns($where)
-      )
-    } : () ),
-    %$order_portion_ci
-  }) or return;
-
-  my $ret_info;
-  my %unqualified_idcols_from_order = map {
-    $order_portion_ci->{$_} ? ( $_ => $order_portion_ci->{$_} ) : ()
-  } @$unqualified_idset;
-
-  # extra optimization - cut the order_by at the end of the identifying set
-  # (just in case the user was stupid and overlooked the obvious)
-  for my $i (0 .. $#ord_cols) {
-    my $col = $ord_cols[$i];
-    my $unqualified_colname = $order_portion_ci->{$col}{-colname};
-    $ret_info->{$col} = { %{$order_portion_ci->{$col}}, -idx_in_order_subset => $i };
-    delete $unqualified_idcols_from_order{$ret_info->{$col}{-colname}};
-
-    # we didn't reach the end of the identifying portion yet
-    return $ret_info unless keys %unqualified_idcols_from_order;
-  }
-
-  die 'How did we get here...';
+  return $attrs->{result_source}->_identifying_column_set([
+    keys %$seen_main_src_cols,
+    @$main_src_fixed_cols_from_cond,
+  ]) ? $colinfos_to_return : ();
 }
 
-# returns an arrayref of column names which *definitely* have some
-# sort of non-nullable equality requested in the given condition
-# specification. This is used to figure out if a resultset is
-# constrained to a column which is part of a unique constraint,
-# which in turn allows us to better predict how ordering will behave
-# etc.
+# Attempts to flatten a passed in SQLA condition as much as possible towards
+# a plain hashref, *without* altering its semantics. Required by
+# create/populate being able to extract definitive conditions from preexisting
+# resultset {where} stacks
 #
-# this is a rudimentary, incomplete, and error-prone extractor
-# however this is OK - it is conservative, and if we can not find
-# something that is in fact there - the stack will recover gracefully
-# Also - DQ and the mst it rode in on will save us all RSN!!!
-sub _extract_fixed_condition_columns {
-  my ($self, $where) = @_;
+# FIXME - while relatively robust, this is still imperfect, one of the first
+# things to tackle with DQ
+sub _collapse_cond {
+  my ($self, $where, $where_is_anded_array) = @_;
 
-  return unless ref $where eq 'HASH';
+  if (! $where) {
+    return;
+  }
+  elsif ($where_is_anded_array or ref $where eq 'HASH') {
 
-  my @cols;
-  for my $lhs (keys %$where) {
-    if ($lhs =~ /^\-and$/i) {
-      push @cols, ref $where->{$lhs} eq 'ARRAY'
-        ? ( map { @{ $self->_extract_fixed_condition_columns($_) } } @{$where->{$lhs}} )
-        : @{ $self->_extract_fixed_condition_columns($where->{$lhs}) }
+    my @pairs;
+
+    my @pieces = $where_is_anded_array ? @$where : $where;
+    while (@pieces) {
+      my $chunk = shift @pieces;
+
+      if (ref $chunk eq 'HASH') {
+        push @pairs, map { [ $_ => $chunk->{$_} ] } sort keys %$chunk;
+      }
+      elsif (ref $chunk eq 'ARRAY') {
+        push @pairs, [ -or => $chunk ]
+          if @$chunk;
+      }
+      elsif ( ! ref $chunk) {
+        push @pairs, [ $chunk, shift @pieces ];
+      }
+      else {
+        push @pairs, [ '', $chunk ];
+      }
+    }
+
+    return unless @pairs;
+
+    my @conds = $self->_collapse_cond_unroll_pairs(\@pairs)
+      or return;
+
+    # Consolidate various @conds back into something more compact
+    my $fin;
+
+    for my $c (@conds) {
+      if (ref $c ne 'HASH') {
+        push @{$fin->{-and}}, $c;
+      }
+      else {
+        for my $col (sort keys %$c) {
+          if (exists $fin->{$col}) {
+            my ($l, $r) = ($fin->{$col}, $c->{$col});
+
+            (ref $_ ne 'ARRAY' or !@$_) and $_ = [ -and => $_ ] for ($l, $r);
+
+            if (@$l and @$r and $l->[0] eq $r->[0] and $l->[0] eq '-and') {
+              $fin->{$col} = [ -and => map { @$_[1..$#$_] } ($l, $r) ];
+            }
+            else {
+              $fin->{$col} = [ -and => $fin->{$col}, $c->{$col} ];
+            }
+          }
+          else {
+            $fin->{$col} = $c->{$col};
+          }
+        }
+      }
+    }
+
+    if ( ref $fin->{-and} eq 'ARRAY' and @{$fin->{-and}} == 1 ) {
+      my $piece = (delete $fin->{-and})->[0];
+      if (ref $piece eq 'ARRAY') {
+        $fin->{-or} = $fin->{-or} ? [ $piece, $fin->{-or} ] : $piece;
+      }
+      elsif (! exists $fin->{''}) {
+        $fin->{''} = $piece;
+      }
+    }
+
+    return $fin;
+  }
+  elsif (ref $where eq 'ARRAY') {
+    my @w = @$where;
+
+    while ( @w and (
+      (ref $w[0] eq 'ARRAY' and ! @{$w[0]} )
+        or
+      (ref $w[0] eq 'HASH' and ! keys %{$w[0]})
+    )) { shift @w };
+
+    return unless @w;
+
+    if ( @w == 1 ) {
+      return ( ref $w[0] )
+        ? $self->_collapse_cond($w[0])
+        : { $w[0] => undef }
       ;
     }
-    elsif ($lhs !~ /^\-/) {
-      my $val = $where->{$lhs};
-
-      push @cols, $lhs if (defined $val and (
-        ! ref $val
-          or
-        (ref $val eq 'HASH' and keys %$val == 1 and defined $val->{'='})
-      ));
+    elsif ( @w == 2 and ! ref $w[0]) {
+      if ( ( $w[0]||'' ) =~ /^\-and$/i ) {
+        return (ref $w[1] eq 'HASH' or ref $w[1] eq 'ARRAY')
+          ? $self->_collapse_cond($w[1], (ref $w[1] eq 'ARRAY') )
+          : $self->throw_exception("Unsupported top-level op/arg pair: [ $w[0] => $w[1] ]")
+        ;
+      }
+      else {
+        return $self->_collapse_cond({ @w });
+      }
+    }
+    else {
+      return { -or => \@w };
     }
   }
-  return \@cols;
+  else {
+    # not a hash not an array
+    return { '' => $where };
+  }
+
+  die 'should not get here';
+}
+
+sub _collapse_cond_unroll_pairs {
+  my ($self, $pairs) = @_;
+
+  my @conds;
+
+  while (@$pairs) {
+    my ($lhs, $rhs) = @{ shift @$pairs };
+
+    if ($lhs eq '') {
+      push @conds, $self->_collapse_cond($rhs);
+    }
+    elsif ( $lhs =~ /^\-and$/i ) {
+      push @conds, $self->_collapse_cond($rhs, (ref $rhs eq 'ARRAY'));
+    }
+    elsif ( $lhs =~ /^\-or$/i ) {
+      push @conds, $self->_collapse_cond(
+        (ref $rhs eq 'HASH') ? [ map { $_ => $rhs->{$_} } sort keys %$rhs ] : $rhs
+      );
+    }
+    else {
+      if (ref $rhs eq 'HASH' and ! keys %$rhs) {
+        # FIXME - SQLA seems to be doing... nothing...?
+      }
+      elsif (ref $rhs eq 'HASH' and keys %$rhs == 1 and exists $rhs->{-ident}) {
+        push @conds, { $lhs => { '=', $rhs } };
+      }
+      elsif (ref $rhs eq 'HASH' and keys %$rhs == 1 and exists $rhs->{-value} and is_plain_value $rhs->{-value}) {
+        push @conds, { $lhs => $rhs->{-value} };
+      }
+      elsif (ref $rhs eq 'HASH' and keys %$rhs == 1 and exists $rhs->{'='}) {
+        if( is_literal_value $rhs->{'='}) {
+          push @conds, { $lhs => $rhs };
+        }
+        else {
+          for my $p ($self->_collapse_cond_unroll_pairs([ [ $lhs => $rhs->{'='} ] ])) {
+
+            # extra sanity check
+            if (keys %$p > 1) {
+              require Data::Dumper::Concise;
+              local $Data::Dumper::Deepcopy = 1;
+              $self->throw_exception(
+                "Internal error: unexpected collapse unroll:"
+              . Data::Dumper::Concise::Dumper { in => { $lhs => $rhs }, out => $p }
+              );
+            }
+
+            my ($l, $r) = %$p;
+
+            push @conds, ( ! length ref $r or is_plain_value($r) )
+              ? { $l => $r }
+              : { $l => { '=' => $r } }
+            ;
+          }
+        }
+      }
+      elsif (ref $rhs eq 'ARRAY') {
+        # some of these conditionals encounter multi-values - roll them out using
+        # an unshift, which will cause extra looping in the while{} above
+        if (! @$rhs ) {
+          push @conds, { $lhs => [] };
+        }
+        elsif ( ($rhs->[0]||'') =~ /^\-(?:and|or)$/i ) {
+          $self->throw_exception("Value modifier not followed by any values: $lhs => [ $rhs->[0] ] ")
+            if  @$rhs == 1;
+
+          if( $rhs->[0] =~ /^\-and$/i ) {
+            unshift @$pairs, map { [ $lhs => $_ ] } @{$rhs}[1..$#$rhs];
+          }
+          # if not an AND then it's an OR
+          elsif(@$rhs == 2) {
+            unshift @$pairs, [ $lhs => $rhs->[1] ];
+          }
+          else {
+            push @conds, { $lhs => $rhs };
+          }
+        }
+        elsif (@$rhs == 1) {
+          unshift @$pairs, [ $lhs => $rhs->[0] ];
+        }
+        else {
+          push @conds, { $lhs => $rhs };
+        }
+      }
+      else {
+        push @conds, { $lhs => $rhs };
+      }
+    }
+  }
+
+  return @conds;
+}
+
+# Analyzes a given condition and attempts to extract all columns
+# with a definitive fixed-condition criteria. Returns a hashref
+# of k/v pairs suitable to be passed to set_columns(), with a
+# MAJOR CAVEAT - multi-value (contradictory) equalities are still
+# represented as a reference to the UNRESOVABLE_CONDITION constant
+# The reason we do this is that some codepaths only care about the
+# codition being stable, as opposed to actually making sense
+#
+# The normal mode is used to figure out if a resultset is constrained
+# to a column which is part of a unique constraint, which in turn
+# allows us to better predict how ordering will behave etc.
+#
+# With the optional "consider_nulls" boolean argument, the function
+# is instead used to infer inambiguous values from conditions
+# (e.g. the inheritance of resultset conditions on new_result)
+#
+my $undef_marker = \ do{ my $x = 'undef' };
+sub _extract_fixed_condition_columns {
+  my ($self, $where, $consider_nulls) = @_;
+  my $where_hash = $self->_collapse_cond($_[1]);
+
+  my $res = {};
+  my ($c, $v);
+  for $c (keys %$where_hash) {
+    my $vals;
+
+    if (!defined ($v = $where_hash->{$c}) ) {
+      $vals->{$undef_marker} = $v if $consider_nulls
+    }
+    elsif (
+      ref $v eq 'HASH'
+        and
+      keys %$v == 1
+    ) {
+      if (exists $v->{-value}) {
+        if (defined $v->{-value}) {
+          $vals->{$v->{-value}} = $v->{-value}
+        }
+        elsif( $consider_nulls ) {
+          $vals->{$undef_marker} = $v->{-value};
+        }
+      }
+      # do not need to check for plain values - _collapse_cond did it for us
+      elsif(ref $v->{'='} and is_literal_value($v->{'='}) ) {
+        $vals->{$v->{'='}} = $v->{'='};
+      }
+    }
+    elsif (
+      ! length ref $v
+        or
+      is_plain_value ($v)
+    ) {
+      $vals->{$v} = $v;
+    }
+    elsif (ref $v eq 'ARRAY' and ($v->[0]||'') eq '-and') {
+      for ( @{$v}[1..$#$v] ) {
+        my $subval = $self->_extract_fixed_condition_columns({ $c => $_ }, 'consider nulls');  # always fish nulls out on recursion
+        next unless exists $subval->{$c};  # didn't find anything
+        $vals->{defined $subval->{$c} ? $subval->{$c} : $undef_marker} = $subval->{$c};
+      }
+    }
+
+    if (keys %$vals == 1) {
+      ($res->{$c}) = (values %$vals)
+        unless !$consider_nulls and exists $vals->{$undef_marker};
+    }
+    elsif (keys %$vals > 1) {
+      $res->{$c} = UNRESOLVABLE_CONDITION;
+    }
+  }
+
+  $res;
 }
 
 1;

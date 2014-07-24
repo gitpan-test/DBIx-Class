@@ -4,8 +4,8 @@ package # hide from PAUSE
 use warnings;
 use strict;
 
-use base qw/DBICTest::BaseResult/;
-use Carp qw/confess/;
+use base 'DBICTest::BaseResult';
+use DBICTest::Util 'check_customcond_args';
 
 __PACKAGE__->load_components(qw{
     +DBICTest::DeployComponent
@@ -53,6 +53,29 @@ __PACKAGE__->grouping_column ('cd');
 __PACKAGE__->belongs_to( cd => 'DBICTest::Schema::CD', undef, {
     proxy => { cd_title => 'title' },
 });
+# custom condition coderef
+__PACKAGE__->belongs_to( cd_cref_cond => 'DBICTest::Schema::CD',
+sub {
+  # This is for test purposes only. A regular user does not
+  # need to sanity check the passed-in arguments, this is what
+  # the tests are for :)
+  my $args = &check_customcond_args;
+
+  return (
+    {
+      "$args->{foreign_alias}.cdid" => { -ident => "$args->{self_alias}.cd" },
+    },
+
+    ! $args->{self_result_object} ? () : {
+     "$args->{foreign_alias}.cdid" => $args->{self_result_object}->cd
+    },
+
+    ! $args->{foreign_result_object} ? () : {
+     "$args->{self_alias}.cd" => $args->{foreign_result_object}->cdid
+    },
+  );
+}
+);
 __PACKAGE__->belongs_to( disc => 'DBICTest::Schema::CD' => 'cd', {
     proxy => 'year'
 });
@@ -76,23 +99,18 @@ __PACKAGE__->belongs_to(
 __PACKAGE__->has_many (
   next_tracks => __PACKAGE__,
   sub {
-    my $args = shift;
-
     # This is for test purposes only. A regular user does not
     # need to sanity check the passed-in arguments, this is what
     # the tests are for :)
-    my @missing_args = grep { ! defined $args->{$_} }
-      qw/self_alias foreign_alias self_resultsource foreign_relname/;
-    confess "Required arguments not supplied to custom rel coderef: @missing_args\n"
-      if @missing_args;
+    my $args = &check_customcond_args;
 
     return (
       { "$args->{foreign_alias}.cd"       => { -ident => "$args->{self_alias}.cd" },
         "$args->{foreign_alias}.position" => { '>' => { -ident => "$args->{self_alias}.position" } },
       },
-      $args->{self_rowobj} && {
-        "$args->{foreign_alias}.cd"       => $args->{self_rowobj}->get_column('cd'),
-        "$args->{foreign_alias}.position" => { '>' => $args->{self_rowobj}->pos },
+      $args->{self_result_object} && {
+        "$args->{foreign_alias}.cd"       => $args->{self_result_object}->get_column('cd'),
+        "$args->{foreign_alias}.position" => { '>' => $args->{self_result_object}->pos },
       }
     )
   }

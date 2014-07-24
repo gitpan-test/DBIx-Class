@@ -99,6 +99,7 @@ BEGIN {
     namespace::clean
     Try::Tiny
     Sub::Name
+    Sub::Quote
 
     Scalar::Util
     List::Util
@@ -106,6 +107,10 @@ BEGIN {
 
     Class::Accessor::Grouped
     Class::C3::Componentised
+    SQL::Abstract
+
+    Module::Runtime
+    File::Spec
   ));
 
   require DBICTest::Schema;
@@ -116,7 +121,6 @@ BEGIN {
 {
   register_lazy_loadable_requires(qw(
     Moo
-    Sub::Quote
     Context::Preserve
   ));
 
@@ -129,7 +133,6 @@ BEGIN {
 {
   register_lazy_loadable_requires(qw(
     DBI
-    SQL::Abstract
     Hash::Merge
   ));
 

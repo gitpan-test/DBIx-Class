@@ -4,8 +4,7 @@ use warnings;
 use Test::More;
 
 use lib qw(t/lib);
-use DBICTest;
-use DBIC::SqlMakerTest;
+use DBICTest ':DiffSQL';
 
 my $schema = DBICTest->init_schema();
 my $art_rs = $schema->resultset('Artist');
@@ -43,8 +42,8 @@ my $rank_resolved_bind = [
 {
   is_same_sql_bind(
     $art_rs->as_query,
-    "(SELECT me.artistid, me.name, me.rank, me.charfield FROM artist me WHERE ( ( ( rank = ? ) AND ( name = ? ) ) ) )",
-    [ $rank_resolved_bind, $name_resolved_bind ],
+    "(SELECT me.artistid, me.name, me.rank, me.charfield FROM artist me WHERE name = ? AND rank = ? )",
+    [ $name_resolved_bind, $rank_resolved_bind ],
   );
 }
 
@@ -53,8 +52,8 @@ my $rscol = $art_rs->get_column( 'charfield' );
 {
   is_same_sql_bind(
     $rscol->as_query,
-    "(SELECT me.charfield FROM artist me WHERE ( ( ( rank = ? ) AND ( name = ? ) ) ) )",
-    [ $rank_resolved_bind, $name_resolved_bind ],
+    "(SELECT me.charfield FROM artist me WHERE name = ? AND rank = ? )",
+    [ $name_resolved_bind, $rank_resolved_bind ],
   );
 }
 

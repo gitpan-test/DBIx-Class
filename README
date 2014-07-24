@@ -7,12 +7,12 @@ WHERE TO START READING
     confusion it is strongly recommended to read (at the very least) the
     Manuals in the order presented there.
 
-HOW TO GET HELP
-    Due to the complexity of its problem domain, DBIx::Class is a relatively
+GETTING HELP/SUPPORT
+    Due to the sheer size of its problem domain, DBIx::Class is a relatively
     complex framework. After you start using DBIx::Class questions will
     inevitably arise. If you are stuck with a problem or have doubts about a
-    particular approach do not hesitate to contact the community with your
-    questions. The list below is sorted by "fastest response time":
+    particular approach do not hesitate to contact us via any of the
+    following options (the list is sorted by "fastest response time"):
 
     *   IRC: irc.perl.org#dbix-class
 
@@ -213,6 +213,8 @@ CONTRIBUTORS
 
     amoore: Andrew Moore <amoore@cpan.org>
 
+    Andrew Mehta <Andrew@unitedgames.co.uk>
+
     andrewalker: Andre Walker <andre@andrewalker.net>
 
     andyg: Andy Grundman <andy@hybridized.org>
@@ -226,6 +228,8 @@ CONTRIBUTORS
     ash: Ash Berlin <ash@cpan.org>
 
     bert: Norbert Csongrádi <bert@cpan.org>
+
+    bfwg: Colin Newell <colin.newell@gmail.com>
 
     blblack: Brandon L. Black <blblack@gmail.com>
 
@@ -251,6 +255,8 @@ CONTRIBUTORS
 
     clkao: CL Kao
 
+    Ctrl-o <http://ctrlo.com/>
+
     da5id: David Jack Olrik <djo@cpan.org>
 
     dariusj: Darius Jokilehto <dariusjokilehto@yahoo.co.uk>
@@ -263,17 +269,23 @@ CONTRIBUTORS
 
     dew: Dan Thomas <dan@godders.org>
 
+    dim0xff: Dmitry Latin <dim0xff@gmail.com>
+
     dkubb: Dan Kubb <dan.kubb-cpan@onautopilot.com>
 
     dnm: Justin Wheeler <jwheeler@datademons.com>
 
     dpetrov: Dimitar Petrov <mitakaa@gmail.com>
 
+    duncan_dmg: Duncan Garland <Duncan.Garland@motortrak.com>
+
     dwc: Daniel Westermann-Clark <danieltwc@cpan.org>
 
     dyfrgi: Michael Leuchtenburg <michael@slashhome.org>
 
     edenc: Eden Cardim <edencardim@gmail.com>
+
+    Eligo <http://eligo.co.uk/>
 
     ether: Karen Etheridge <ether@cpan.org>
 
@@ -295,6 +307,8 @@ CONTRIBUTORS
 
     hobbs: Andrew Rodland <arodland@cpan.org>
 
+    idn: Ian Norton <i.norton@shadowcat.co.uk>
+
     ilmari: Dagfinn Ilmari Mannsåker <ilmari@ilmari.org>
 
     initself: Mike Baas <mike@initselftech.com>
@@ -304,6 +318,8 @@ CONTRIBUTORS
     jawnsy: Jonathan Yu <jawnsy@cpan.org>
 
     jasonmay: Jason May <jason.a.may@gmail.com>
+
+    jegade: Jens Gassmann <jens.gassmann@atomix.de>
 
     jesper: Jesper Krogh
 
@@ -335,13 +351,21 @@ CONTRIBUTORS
 
     mattp: Matt Phillips <mattp@cpan.org>
 
+    mdk: Mark Keating <m.keating@shadowcat.co.uk>
+
+    mna: Maya
+
     michaelr: Michael Reddick <michael.reddick@gmail.com>
 
     milki: Jonathan Chu <milki@rescomp.berkeley.edu>
 
+    minty: Murray Walker <perl@minty.org>
+
     mithaldu: Christian Walde <walde.christian@gmail.com>
 
     mjemmeson: Michael Jemmeson <michael.jemmeson@gmail.com>
+
+    mrf: Mike Francis <ungrim97@gmail.com>
 
     mstratman: Mark A. Stratman <stratman@gmail.com>
 
@@ -379,6 +403,8 @@ CONTRIBUTORS
 
     plu: Johannes Plunien <plu@cpan.org>
 
+    pplu: Jose Luis Martinez <jlmartinez@capside.com>
+
     Possum: Daniel LeWarne <possum@cpan.org>
 
     quicksilver: Jules Bean
@@ -413,6 +439,8 @@ CONTRIBUTORS
 
     SineSwiper: Brendan Byrd <bbyrd@cpan.org>
 
+    skaufman: Samuel Kaufman <sam@socialflow.com>
+
     solomon: Jared Johnson <jaredj@nmgi.com>
 
     spb: Stephen Bennett <stephen@freenode.net>
@@ -421,11 +449,17 @@ CONTRIBUTORS
 
     sszabo: Stephan Szabo <sszabo@bigpanda.com>
 
+    Stephen Peters <steve@stephenpeters.me>
+
     talexb: Alex Beamish <talexb@gmail.com>
 
     tamias: Ronald J Kimball <rjk@tamias.net>
 
+    TBSliver: Tom Bloor <t.bloor@shadowcat.co.uk>
+
     teejay : Aaron Trevena <teejay@cpan.org>
+
+    theorbtwo: James Mastros <james@mastros.biz>
 
     Todd Lipcon
 
@@ -448,6 +482,8 @@ CONTRIBUTORS
     wreis: Wallace Reis <wreis@cpan.org>
 
     xenoterracide: Caleb Cushing <xenoterracide@gmail.com>
+
+    uree: Oriol Soriano <oriol.soriano@capside.com>
 
     yrlnry: Mark Jason Dominus <mjd@plover.com>
 

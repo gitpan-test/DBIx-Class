@@ -5,7 +5,7 @@ use strict;
 
 use Carp;
 use Scalar::Util qw(isweak weaken blessed reftype);
-use DBIx::Class::_Util qw(refcount hrefaddr);
+use DBIx::Class::_Util qw(refcount hrefaddr refdesc);
 use DBIx::Class::Optional::Dependencies;
 use Data::Dumper::Concise;
 use DBICTest::Util 'stacktrace';
@@ -20,15 +20,6 @@ our @EXPORT_OK = qw(populate_weakregistry assert_empty_weakregistry visit_refs);
 my $refs_traced = 0;
 my $leaks_found = 0;
 my %reg_of_regs;
-
-# so we don't trigger stringification
-sub _describe_ref {
-  sprintf '%s%s(%s)',
-    (defined blessed $_[0]) ? blessed($_[0]) . '=' : '',
-    reftype $_[0],
-    hrefaddr $_[0],
-  ;
-}
 
 sub populate_weakregistry {
   my ($weak_registry, $target, $note) = @_;
@@ -65,7 +56,7 @@ sub populate_weakregistry {
     $refs_traced++;
   }
 
-  my $desc = _describe_ref($target);
+  my $desc = refdesc $target;
   $weak_registry->{$refaddr}{slot_names}{$desc} = 1;
   if ($note) {
     $note =~ s/\s*\Q$desc\E\s*//g;
@@ -153,7 +144,7 @@ sub visit_refs {
         } scalar PadWalker::closed_over($r) ] }); # scalar due to RT#92269
       }
       1;
-    } or warn "Could not descend into @{[ _describe_ref($r) ]}: $@\n";
+    } or warn "Could not descend into @{[ refdesc $r ]}: $@\n";
   }
   $visited_cnt;
 }
@@ -173,7 +164,7 @@ sub visit_namespaces {
 
 
     $visited += visit_namespaces({ %$args, package => $_ }) for map
-      { $_ =~ /(.+?)::$/ && "${base}::$1" }
+      { $_ =~ /(.+?)::$/ ? "${base}::$1" : () }
       grep
         { $_ =~ /(?<!^main)::$/ }
         do {  no strict 'refs'; keys %{ $base . '::'} }
@@ -249,6 +240,8 @@ sub symtable_referenced_addresses {
 sub assert_empty_weakregistry {
   my ($weak_registry, $quiet) = @_;
 
+  Sub::Defer::undefer_all();
+
   # in case we hooked bless any extra object creation will wreak
   # havoc during the assert phase
   local *CORE::GLOBAL::bless;
@@ -275,12 +268,25 @@ sub assert_empty_weakregistry {
       if defined $weak_registry->{$addr}{weakref} and ! isweak( $weak_registry->{$addr}{weakref} );
   }
 
-  # the walk is very expensive - if we are $quiet (running in an END block)
-  # we do not really need to be too thorough
-  unless ($quiet) {
-    delete $weak_registry->{$_} for keys %{ symtable_referenced_addresses() };
-  }
-
+  # the symtable walk is very expensive
+  # if we are $quiet (running in an END block) we do not really need to be
+  # that thorough - can get by with only %Sub::Quote::QUOTED
+  delete $weak_registry->{$_} for $quiet
+    ? do {
+      my $refs = {};
+      visit_refs (
+        # only look at the closed over stuffs
+        refs => [ grep { length ref $_ } map { values %{$_->[2]} } grep { ref $_ eq 'ARRAY' } values %Sub::Quote::QUOTED ],
+        seen_refs => $refs,
+        action => sub { 1 },
+      );
+      keys %$refs;
+    }
+    : (
+      # full sumtable walk, starting from ::
+      keys %{ symtable_referenced_addresses() }
+    )
+  ;
 
   for my $addr (sort { $weak_registry->{$a}{display_name} cmp $weak_registry->{$b}{display_name} } keys %$weak_registry) {
 

@@ -5,8 +5,7 @@ use Test::More;
 use Test::Exception;
 
 use lib qw(t/lib);
-use DBICTest;
-use DBIC::SqlMakerTest;
+use DBICTest ':DiffSQL';
 
 my $schema = DBICTest->init_schema();
 
@@ -40,8 +39,6 @@ is_same_sql_bind (
   'Resultset-class attributes do not seep outside of the subselect',
 );
 
-$schema->storage->debug(1);
-
 is_same_sql_bind(
   $schema->resultset('CD')->search ({}, {
     rows => 2,
@@ -69,6 +66,5 @@ is_same_sql_bind(
   )',
   [ [{ sqlt_datatype => 'integer' } => 2 ] ],
 );
-
 
 done_testing;

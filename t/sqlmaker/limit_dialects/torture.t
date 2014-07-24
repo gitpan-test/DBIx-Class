@@ -5,15 +5,16 @@ use Test::More;
 use Test::Exception;
 use Storable 'dclone';
 use lib qw(t/lib);
-use DBICTest;
-use DBIC::SqlMakerTest;
+use DBICTest ':DiffSQL';
 
 my $schema = DBICTest->init_schema;
 my $native_limit_dialect = $schema->storage->sql_maker->{limit_dialect};
 
+my $where_string = 'me.title = ? AND source != ? AND source = ?';
+
 my @where_bind = (
-  [ {} => 'Study' ],
   [ {} => 'kama sutra' ],
+  [ {} => 'Study' ],
   [ { sqlt_datatype => 'varchar', sqlt_size => 100, dbic_colname => 'source' } => 'Library' ],
 );
 my @select_bind = (
@@ -37,16 +38,16 @@ my $tests = {
 
   LimitOffset => {
     limit => [
-      '(
+      "(
         SELECT me.id, owner.id, owner.name, ? * ?, ?
           FROM books me
           JOIN owners owner
             ON owner.id = me.owner
-        WHERE source != ? AND me.title = ? AND source = ?
+        WHERE $where_string
         GROUP BY (me.id / ?), owner.id
         HAVING ?
         LIMIT ?
-      )',
+      )",
       [
         @select_bind,
         @where_bind,
@@ -56,17 +57,17 @@ my $tests = {
       ],
     ],
     limit_offset => [
-      '(
+      "(
         SELECT me.id, owner.id, owner.name, ? * ?, ?
           FROM books me
           JOIN owners owner
             ON owner.id = me.owner
-        WHERE source != ? AND me.title = ? AND source = ?
+        WHERE $where_string
         GROUP BY (me.id / ?), owner.id
         HAVING ?
         LIMIT ?
         OFFSET ?
-      )',
+      )",
       [
         @select_bind,
         @where_bind,
@@ -77,17 +78,17 @@ my $tests = {
       ],
     ],
     ordered_limit => [
-      '(
+      "(
         SELECT me.id, owner.id, owner.name, ? * ?, ?
           FROM books me
           JOIN owners owner
             ON owner.id = me.owner
-        WHERE source != ? AND me.title = ? AND source = ?
+        WHERE $where_string
         GROUP BY (me.id / ?), owner.id
         HAVING ?
         ORDER BY ? / ?, ?
         LIMIT ?
-      )',
+      )",
       [
         @select_bind,
         @where_bind,
@@ -98,18 +99,18 @@ my $tests = {
       ]
     ],
     ordered_limit_offset => [
-      '(
+      "(
         SELECT me.id, owner.id, owner.name, ? * ?, ?
           FROM books me
           JOIN owners owner
             ON owner.id = me.owner
-        WHERE source != ? AND me.title = ? AND source = ?
+        WHERE $where_string
         GROUP BY (me.id / ?), owner.id
         HAVING ?
         ORDER BY ? / ?, ?
         LIMIT ?
         OFFSET ?
-      )',
+      )",
       [
         @select_bind,
         @where_bind,
@@ -121,7 +122,7 @@ my $tests = {
       ],
     ],
     limit_offset_prefetch => [
-      '(
+      "(
         SELECT me.name, books.id, books.source, books.owner, books.title, books.price
           FROM (
             SELECT me.name, me.id
@@ -130,7 +131,7 @@ my $tests = {
           ) me
           LEFT JOIN books books
             ON books.owner = me.id
-      )',
+      )",
       [
         [ { sqlt_datatype => 'integer' } => 3 ],
         [ { sqlt_datatype => 'integer' } => 1 ],
@@ -140,17 +141,17 @@ my $tests = {
 
   LimitXY => {
     ordered_limit_offset => [
-      '(
+      "(
         SELECT me.id, owner.id, owner.name, ? * ?, ?
           FROM books me
           JOIN owners owner
             ON owner.id = me.owner
-        WHERE source != ? AND me.title = ? AND source = ?
+        WHERE $where_string
         GROUP BY (me.id / ?), owner.id
         HAVING ?
         ORDER BY ? / ?, ?
         LIMIT ?, ?
-      )',
+      )",
       [
         @select_bind,
         @where_bind,
@@ -162,7 +163,7 @@ my $tests = {
       ],
     ],
     limit_offset_prefetch => [
-      '(
+      "(
         SELECT me.name, books.id, books.source, books.owner, books.title, books.price
           FROM (
             SELECT me.name, me.id
@@ -171,7 +172,7 @@ my $tests = {
           ) me
           LEFT JOIN books books
             ON books.owner = me.id
-      )',
+      )",
       [
         [ { sqlt_datatype => 'integer' } => 1 ],
         [ { sqlt_datatype => 'integer' } => 3 ],
@@ -181,16 +182,16 @@ my $tests = {
 
   SkipFirst => {
     ordered_limit_offset => [
-      '(
+      "(
         SELECT SKIP ? FIRST ? me.id, owner.id, owner.name, ? * ?, ?
           FROM books me
           JOIN owners owner
             ON owner.id = me.owner
-        WHERE source != ? AND me.title = ? AND source = ?
+        WHERE $where_string
         GROUP BY (me.id / ?), owner.id
         HAVING ?
         ORDER BY ? / ?, ?
-      )',
+      )",
       [
         [ { sqlt_datatype => 'integer' } => 3 ],
         [ { sqlt_datatype => 'integer' } => 4 ],
@@ -202,7 +203,7 @@ my $tests = {
       ],
     ],
     limit_offset_prefetch => [
-      '(
+      "(
         SELECT me.name, books.id, books.source, books.owner, books.title, books.price
           FROM (
             SELECT SKIP ? FIRST ? me.name, me.id
@@ -210,7 +211,7 @@ my $tests = {
           ) me
           LEFT JOIN books books
             ON books.owner = me.id
-      )',
+      )",
       [
         [ { sqlt_datatype => 'integer' } => 1 ],
         [ { sqlt_datatype => 'integer' } => 3 ],
@@ -220,16 +221,16 @@ my $tests = {
 
   FirstSkip => {
     ordered_limit_offset => [
-      '(
+      "(
         SELECT FIRST ? SKIP ? me.id, owner.id, owner.name, ? * ?, ?
           FROM books me
           JOIN owners owner
             ON owner.id = me.owner
-        WHERE source != ? AND me.title = ? AND source = ?
+        WHERE $where_string
         GROUP BY (me.id / ?), owner.id
         HAVING ?
         ORDER BY ? / ?, ?
-      )',
+      )",
       [
         [ { sqlt_datatype => 'integer' } => 4 ],
         [ { sqlt_datatype => 'integer' } => 3 ],
@@ -241,7 +242,7 @@ my $tests = {
       ],
     ],
     limit_offset_prefetch => [
-      '(
+      "(
         SELECT me.name, books.id, books.source, books.owner, books.title, books.price
           FROM (
             SELECT FIRST ? SKIP ? me.name, me.id
@@ -249,7 +250,7 @@ my $tests = {
           ) me
           LEFT JOIN books books
             ON books.owner = me.id
-      )',
+      )",
       [
         [ { sqlt_datatype => 'integer' } => 3 ],
         [ { sqlt_datatype => 'integer' } => 1 ],
@@ -258,7 +259,7 @@ my $tests = {
   },
 
   RowNumberOver => do {
-    my $unordered_sql = '(
+    my $unordered_sql = "(
       SELECT me.id, owner__id, owner__name, bar, baz
         FROM (
           SELECT me.id, owner__id, owner__name, bar, baz, ROW_NUMBER() OVER() AS rno__row__index
@@ -267,15 +268,15 @@ my $tests = {
                 FROM books me
                 JOIN owners owner
                   ON owner.id = me.owner
-              WHERE source != ? AND me.title = ? AND source = ?
+              WHERE $where_string
               GROUP BY (me.id / ?), owner.id
               HAVING ?
             ) me
       ) me
       WHERE rno__row__index >= ? AND rno__row__index <= ?
-    )';
+    )";
 
-    my $ordered_sql = '(
+    my $ordered_sql = "(
       SELECT me.id, owner__id, owner__name, bar, baz
         FROM (
           SELECT me.id, owner__id, owner__name, bar, baz, ROW_NUMBER() OVER( ORDER BY ORDER__BY__001, ORDER__BY__002 ) AS rno__row__index
@@ -285,13 +286,13 @@ my $tests = {
                 FROM books me
                 JOIN owners owner
                   ON owner.id = me.owner
-              WHERE source != ? AND me.title = ? AND source = ?
+              WHERE $where_string
               GROUP BY (me.id / ?), owner.id
               HAVING ?
             ) me
       ) me
       WHERE rno__row__index >= ? AND rno__row__index <= ?
-    )';
+    )";
 
     {
       limit => [$unordered_sql,
@@ -337,7 +338,7 @@ my $tests = {
         ],
       ],
       limit_offset_prefetch => [
-        '(
+        "(
           SELECT me.name, books.id, books.source, books.owner, books.title, books.price
             FROM (
               SELECT me.name, me.id
@@ -351,7 +352,7 @@ my $tests = {
             ) me
             LEFT JOIN books books
               ON books.owner = me.id
-        )',
+        )",
         [
           [ { sqlt_datatype => 'integer' } => 2 ],
           [ { sqlt_datatype => 'integer' } => 4 ],
@@ -362,20 +363,20 @@ my $tests = {
 
   RowNum => do {
     my $limit_sql = sub {
-      sprintf '(
+      sprintf "(
         SELECT me.id, owner__id, owner__name, bar, baz
           FROM (
             SELECT me.id, owner.id AS owner__id, owner.name AS owner__name, ? * ? AS bar, ? AS baz
               FROM books me
               JOIN owners owner
                 ON owner.id = me.owner
-            WHERE source != ? AND me.title = ? AND source = ?
+            WHERE $where_string
             GROUP BY (me.id / ?), owner.id
             HAVING ?
             %s
           ) me
         WHERE ROWNUM <= ?
-      )', $_[0] || '';
+      )", $_[0] || '';
     };
 
     {
@@ -389,22 +390,22 @@ my $tests = {
         ],
       ],
       limit_offset => [
-        '(
+        "(
           SELECT me.id, owner__id, owner__name, bar, baz
             FROM (
-              SELECT me.id, owner__id, owner__name, bar, baz, ROWNUM rownum__index
+              SELECT me.id, owner__id, owner__name, bar, baz, ROWNUM AS rownum__index
                 FROM (
                   SELECT me.id, owner.id AS owner__id, owner.name AS owner__name, ? * ? AS bar, ? AS baz
                     FROM books me
                     JOIN owners owner
                       ON owner.id = me.owner
-                  WHERE source != ? AND me.title = ? AND source = ?
+                  WHERE $where_string
                   GROUP BY (me.id / ?), owner.id
                   HAVING ?
                 ) me
             ) me
           WHERE rownum__index BETWEEN ? AND ?
-        )',
+        )",
         [
           @select_bind,
           @where_bind,
@@ -425,16 +426,16 @@ my $tests = {
         ],
       ],
       ordered_limit_offset => [
-        '(
+        "(
           SELECT me.id, owner__id, owner__name, bar, baz
             FROM (
-              SELECT me.id, owner__id, owner__name, bar, baz, ROWNUM rownum__index
+              SELECT me.id, owner__id, owner__name, bar, baz, ROWNUM AS rownum__index
                 FROM (
                   SELECT me.id, owner.id AS owner__id, owner.name AS owner__name, ? * ? AS bar, ? AS baz
                     FROM books me
                     JOIN owners owner
                       ON owner.id = me.owner
-                  WHERE source != ? AND me.title = ? AND source = ?
+                  WHERE $where_string
                   GROUP BY (me.id / ?), owner.id
                   HAVING ?
                   ORDER BY ? / ?, ?
@@ -442,7 +443,7 @@ my $tests = {
               WHERE ROWNUM <= ?
             ) me
           WHERE rownum__index >= ?
-        )',
+        )",
         [
           @select_bind,
           @where_bind,
@@ -454,12 +455,12 @@ my $tests = {
         ],
       ],
       limit_offset_prefetch => [
-        '(
+        "(
           SELECT me.name, books.id, books.source, books.owner, books.title, books.price
             FROM (
               SELECT me.name, me.id
                 FROM (
-                  SELECT me.name, me.id, ROWNUM rownum__index
+                  SELECT me.name, me.id, ROWNUM AS rownum__index
                     FROM (
                       SELECT me.name, me.id
                         FROM owners me
@@ -468,7 +469,7 @@ my $tests = {
             ) me
             LEFT JOIN books books
               ON books.owner = me.id
-        )',
+        )",
         [
           [ { sqlt_datatype => 'integer' } => 2 ],
           [ { sqlt_datatype => 'integer' } => 4 ],
@@ -479,16 +480,16 @@ my $tests = {
 
   FetchFirst => {
     limit => [
-      '(
+      "(
         SELECT me.id, owner.id, owner.name, ? * ?, ?
           FROM books me
           JOIN owners owner
             ON owner.id = me.owner
-        WHERE source != ? AND me.title = ? AND source = ?
+        WHERE $where_string
         GROUP BY (me.id / ?), owner.id
         HAVING ?
         FETCH FIRST 4 ROWS ONLY
-      )',
+      )",
       [
         @select_bind,
         @where_bind,
@@ -497,14 +498,14 @@ my $tests = {
       ],
     ],
     limit_offset => [
-      '(
+      "(
         SELECT me.id, owner__id, owner__name, bar, baz
           FROM (
             SELECT me.id, owner.id AS owner__id, owner.name AS owner__name, ? * ? AS bar, ? AS baz
               FROM books me
               JOIN owners owner
                 ON owner.id = me.owner
-            WHERE source != ? AND me.title = ? AND source = ?
+            WHERE $where_string
             GROUP BY (me.id / ?), owner.id
             HAVING ?
             ORDER BY me.id
@@ -512,7 +513,7 @@ my $tests = {
           ) me
         ORDER BY me.id DESC
         FETCH FIRST 4 ROWS ONLY
-      )',
+      )",
       [
         @select_bind,
         @where_bind,
@@ -521,17 +522,17 @@ my $tests = {
       ],
     ],
     ordered_limit => [
-      '(
+      "(
         SELECT me.id, owner.id, owner.name, ? * ?, ?
           FROM books me
           JOIN owners owner
             ON owner.id = me.owner
-        WHERE source != ? AND me.title = ? AND source = ?
+        WHERE $where_string
         GROUP BY (me.id / ?), owner.id
         HAVING ?
         ORDER BY ? / ?, ?
         FETCH FIRST 4 ROWS ONLY
-      )',
+      )",
       [
         @select_bind,
         @where_bind,
@@ -541,7 +542,7 @@ my $tests = {
       ],
     ],
     ordered_limit_offset => [
-      '(
+      "(
         SELECT me.id, owner__id, owner__name, bar, baz
           FROM (
             SELECT me.id, owner__id, owner__name, bar, baz, ORDER__BY__001, ORDER__BY__002
@@ -550,7 +551,7 @@ my $tests = {
                   FROM books me
                   JOIN owners owner
                     ON owner.id = me.owner
-                WHERE source != ? AND me.title = ? AND source = ?
+                WHERE $where_string
                 GROUP BY (me.id / ?), owner.id
                 HAVING ?
                 ORDER BY ? / ?, ?
@@ -560,7 +561,7 @@ my $tests = {
             FETCH FIRST 4 ROWS ONLY
           ) me
         ORDER BY ORDER__BY__001, ORDER__BY__002
-      )',
+      )",
       [
         @select_bind,
         @order_bind,
@@ -571,7 +572,7 @@ my $tests = {
       ],
     ],
     limit_offset_prefetch => [
-      '(
+      "(
         SELECT me.name, books.id, books.source, books.owner, books.title, books.price
           FROM (
             SELECT me.name, me.id
@@ -586,22 +587,22 @@ my $tests = {
           ) me
           LEFT JOIN books books
             ON books.owner = me.id
-      )',
+      )",
       [],
     ],
   },
 
   Top => {
     limit => [
-      '(
+      "(
         SELECT TOP 4 me.id, owner.id, owner.name, ? * ?, ?
           FROM books me
           JOIN owners owner
             ON owner.id = me.owner
-        WHERE source != ? AND me.title = ? AND source = ?
+        WHERE $where_string
         GROUP BY (me.id / ?), owner.id
         HAVING ?
-      )',
+      )",
       [
         @select_bind,
         @where_bind,
@@ -610,20 +611,20 @@ my $tests = {
       ],
     ],
     limit_offset => [
-      '(
+      "(
         SELECT TOP 4 me.id, owner__id, owner__name, bar, baz
           FROM (
             SELECT TOP 7 me.id, owner.id AS owner__id, owner.name AS owner__name, ? * ? AS bar, ? AS baz
               FROM books me
               JOIN owners owner
                 ON owner.id = me.owner
-            WHERE source != ? AND me.title = ? AND source = ?
+            WHERE $where_string
             GROUP BY (me.id / ?), owner.id
             HAVING ?
             ORDER BY me.id
           ) me
         ORDER BY me.id DESC
-      )',
+      )",
       [
         @select_bind,
         @where_bind,
@@ -632,16 +633,16 @@ my $tests = {
       ],
     ],
     ordered_limit => [
-      '(
+      "(
         SELECT TOP 4 me.id, owner.id, owner.name, ? * ?, ?
           FROM books me
           JOIN owners owner
             ON owner.id = me.owner
-        WHERE source != ? AND me.title = ? AND source = ?
+        WHERE $where_string
         GROUP BY (me.id / ?), owner.id
         HAVING ?
         ORDER BY ? / ?, ?
-      )',
+      )",
       [
         @select_bind,
         @where_bind,
@@ -651,7 +652,7 @@ my $tests = {
       ],
     ],
     ordered_limit_offset => [
-      '(
+      "(
         SELECT me.id, owner__id, owner__name, bar, baz
           FROM (
             SELECT TOP 4 me.id, owner__id, owner__name, bar, baz, ORDER__BY__001, ORDER__BY__002
@@ -660,7 +661,7 @@ my $tests = {
                   FROM books me
                   JOIN owners owner
                     ON owner.id = me.owner
-                WHERE source != ? AND me.title = ? AND source = ?
+                WHERE $where_string
                 GROUP BY (me.id / ?), owner.id
                 HAVING ?
                 ORDER BY ? / ?, ?
@@ -668,7 +669,7 @@ my $tests = {
             ORDER BY ORDER__BY__001 DESC, ORDER__BY__002 DESC
           ) me
         ORDER BY ORDER__BY__001, ORDER__BY__002
-      )',
+      )",
       [
         @select_bind,
         @order_bind,
@@ -679,7 +680,7 @@ my $tests = {
       ],
     ],
     limit_offset_prefetch => [
-      '(
+      "(
         SELECT me.name, books.id, books.source, books.owner, books.title, books.price
           FROM (
             SELECT TOP 3 me.name, me.id
@@ -692,21 +693,21 @@ my $tests = {
           ) me
           LEFT JOIN books books
             ON books.owner = me.id
-      )',
+      )",
       [],
     ],
   },
 
   GenericSubQ => {
     ordered_limit => [
-      '(
+      "(
         SELECT me.id, owner__id, owner__name, bar, baz
           FROM (
             SELECT me.id, owner.id AS owner__id, owner.name AS owner__name, ? * ? AS bar, ? AS baz, me.price
               FROM books me
               JOIN owners owner
                 ON owner.id = me.owner
-            WHERE source != ? AND me.title = ? AND source = ?
+            WHERE $where_string
             GROUP BY (me.id / ?), owner.id
             HAVING ?
           ) me
@@ -735,7 +736,7 @@ my $tests = {
             )
           ) < ?
         ORDER BY me.price DESC, me.id ASC
-      )',
+      )",
       [
         @select_bind,
         @where_bind,
@@ -745,14 +746,14 @@ my $tests = {
       ],
     ],
     ordered_limit_offset => [
-      '(
+      "(
         SELECT me.id, owner__id, owner__name, bar, baz
           FROM (
             SELECT me.id, owner.id AS owner__id, owner.name AS owner__name, ? * ? AS bar, ? AS baz, me.price
               FROM books me
               JOIN owners owner
                 ON owner.id = me.owner
-            WHERE source != ? AND me.title = ? AND source = ?
+            WHERE $where_string
             GROUP BY (me.id / ?), owner.id
             HAVING ?
           ) me
@@ -781,7 +782,7 @@ my $tests = {
             )
           ) BETWEEN ? AND ?
         ORDER BY me.price DESC, me.id ASC
-      )',
+      )",
       [
         @select_bind,
         @where_bind,
@@ -792,7 +793,7 @@ my $tests = {
       ],
     ],
     limit_offset_prefetch => [
-      '(
+      "(
         SELECT me.name, books.id, books.source, books.owner, books.title, books.price
           FROM (
             SELECT me.name, me.id
@@ -819,7 +820,7 @@ my $tests = {
           LEFT JOIN books books
             ON books.owner = me.id
         ORDER BY me.name ASC, me.id DESC
-      )',
+      )",
       [
         [ { sqlt_datatype => 'integer' } => 1 ],
         [ { sqlt_datatype => 'integer' } => 3 ],

@@ -5,6 +5,11 @@ use lib qw(t/lib);
 use Test::More;
 use Test::Exception;
 
+# MASSIVE FIXME - there is a hole in ::RSC / as_subselect_rs
+# losing the order. Needs a rework/extract of the realiaser,
+# and that's a whole another bag of dicks
+BEGIN { $ENV{DBIC_SHUFFLE_UNORDERED_RESULTSETS} = 0 }
+
 use DBICTest::Schema::CD;
 BEGIN {
   # the default scalarref table name will not work well for this test
@@ -12,15 +17,8 @@ BEGIN {
 }
 
 use DBICTest;
-use DBIC::DebugObj;
-use DBIC::SqlMakerTest;
 
 my $schema = DBICTest->init_schema;
-
-my ($sql, @bind);
-my $debugobj = DBIC::DebugObj->new (\$sql, \@bind);
-my $orig_debugobj = $schema->storage->debugobj;
-my $orig_debug = $schema->storage->debug;
 
 my $tkfks = $schema->resultset('FourKeys_to_TwoKeys');
 
@@ -38,7 +36,7 @@ my ($fa, $fb, $fc) = $tkfks->related_resultset ('fourkeys')->populate ([
 #  [qw/2       2  /],
 #]);
 my ($ta, $tb) = $schema->resultset ('TwoKeys')
-                  ->search ( [ { artist => 1, cd => 1 }, { artist => 2, cd => 2 } ])
+                  ->search ( [ { artist => 1, cd => 1 }, { artist => 2, cd => 2 } ], { order_by => 'artist' })
                     ->all;
 
 my $tkfk_cnt = $tkfks->count;
@@ -64,64 +62,89 @@ my $fks = $schema->resultset ('FourKeys')->search (
 );
 
 is ($fks->count, 4, 'Joined FourKey count correct (2x2)');
-
-$schema->storage->debugobj ($debugobj);
-$schema->storage->debug (1);
-$fks->update ({ read_count => \ 'read_count + 1' });
-$schema->storage->debugobj ($orig_debugobj);
-$schema->storage->debug ($orig_debug);
-
-is_same_sql_bind (
-  $sql,
-  \@bind,
+$schema->is_executed_sql_bind( sub {
+  $fks->update ({ read_count => \ 'read_count + 1' })
+}, [[
   'UPDATE fourkeys
    SET read_count = read_count + 1
    WHERE ( ( ( bar = ? OR bar = ? ) AND ( foo = ? OR foo = ? ) AND ( goodbye = ? OR goodbye = ? ) AND ( hello = ? OR hello = ? ) AND sensors != ? ) )
   ',
-  [ ("'1'", "'2'") x 4, "'c'" ],
-  'Correct update-SQL with multijoin with pruning',
-);
+  (1, 2) x 4,
+  'c',
+]], 'Correct update-SQL with multijoin with pruning' );
 
 is ($fa->discard_changes->read_count, 11, 'Update ran only once on discard-join resultset');
 is ($fb->discard_changes->read_count, 21, 'Update ran only once on discard-join resultset');
 is ($fc->discard_changes->read_count, 30, 'Update did not touch outlier');
 
 # make the multi-join stick
-my $fks_multi = $fks->search({ 'fourkeys_to_twokeys.pilot_sequence' => { '!=' => 666 } });
-
-$schema->storage->debugobj ($debugobj);
-$schema->storage->debug (1);
-$fks_multi->update ({ read_count => \ 'read_count + 1' });
-$schema->storage->debugobj ($orig_debugobj);
-$schema->storage->debug ($orig_debug);
-
-is_same_sql_bind (
-  $sql,
-  \@bind,
-  'UPDATE fourkeys
-   SET read_count = read_count + 1
-   WHERE ( bar = ? AND foo = ? AND goodbye = ? AND hello = ? ) OR ( bar = ? AND foo = ? AND goodbye = ? AND hello = ? )',
-  [ map { "'$_'" } ( (1) x 4, (2) x 4 ) ],
-  'Correct update-SQL with multijoin without pruning',
+my $fks_multi = $fks->search(
+  { 'fourkeys_to_twokeys.pilot_sequence' => { '!=' => 666 } },
+  { order_by => [ $fks->result_source->primary_columns ] },
 );
+$schema->is_executed_sql_bind( sub {
+  $fks_multi->update ({ read_count => \ 'read_count + 1' })
+}, [
+  [ 'BEGIN' ],
+  [
+    'SELECT me.foo, me.bar, me.hello, me.goodbye
+      FROM fourkeys me
+      LEFT JOIN fourkeys_to_twokeys fourkeys_to_twokeys
+        ON fourkeys_to_twokeys.f_bar = me.bar AND fourkeys_to_twokeys.f_foo = me.foo AND fourkeys_to_twokeys.f_goodbye = me.goodbye AND fourkeys_to_twokeys.f_hello = me.hello
+      WHERE ( bar = ? OR bar = ? ) AND ( foo = ? OR foo = ? ) AND fourkeys_to_twokeys.pilot_sequence != ? AND ( goodbye = ? OR goodbye = ? ) AND ( hello = ? OR hello = ? ) AND sensors != ?
+      GROUP BY me.foo, me.bar, me.hello, me.goodbye
+      ORDER BY foo, bar, hello, goodbye
+    ',
+    (1, 2) x 2,
+    666,
+    (1, 2) x 2,
+    'c',
+  ],
+  [
+    'UPDATE fourkeys
+     SET read_count = read_count + 1
+     WHERE ( bar = ? AND foo = ? AND goodbye = ? AND hello = ? ) OR ( bar = ? AND foo = ? AND goodbye = ? AND hello = ? )
+    ',
+    ( (1) x 4, (2) x 4 ),
+  ],
+  [ 'COMMIT' ],
+], 'Correct update-SQL with multijoin without pruning' );
 
 is ($fa->discard_changes->read_count, 12, 'Update ran only once on joined resultset');
 is ($fb->discard_changes->read_count, 22, 'Update ran only once on joined resultset');
 is ($fc->discard_changes->read_count, 30, 'Update did not touch outlier');
 
-# try the same sql with forced multicolumn in
-$schema->storage->_use_multicolumn_in (1);
-$schema->storage->debugobj ($debugobj);
-$schema->storage->debug (1);
-throws_ok { $fks_multi->update ({ read_count => \ 'read_count + 1' }) } # this can't actually execute, we just need the "as_query"
-  qr/\QDBI Exception:/ or do { $sql = ''; @bind = () };
-$schema->storage->_use_multicolumn_in (undef);
-$schema->storage->debugobj ($orig_debugobj);
-$schema->storage->debug ($orig_debug);
+$schema->is_executed_sql_bind( sub {
+  my $res = $fks_multi->search (\' "blah" = "bleh" ')->delete;
+  ok ($res, 'operation is true');
+  cmp_ok ($res, '==', 0, 'zero rows affected');
+}, [
+  [ 'BEGIN' ],
+  [
+    'SELECT me.foo, me.bar, me.hello, me.goodbye
+      FROM fourkeys me
+      LEFT JOIN fourkeys_to_twokeys fourkeys_to_twokeys
+        ON fourkeys_to_twokeys.f_bar = me.bar AND fourkeys_to_twokeys.f_foo = me.foo AND fourkeys_to_twokeys.f_goodbye = me.goodbye AND fourkeys_to_twokeys.f_hello = me.hello
+      WHERE "blah" = "bleh" AND ( bar = ? OR bar = ? ) AND ( foo = ? OR foo = ? ) AND fourkeys_to_twokeys.pilot_sequence != ? AND ( goodbye = ? OR goodbye = ? ) AND ( hello = ? OR hello = ? ) AND sensors != ?
+      GROUP BY me.foo, me.bar, me.hello, me.goodbye
+      ORDER BY foo, bar, hello, goodbye
+    ',
+    (1, 2) x 2,
+    666,
+    (1, 2) x 2,
+    'c',
+  ],
+  [ 'COMMIT' ],
+], 'Correct null-delete-SQL with multijoin without pruning' );
 
-is_same_sql_bind (
-  $sql,
-  \@bind,
+
+# try the same sql with forced multicolumn in
+$schema->is_executed_sql_bind( sub {
+  local $schema->storage->{_use_multicolumn_in} = 1;
+
+  # this can't actually execute on sqlite
+  eval { $fks_multi->update ({ read_count => \ 'read_count + 1' }) };
+}, [[
   'UPDATE fourkeys
     SET read_count = read_count + 1
     WHERE (
@@ -133,41 +156,48 @@ is_same_sql_bind (
             AND fourkeys_to_twokeys.f_foo = me.foo
             AND fourkeys_to_twokeys.f_goodbye = me.goodbye
             AND fourkeys_to_twokeys.f_hello = me.hello
-        WHERE fourkeys_to_twokeys.pilot_sequence != ? AND ( bar = ? OR bar = ? ) AND ( foo = ? OR foo = ? ) AND ( goodbye = ? OR goodbye = ? ) AND ( hello = ? OR hello = ? ) AND sensors != ?
+        WHERE ( bar = ? OR bar = ? ) AND ( foo = ? OR foo = ? ) AND fourkeys_to_twokeys.pilot_sequence != ? AND ( goodbye = ? OR goodbye = ? ) AND ( hello = ? OR hello = ? ) AND sensors != ?
+        ORDER BY foo, bar, hello, goodbye
       )
     )
   ',
+  ( 1, 2) x 2,
+  666,
+  ( 1, 2) x 2,
+  'c',
+]], 'Correct update-SQL with multicolumn in support' );
+
+$schema->is_executed_sql_bind( sub {
+  $fks->search({ 'twokeys.artist' => { '!=' => 666 } })->update({ read_count => \ 'read_count + 1' });
+}, [
+  [ 'BEGIN' ],
   [
-    "'666'",
-    ("'1'", "'2'") x 4,
-    "'c'",
+    'SELECT me.foo, me.bar, me.hello, me.goodbye
+      FROM fourkeys me
+      LEFT JOIN fourkeys_to_twokeys fourkeys_to_twokeys
+        ON fourkeys_to_twokeys.f_bar = me.bar AND fourkeys_to_twokeys.f_foo = me.foo AND fourkeys_to_twokeys.f_goodbye = me.goodbye AND fourkeys_to_twokeys.f_hello = me.hello
+      LEFT JOIN twokeys twokeys
+        ON twokeys.artist = fourkeys_to_twokeys.t_artist AND twokeys.cd = fourkeys_to_twokeys.t_cd
+      WHERE ( bar = ? OR bar = ? ) AND ( foo = ? OR foo = ? ) AND ( goodbye = ? OR goodbye = ? ) AND ( hello = ? OR hello = ? ) AND sensors != ? AND twokeys.artist != ?
+      GROUP BY me.foo, me.bar, me.hello, me.goodbye
+    ',
+    (1, 2) x 4,
+    'c',
+    666,
   ],
-  'Correct update-SQL with multicolumn in support',
-);
-
-# make a *premultiplied* join stick
-my $fks_premulti = $fks->search({ 'twokeys.artist' => { '!=' => 666 } });
-
-$schema->storage->debugobj ($debugobj);
-$schema->storage->debug (1);
-$fks_premulti->update ({ read_count => \ 'read_count + 1' });
-$schema->storage->debugobj ($orig_debugobj);
-$schema->storage->debug ($orig_debug);
-
-is_same_sql_bind (
-  $sql,
-  \@bind,
-  'UPDATE fourkeys
-   SET read_count = read_count + 1
-   WHERE ( bar = ? AND foo = ? AND goodbye = ? AND hello = ? ) OR ( bar = ? AND foo = ? AND goodbye = ? AND hello = ? )',
-  [ map { "'$_'" } ( (1) x 4, (2) x 4 ) ],
-  'Correct update-SQL with premultiplied restricting join without pruning',
-);
+  [
+    'UPDATE fourkeys
+     SET read_count = read_count + 1
+     WHERE ( bar = ? AND foo = ? AND goodbye = ? AND hello = ? ) OR ( bar = ? AND foo = ? AND goodbye = ? AND hello = ? )
+    ',
+    ( (1) x 4, (2) x 4 ),
+  ],
+  [ 'COMMIT' ],
+], 'Correct update-SQL with premultiplied restricting join without pruning' );
 
 is ($fa->discard_changes->read_count, 13, 'Update ran only once on joined resultset');
 is ($fb->discard_changes->read_count, 23, 'Update ran only once on joined resultset');
 is ($fc->discard_changes->read_count, 30, 'Update did not touch outlier');
-
 
 #
 # Make sure multicolumn in or the equivalent functions correctly
@@ -252,43 +282,34 @@ is ($tkfks->count, $tkfk_cnt -= 1, 'Only one row deleted');
 
 
 # check with sql-equality, as sqlite will accept most bad sql just fine
-$schema->storage->debugobj ($debugobj);
-$schema->storage->debug (1);
-
 {
   my $rs = $schema->resultset('CD')->search(
     { 'me.year' => { '!=' => 2010 } },
   );
 
-  $rs->search({}, { join => 'liner_notes' })->delete;
-  is_same_sql_bind (
-    $sql,
-    \@bind,
+  $schema->is_executed_sql_bind( sub {
+    $rs->search({}, { join => 'liner_notes' })->delete;
+  }, [[
     'DELETE FROM cd WHERE ( year != ? )',
-    ["'2010'"],
-    'Non-restricting multijoins properly thrown out'
-  );
+    2010,
+  ]], 'Non-restricting multijoins properly thrown out' );
 
-  $rs->search({}, { prefetch => 'liner_notes' })->delete;
-  is_same_sql_bind (
-    $sql,
-    \@bind,
+  $schema->is_executed_sql_bind( sub {
+    $rs->search({}, { prefetch => 'liner_notes' })->delete;
+  }, [[
     'DELETE FROM cd WHERE ( year != ? )',
-    ["'2010'"],
-    'Non-restricting multiprefetch thrown out'
-  );
+    2010,
+  ]], 'Non-restricting multiprefetch thrown out' );
 
-  $rs->search({}, { prefetch => 'artist' })->delete;
-  is_same_sql_bind (
-    $sql,
-    \@bind,
+  $schema->is_executed_sql_bind( sub {
+    $rs->search({}, { prefetch => 'artist' })->delete;
+  }, [[
     'DELETE FROM cd WHERE ( cdid IN ( SELECT me.cdid FROM cd me JOIN artist artist ON artist.artistid = me.artist WHERE ( me.year != ? ) ) )',
-    ["'2010'"],
-    'Restricting prefetch left in, selector thrown out'
-  );
+    2010,
+  ]], 'Restricting prefetch left in, selector thrown out');
 
-  # switch artist and cd to fully qualified table names
-  # make sure nothing is stripped out
+### switch artist and cd to fully qualified table names
+### make sure nothing is stripped out
   my $cd_rsrc = $schema->source('CD');
   $cd_rsrc->name('main.cd');
   $cd_rsrc->relationship_info($_)->{attrs}{cascade_delete} = 0
@@ -299,85 +320,80 @@ $schema->storage->debug (1);
   $art_rsrc->relationship_info($_)->{attrs}{cascade_delete} = 0
     for $art_rsrc->relationships;
 
-  $rs->delete;
-  is_same_sql_bind (
-    $sql,
-    \@bind,
-    'DELETE FROM main.cd WHERE ( year != ? )',
-    ["'2010'"],
-    'delete with fully qualified table name'
-  );
+  $schema->is_executed_sql_bind( sub {
+    $rs->delete
+  }, [[
+    'DELETE FROM main.cd WHERE year != ?',
+    2010,
+  ]], 'delete with fully qualified table name' );
 
   $rs->create({ title => 'foo', artist => 1, year => 2000 });
-  $rs->delete_all;
-  is_same_sql_bind (
-    $sql,
-    \@bind,
-    'DELETE FROM main.cd WHERE ( cdid = ? )',
-    ["'1'"],
-    'delete_all with fully qualified table name'
-  );
+  $schema->is_executed_sql_bind( sub {
+    $rs->delete_all
+  }, [
+    [ 'BEGIN' ],
+    [
+      'SELECT me.cdid, me.artist, me.title, me.year, me.genreid, me.single_track FROM main.cd me WHERE me.year != ?',
+      2010,
+    ],
+    [
+      'DELETE FROM main.cd WHERE ( cdid = ? )',
+      1,
+    ],
+    [ 'COMMIT' ],
+  ], 'delete_all with fully qualified table name' );
 
   $rs->create({ cdid => 42, title => 'foo', artist => 2, year => 2000 });
-  $rs->find(42)->delete;
-  is_same_sql_bind (
-    $sql,
-    \@bind,
-    'DELETE FROM main.cd WHERE ( cdid = ? )',
-    ["'42'"],
-    'delete of object from table with fully qualified name'
-  );
+  my $cd42 = $rs->find(42);
 
-  $rs->create({ cdid => 42, title => 'foo', artist => 2, year => 2000 });
-  $rs->find(42)->related_resultset('artist')->delete;
-  is_same_sql_bind (
-    $sql,
-    \@bind,
+  $schema->is_executed_sql_bind( sub {
+    $cd42->delete
+  }, [[
+    'DELETE FROM main.cd WHERE cdid = ?',
+    42,
+  ]], 'delete of object from table with fully qualified name' );
+
+  $schema->is_executed_sql_bind( sub {
+    $cd42->related_resultset('artist')->delete
+  }, [[
     'DELETE FROM main.artist WHERE ( artistid IN ( SELECT me.artistid FROM main.artist me WHERE ( me.artistid = ? ) ) )',
-    ["'2'"],
-    'delete of related object from scalarref fully qualified named table',
-  );
+    2,
+  ]], 'delete of related object from scalarref fully qualified named table' );
 
-  $schema->resultset('Artist')->find(3)->related_resultset('cds')->delete;
-  is_same_sql_bind (
-    $sql,
-    \@bind,
+  my $art3 = $schema->resultset('Artist')->find(3);
+
+  $schema->is_executed_sql_bind( sub {
+    $art3->related_resultset('cds')->delete;
+  }, [[
     'DELETE FROM main.cd WHERE ( artist = ? )',
-    ["'3'"],
-    'delete of related object from fully qualified named table',
-  );
+    3,
+  ]], 'delete of related object from fully qualified named table' );
 
-  $schema->resultset('Artist')->find(3)->cds_unordered->delete;
-  is_same_sql_bind (
-    $sql,
-    \@bind,
+  $schema->is_executed_sql_bind( sub {
+    $art3->cds_unordered->delete;
+  }, [[
     'DELETE FROM main.cd WHERE ( artist = ? )',
-    ["'3'"],
-    'delete of related object from fully qualified named table via relaccessor',
-  );
+    3,
+  ]], 'delete of related object from fully qualified named table via relaccessor' );
 
-  $rs->search({}, { prefetch => 'artist' })->delete;
-  is_same_sql_bind (
-    $sql,
-    \@bind,
+  $schema->is_executed_sql_bind( sub {
+    $rs->search({}, { prefetch => 'artist' })->delete;
+  }, [[
     'DELETE FROM main.cd WHERE ( cdid IN ( SELECT me.cdid FROM main.cd me JOIN main.artist artist ON artist.artistid = me.artist WHERE ( me.year != ? ) ) )',
-    ["'2010'"],
-    'delete with fully qualified table name and subquery correct'
-  );
+    2010,
+  ]], 'delete with fully qualified table name and subquery correct' );
 
   # check that as_subselect_rs works ok
   # inner query is untouched, then a selector
   # and an IN condition
-  $schema->resultset('CD')->search({
-    'me.cdid' => 1,
-    'artist.name' => 'partytimecity',
-  }, {
-    join => 'artist',
-  })->as_subselect_rs->delete;
-
-  is_same_sql_bind (
-    $sql,
-    \@bind,
+  $schema->is_executed_sql_bind( sub {
+    $schema->resultset('CD')->search({
+      'me.cdid' => 1,
+      'artist.name' => 'partytimecity',
+    }, {
+      join => 'artist',
+    })->as_subselect_rs->delete;
+  }, [[
     '
       DELETE FROM main.cd
       WHERE (
@@ -392,12 +408,9 @@ $schema->storage->debug (1);
         )
       )
     ',
-    ["'partytimecity'", "'1'"],
-    'Delete from as_subselect_rs works correctly'
-  );
+    'partytimecity',
+    1,
+  ]], 'Delete from as_subselect_rs works correctly' );
 }
-
-$schema->storage->debugobj ($orig_debugobj);
-$schema->storage->debug ($orig_debug);
 
 done_testing;

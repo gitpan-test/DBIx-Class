@@ -3,15 +3,12 @@ use warnings;
 
 use Test::More;
 use lib qw(t/lib);
-use DBICTest;
-use DBIC::SqlMakerTest;
+use DBICTest ':DiffSQL';
 
 my $schema = DBICTest->init_schema();
 
-my $orig_debug = $schema->storage->debug;
-
 # test the abstract join => SQL generator
-my $sa = new DBIx::Class::SQLMaker;
+my $sa = DBIx::Class::SQLMaker->new;
 
 my @j = (
     { child => 'person' },

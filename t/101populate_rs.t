@@ -12,6 +12,7 @@ use strict;
 use warnings;
 
 use Test::More;
+use Test::Warn;
 use lib qw(t/lib);
 use DBICTest;
 
@@ -24,7 +25,7 @@ my $schema  = DBICTest->init_schema();
 my $art_rs  = $schema->resultset('Artist');
 my $cd_rs  = $schema->resultset('CD');
 
-my $restricted_art_rs  = $art_rs->search({rank => 42});
+my $restricted_art_rs  = $art_rs->search({ -and => [ rank => 42, charfield => { '=', \['(SELECT MAX(artistid) FROM artist) + ?', 6] } ] });
 
 ok( $schema, 'Got a Schema object');
 ok( $art_rs, 'Got Good Artist Resultset');
@@ -37,10 +38,10 @@ ok( $cd_rs, 'Got Good CD Resultset');
 
 SCHEMA_POPULATE1: {
 
-  ## Test to make sure that the old $schema->populate is using the new method
-  ## for $resultset->populate when in void context and with sub objects.
+  # throw a monkey wrench
+  my $post_jnap_monkeywrench = $schema->resultset('Artist')->find(1)->update({ name => undef });
 
-  $schema->populate('Artist', [
+  warnings_exist { $schema->populate('Artist', [
 
     [qw/name cds/],
     ["001First Artist", [
@@ -55,13 +56,13 @@ SCHEMA_POPULATE1: {
     [undef, [
       {title=>"004Title1", year=>2010}
     ]],
-  ]);
+  ]) } qr/\QFast-path populate() of non-uniquely identifiable rows with related data is not possible/;
 
   isa_ok $schema, 'DBIx::Class::Schema';
 
-  my ($undef, $artist1, $artist2, $artist3 ) = $schema->resultset('Artist')->search({
+  my ( $preexisting_undef, $artist1, $artist2, $artist3, $undef ) = $schema->resultset('Artist')->search({
     name=>["001First Artist","002Second Artist","003Third Artist", undef]},
-    {order_by=>'name ASC'})->all;
+    {order_by => { -asc => 'artistid' }})->all;
 
   isa_ok  $artist1, 'DBICTest::Artist';
   isa_ok  $artist2, 'DBICTest::Artist';
@@ -77,6 +78,8 @@ SCHEMA_POPULATE1: {
   ok $artist2->cds->count eq 0, "Got Right number of CDs for Artist2";
   ok $artist3->cds->count eq 1, "Got Right number of CDs for Artist3";
   ok $undef->cds->count eq 1, "Got Right number of CDs for Artist4";
+
+  $post_jnap_monkeywrench->delete;
 
   ARTIST1CDS: {
 
@@ -343,7 +346,9 @@ ARRAY_CONTEXT: {
     ]);
 
     ## Did it use the condition in the resultset?
+    $more_crap->discard_changes;
     cmp_ok( $more_crap->rank, '==', 42, "Got Correct rank for result object");
+    cmp_ok( $more_crap->charfield, '==', $more_crap->id + 5, "Got Correct charfield for result object");
   }
 }
 
@@ -473,7 +478,9 @@ VOID_CONTEXT: {
       },
     ];
 
-    $cd_rs->populate($cds);
+    warnings_exist {
+      $cd_rs->populate($cds)
+    } qr/\QFast-path populate() of belongs_to relationship data is not possible/;
 
     my ($cdA, $cdB) = $cd_rs->search(
       {title=>[sort map {$_->{title}} @$cds]},
@@ -513,7 +520,9 @@ VOID_CONTEXT: {
       },
     ];
 
-    $cd_rs->populate($cds);
+    warnings_exist {
+      $cd_rs->populate($cds);
+    } qr/\QFast-path populate() of belongs_to relationship data is not possible/;
 
     my ($cdA, $cdB, $cdC) = $cd_rs->search(
       {title=>[sort map {$_->{title}} @$cds]},
@@ -626,7 +635,9 @@ VOID_CONTEXT: {
     })->first;
 
     ## Did it use the condition in the resultset?
+    $more_crap->discard_changes;
     cmp_ok( $more_crap->rank, '==', 42, "Got Correct rank for result object");
+    cmp_ok( $more_crap->charfield, '==', $more_crap->id + 5, "Got Correct charfield for result object");
   }
 }
 
@@ -655,7 +666,11 @@ ARRAYREF_OF_ARRAYREF_STYLE: {
   is $cooler->name, 'Cooler', 'Correct Name';
   is $lamer->name, 'Lamer', 'Correct Name';
 
-  cmp_ok $cooler->rank, '==', 42, 'Correct Rank';
+  for ($cooler, $lamer) {
+    $_->discard_changes;
+    cmp_ok( $_->rank, '==', 42, "Got Correct rank for result object");
+    cmp_ok( $_->charfield, '==', $_->id + 5, "Got Correct charfield for result object");
+  }
 
   ARRAY_CONTEXT_WITH_COND_FROM_RS: {
 
@@ -666,7 +681,9 @@ ARRAYREF_OF_ARRAYREF_STYLE: {
     ]);
 
     ## Did it use the condition in the resultset?
+    $mega_lamer->discard_changes;
     cmp_ok( $mega_lamer->rank, '==', 42, "Got Correct rank for result object");
+    cmp_ok( $mega_lamer->charfield, '==', $mega_lamer->id + 5, "Got Correct charfield for result object");
   }
 
   VOID_CONTEXT_WITH_COND_FROM_RS: {
@@ -683,6 +700,7 @@ ARRAYREF_OF_ARRAYREF_STYLE: {
 
     ## Did it use the condition in the resultset?
     cmp_ok( $mega_lamer->rank, '==', 42, "Got Correct rank for result object");
+    cmp_ok( $mega_lamer->charfield, '==', $mega_lamer->id + 5, "Got Correct charfield for result object");
   }
 }
 

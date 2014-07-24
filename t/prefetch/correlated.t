@@ -4,18 +4,16 @@ use warnings;
 use Test::More;
 use Test::Deep;
 use lib qw(t/lib);
-use DBICTest;
-use DBIC::SqlMakerTest;
+use DBICTest ':DiffSQL';
 
 my $schema = DBICTest->init_schema();
-my $orig_debug = $schema->storage->debug;
 
 my $cdrs = $schema->resultset('CD')->search({ 'me.artist' => { '!=', 2 }});
 
 my $cd_data = { map {
   $_->cdid => {
     siblings => $cdrs->search ({ artist => $_->get_column('artist') })->count - 1,
-    track_titles => [ map { $_->title } ($_->tracks->all) ],
+    track_titles => [ sort $_->tracks->get_column('title')->all ],
   },
 } ( $cdrs->all ) };
 
@@ -36,10 +34,10 @@ is_same_sql_bind(
     SELECT me.cdid, me.artist, me.title, me.year, me.genreid, me.single_track,
            (SELECT COUNT( * )
               FROM cd siblings
-            WHERE siblings.artist = me.artist
+            WHERE me.artist != ?
+              AND siblings.artist = me.artist
               AND siblings.cdid != me.cdid
               AND siblings.cdid != ?
-              AND me.artist != ?
            ),
            tracks.trackid, tracks.cd, tracks.position, tracks.title, tracks.last_updated_on, tracks.last_updated_at
       FROM cd me
@@ -50,11 +48,11 @@ is_same_sql_bind(
   [
 
     # subselect
-    [ { sqlt_datatype => 'integer', dbic_colname => 'siblings.cdid' }
-      => 23414 ],
-
     [ { sqlt_datatype => 'integer', dbic_colname => 'me.artist' }
       => 2 ],
+
+    [ { sqlt_datatype => 'integer', dbic_colname => 'siblings.cdid' }
+      => 23414 ],
 
     # outher WHERE
     [ { sqlt_datatype => 'integer', dbic_colname => 'me.artist' }
@@ -63,26 +61,19 @@ is_same_sql_bind(
   'Expected SQL on correlated realiased subquery'
 );
 
-my $queries = 0;
-$schema->storage->debugcb(sub { $queries++; });
-$schema->storage->debug(1);
-
-cmp_deeply (
-  { map
-    { $_->cdid => {
-      track_titles => [ map { $_->title } ($_->tracks->all) ],
-      siblings => $_->get_column ('sibling_count'),
-    } }
-    $c_rs->all
-  },
-  $cd_data,
-  'Proper information retrieved from correlated subquery'
-);
-
-is ($queries, 1, 'Only 1 query fired to retrieve everything');
-
-$schema->storage->debug($orig_debug);
-$schema->storage->debugcb(undef);
+$schema->is_executed_querycount( sub {
+  cmp_deeply (
+    { map
+      { $_->cdid => {
+        track_titles => [ sort map { $_->title } ($_->tracks->all) ],
+        siblings => $_->get_column ('sibling_count'),
+      } }
+      $c_rs->all
+    },
+    $cd_data,
+    'Proper information retrieved from correlated subquery'
+  );
+}, 1, 'Only 1 query fired to retrieve everything');
 
 # now add an unbalanced select/as pair
 $c_rs = $c_rs->search ({}, {
@@ -102,15 +93,15 @@ is_same_sql_bind(
     SELECT me.cdid, me.artist, me.title, me.year, me.genreid, me.single_track,
            (SELECT COUNT( * )
               FROM cd siblings
-            WHERE siblings.artist = me.artist
+            WHERE me.artist != ?
+              AND siblings.artist = me.artist
               AND siblings.cdid != me.cdid
               AND siblings.cdid != ?
-              AND me.artist != ?
            ),
            (SELECT MIN( year ), MAX( year )
               FROM cd siblings
-            WHERE siblings.artist = me.artist
-              AND me.artist != ?
+            WHERE me.artist != ?
+              AND siblings.artist = me.artist
            ),
            tracks.trackid, tracks.cd, tracks.position, tracks.title, tracks.last_updated_on, tracks.last_updated_at
       FROM cd me
@@ -121,11 +112,11 @@ is_same_sql_bind(
   [
 
     # first subselect
-    [ { sqlt_datatype => 'integer', dbic_colname => 'siblings.cdid' }
-      => 23414 ],
-
     [ { sqlt_datatype => 'integer', dbic_colname => 'me.artist' }
       => 2 ],
+
+    [ { sqlt_datatype => 'integer', dbic_colname => 'siblings.cdid' }
+      => 23414 ],
 
     # second subselect
     [ { sqlt_datatype => 'integer', dbic_colname => 'me.artist' }
