@@ -592,6 +592,7 @@ t/relationship/custom_with_null_in_cond.t
 t/relationship/doesnt_exist.t
 t/relationship/dynamic_foreign_columns.t
 t/relationship/info.t
+t/relationship/malformed_declaration.t
 t/relationship/proxy.t
 t/relationship/set_column_on_fk.t
 t/relationship/unresolvable.t
@@ -615,6 +616,7 @@ t/row/filter_column.t
 t/row/find_one_has_many.t
 t/row/inflate_result.t
 t/row/pkless.t
+t/row/set_extra_column.t
 t/schema/anon.t
 t/schema/clone.t
 t/search/deprecated_attributes.t

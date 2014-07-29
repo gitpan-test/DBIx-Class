@@ -69,5 +69,5 @@ resources:
   repository: https://github.com/dbsrgits/DBIx-Class
   x_IRC: irc://irc.perl.org/#dbix-class
   x_WebIRC: https://chat.mibbit.com/#dbix-class@irc.perl.org
-version: 0.082700_01
+version: 0.082700_03
 x_authority: cpan:RIBASUSHI

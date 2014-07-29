@@ -18,7 +18,7 @@ Somewhere in your build-file (e.g. L<Module::Install>'s Makefile.PL):
 
   ...
 
-  configure_requires 'DBIx::Class' => '0.082700_01';
+  configure_requires 'DBIx::Class' => '0.082700_03';
 
   require DBIx::Class::Optional::Dependencies;
 
@@ -107,7 +107,7 @@ Modules required for L<DBIx::Class::Storage::DBI/deploy> and L<DBIx::Class::Stor
 
 =over
 
-=item * SQL::Translator >= 0.11016
+=item * SQL::Translator >= 0.11018
 
 =back
 
@@ -414,7 +414,7 @@ be able to use a specific feature.
 For example if some of the requirements for C<deploy> are not available,
 the returned string could look like:
 
- SQL::Translator >= 0.11016 (see DBIx::Class::Optional::Dependencies for details)
+ SQL::Translator >= 0.11018 (see DBIx::Class::Optional::Dependencies for details)
 
 The author is expected to prepend the necessary text to this message before
 returning the actual error seen by the user.

@@ -1,16 +1,17 @@
 Revision history for DBIx::Class
 
-0.082700_01 DEVELOPER RELEASE (roughly e56f8014) 2014-07-24 02:29 (UTC)
-
+0.082700_03 DEVELOPER RELEASE (roughly 08ac7648) 2014-07-29 06:22 (UTC)
     * Notable Changes and Deprecations
         - DBIC::FilterColumn now properly bypasses \'' and \[] literals, just
           like the rest of DBIC
         - DBIC::FilterColumn "from_storage" handler is now invoked on NULLs
           returned from storage
+        - find() now throws an exception if some of the supplied values are
+          managed by DBIC::FilterColumn (RT#95054)
         - Custom condition relationships are now invoked with a slightly
           different signature (existing coderefs will continue to work)
-        - Add extra custom condition coderef attribute 'foreign_result_object'
-          to allow for proper reverse-relationship emulation
+        - Add extra custom condition coderef attribute 'foreign_values'
+          to allow for proper reverse-relationship-like behavior
           (i.e. $result->set_from_related($custom_rel, $foreign_result_object)
         - When in a transaction, DBIC::Ordered now seamlesly handles result
           objects that went out of sync with the storage (RT#96499)
@@ -23,14 +24,18 @@ Revision history for DBIx::Class
         - Fix on_connect_* not always firing in some cases - a race condition
           existed between storage accessor setters and the determine_driver
           routines, triggering a connection before the set-cycle is finished
+        - Fix collapse being ignored on single-origin selection (RT#95658)
+        - Fix incorrect behavior on custom result_class inflators altering
+          the amount of returned results
         - Fix failure to detect stable order criteria when in iterator
           mode of a has_many prefetch off a search_related chain
         - Prevent erroneous database hit when accessing prefetched related
           resultsets with no rows
+        - Proper exceptions on malformed relationship conditions (RT#92234)
         - Fix incorrect handling of custom relationship conditions returning
           SQLA literal expressions
-        - Fix long standing bug with populate() getting confused by hashrefs
-          with different sets of keys: http://is.gd/2011_dbic_populate_gotcha
+        - Fix long standing bug with populate() missing data from hashrefs with
+          different keysets: http://is.gd/2011_dbic_populate_gotcha (RT#92723)
         - Fix multi-value literal populate not working with simplified bind
           specifications
         - Massively improve the implied resultset condition parsing - now all
@@ -38,10 +43,13 @@ Revision history for DBIx::Class
           up by create() and populate()
         - Ensure definitive condition extractor handles bizarre corner cases
           without bombing out (RT#93244)
+        - Fix set_column on non-native (+columns) selections (RT#86685)
         - Fix set_inflated_column incorrectly handling \[] literals (GH#44)
         - Ensure that setting a column to a literal invariably marks it dirty
         - Work around exception objects with broken string overloading in one
           additional codepath (missed in 0.08260)
+        - Fix more inconsistencies of the quote_names attribute propagating
+          to SQL::Translator (partially RT#87731)
         - Fix inability to handle multiple consecutive transactions with
           savepoints on DBD::SQLite < 1.39
         - Fix CDBICompat to match Class::DBI behavior handling non-result

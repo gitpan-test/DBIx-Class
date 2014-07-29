@@ -890,7 +890,10 @@ sub get_inflated_columns {
 }
 
 sub _is_column_numeric {
-   my ($self, $column) = @_;
+    my ($self, $column) = @_;
+
+    return undef unless $self->result_source->has_column($column);
+
     my $colinfo = $self->result_source->column_info ($column);
 
     # cache for speed (the object may *not* have a resultsource instance)
@@ -942,9 +945,10 @@ sub set_column {
   my $dirty =
     $self->{_dirty_columns}{$column}
       ||
-    $self->in_storage # no point tracking dirtyness on uninserted data
+    ( $self->in_storage # no point tracking dirtyness on uninserted data
       ? ! $self->_eq_column_values ($column, $old_value, $new_value)
       : 1
+    )
   ;
 
   if ($dirty) {
@@ -1176,10 +1180,8 @@ sub copy {
 
     my $copied = $rel_names_copied->{ $rel_info->{source} } ||= {};
     foreach my $related ($self->search_related($rel_name)->all) {
-      my $id_str = join("\0", $related->id);
-      next if $copied->{$id_str};
-      $copied->{$id_str} = 1;
-      my $rel_copy = $related->copy($resolved);
+      $related->copy($resolved)
+        unless $copied->{$related->ID}++;
     }
 
   }
