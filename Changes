@@ -1,6 +1,6 @@
 Revision history for DBIx::Class
 
-0.082700_03 DEVELOPER RELEASE (roughly 08ac7648) 2014-07-29 06:22 (UTC)
+0.082700_04 DEVELOPER RELEASE (roughly 0e14d9181) Wackinger \m/ Village 2014-07-31 11:26 (UTC)
     * Notable Changes and Deprecations
         - DBIC::FilterColumn now properly bypasses \'' and \[] literals, just
           like the rest of DBIC
@@ -50,6 +50,8 @@ Revision history for DBIx::Class
           additional codepath (missed in 0.08260)
         - Fix more inconsistencies of the quote_names attribute propagating
           to SQL::Translator (partially RT#87731)
+        - Fix SQLT constraint naming when DBIC table names are fully qualified
+          (PR#48)
         - Fix inability to handle multiple consecutive transactions with
           savepoints on DBD::SQLite < 1.39
         - Fix CDBICompat to match Class::DBI behavior handling non-result
