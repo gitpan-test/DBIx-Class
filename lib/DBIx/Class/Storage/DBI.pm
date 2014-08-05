@@ -101,11 +101,12 @@ for my $meth (keys %$storage_accessor_idx, qw(
   txn_begin
 
   insert
-  insert_bulk
   update
   delete
   select
   select_single
+
+  _insert_bulk
 
   with_deferred_fk_checks
 
@@ -253,12 +254,10 @@ sub new {
 }
 
 sub DESTROY {
-  my $self = shift;
-
+  $_[0]->_verify_pid unless DBIx::Class::_ENV_::BROKEN_FORK;
   # some databases spew warnings on implicit disconnect
-  $self->_verify_pid unless DBIx::Class::_ENV_::BROKEN_FORK;
   local $SIG{__WARN__} = sub {};
-  $self->_dbh(undef);
+  $_[0]->_dbh(undef);
 
   # this op is necessary, since the very last perl runtime statement
   # triggers a global destruction shootout, and the $SIG localization
@@ -269,14 +268,14 @@ sub DESTROY {
 
 # handle pid changes correctly - do not destroy parent's connection
 sub _verify_pid {
-  my $self = shift;
 
-  my $pid = $self->_conn_pid;
-  if( defined $pid and $pid != $$ and my $dbh = $self->_dbh ) {
+  my $pid = $_[0]->_conn_pid;
+
+  if( defined $pid and $pid != $$ and my $dbh = $_[0]->_dbh ) {
     $dbh->{InactiveDestroy} = 1;
-    $self->_dbh(undef);
-    $self->transaction_depth(0);
-    $self->savepoints([]);
+    $_[0]->_dbh(undef);
+    $_[0]->transaction_depth(0);
+    $_[0]->savepoints([]);
   }
 
   return;
@@ -870,22 +869,20 @@ database is not in C<AutoCommit> mode.
 =cut
 
 sub disconnect {
-  my ($self) = @_;
 
-  if( $self->_dbh ) {
-    my @actions;
+  if( my $dbh = $_[0]->_dbh ) {
 
-    push @actions, ( $self->on_disconnect_call || () );
-    push @actions, $self->_parse_connect_do ('on_disconnect_do');
-
-    $self->_do_connection_actions(disconnect_call_ => $_) for @actions;
+    $_[0]->_do_connection_actions(disconnect_call_ => $_) for (
+      ( $_[0]->on_disconnect_call || () ),
+      $_[0]->_parse_connect_do ('on_disconnect_do')
+    );
 
     # stops the "implicit rollback on disconnect" warning
-    $self->_exec_txn_rollback unless $self->_dbh_autocommit;
+    $_[0]->_exec_txn_rollback unless $_[0]->_dbh_autocommit;
 
-    %{ $self->_dbh->{CachedKids} } = ();
-    $self->_dbh->disconnect;
-    $self->_dbh(undef);
+    %{ $dbh->{CachedKids} } = ();
+    $dbh->disconnect;
+    $_[0]->_dbh(undef);
   }
 }
 
@@ -906,8 +903,8 @@ in MySQL's case disabled entirely.
 
 # Storage subclasses should override this
 sub with_deferred_fk_checks {
-  my ($self, $sub) = @_;
-  $sub->();
+  #my ($self, $sub) = @_;
+  $_[1]->();
 }
 
 =head2 connected
@@ -927,40 +924,26 @@ answering, etc.) This method is used internally by L</dbh>.
 =cut
 
 sub connected {
-  my $self = shift;
-  return 0 unless $self->_seems_connected;
+  return 0 unless $_[0]->_seems_connected;
 
   #be on the safe side
-  local $self->_dbh->{RaiseError} = 1;
+  local $_[0]->_dbh->{RaiseError} = 1;
 
-  return $self->_ping;
+  return $_[0]->_ping;
 }
 
 sub _seems_connected {
-  my $self = shift;
+  $_[0]->_verify_pid unless DBIx::Class::_ENV_::BROKEN_FORK;
 
-  $self->_verify_pid unless DBIx::Class::_ENV_::BROKEN_FORK;
-
-  my $dbh = $self->_dbh
-    or return 0;
-
-  return $dbh->FETCH('Active');
+  ($_[0]->_dbh || return 0)->FETCH('Active');
 }
 
 sub _ping {
-  my $self = shift;
-
-  my $dbh = $self->_dbh or return 0;
-
-  return $dbh->ping;
+  ($_[0]->_dbh || return 0)->ping;
 }
 
 sub ensure_connected {
-  my ($self) = @_;
-
-  unless ($self->connected) {
-    $self->_populate_dbh;
-  }
+  $_[0]->connected || ( $_[0]->_populate_dbh && 1 );
 }
 
 =head2 dbh
@@ -974,22 +957,17 @@ instead.
 =cut
 
 sub dbh {
-  my ($self) = @_;
-
-  if (not $self->_dbh) {
-    $self->_populate_dbh;
-  } else {
-    $self->ensure_connected;
-  }
-  return $self->_dbh;
+  # maybe save a ping call
+  $_[0]->_dbh
+    ? ( $_[0]->ensure_connected and $_[0]->_dbh )
+    : $_[0]->_populate_dbh
+  ;
 }
 
 # this is the internal "get dbh or connect (don't check)" method
 sub _get_dbh {
-  my $self = shift;
-  $self->_verify_pid unless DBIx::Class::_ENV_::BROKEN_FORK;
-  $self->_populate_dbh unless $self->_dbh;
-  return $self->_dbh;
+  $_[0]->_verify_pid unless DBIx::Class::_ENV_::BROKEN_FORK;
+  $_[0]->_dbh || $_[0]->_populate_dbh;
 }
 
 # *DELIBERATELY* not a setter (for the time being)
@@ -1058,33 +1036,35 @@ sub _rebless {}
 sub _init {}
 
 sub _populate_dbh {
-  my ($self) = @_;
 
-  $self->_dbh(undef); # in case ->connected failed we might get sent here
-  $self->_dbh_details({}); # reset everything we know
-  $self->_sql_maker(undef); # this may also end up being different
+  $_[0]->_dbh(undef); # in case ->connected failed we might get sent here
 
-  $self->_dbh($self->_connect);
+  $_[0]->_dbh_details({}); # reset everything we know
 
-  $self->_conn_pid($$) unless DBIx::Class::_ENV_::BROKEN_FORK; # on win32 these are in fact threads
+  # FIXME - this needs reenabling with the proper "no reset on same DSN" check
+  #$_[0]->_sql_maker(undef); # this may also end up being different
 
-  $self->_determine_driver;
+  $_[0]->_dbh($_[0]->_connect);
+
+  $_[0]->_conn_pid($$) unless DBIx::Class::_ENV_::BROKEN_FORK; # on win32 these are in fact threads
+
+  $_[0]->_determine_driver;
 
   # Always set the transaction depth on connect, since
   #  there is no transaction in progress by definition
-  $self->{transaction_depth} = $self->_dbh_autocommit ? 0 : 1;
+  $_[0]->{transaction_depth} = $_[0]->_dbh_autocommit ? 0 : 1;
 
-  $self->_run_connection_actions unless $self->{_in_determine_driver};
+  $_[0]->_run_connection_actions unless $_[0]->{_in_determine_driver};
+
+  $_[0]->_dbh;
 }
 
 sub _run_connection_actions {
-  my $self = shift;
-  my @actions;
 
-  push @actions, ( $self->on_connect_call || () );
-  push @actions, $self->_parse_connect_do ('on_connect_do');
-
-  $self->_do_connection_actions(connect_call_ => $_) for @actions;
+  $_[0]->_do_connection_actions(connect_call_ => $_) for (
+    ( $_[0]->on_connect_call || () ),
+    $_[0]->_parse_connect_do ('on_connect_do'),
+  );
 }
 
 
@@ -1542,19 +1522,17 @@ sub _connect {
 }
 
 sub txn_begin {
-  my $self = shift;
-
   # this means we have not yet connected and do not know the AC status
   # (e.g. coderef $dbh), need a full-fledged connection check
-  if (! defined $self->_dbh_autocommit) {
-    $self->ensure_connected;
+  if (! defined $_[0]->_dbh_autocommit) {
+    $_[0]->ensure_connected;
   }
   # Otherwise simply connect or re-connect on pid changes
   else {
-    $self->_get_dbh;
+    $_[0]->_get_dbh;
   }
 
-  $self->next::method(@_);
+  shift->next::method(@_);
 }
 
 sub _exec_txn_begin {
@@ -1575,9 +1553,8 @@ sub _exec_txn_begin {
 sub txn_commit {
   my $self = shift;
 
-  $self->_verify_pid unless DBIx::Class::_ENV_::BROKEN_FORK;
   $self->throw_exception("Unable to txn_commit() on a disconnected storage")
-    unless $self->_dbh;
+    unless $self->_seems_connected;
 
   # esoteric case for folks using external $dbh handles
   if (! $self->transaction_depth and ! $self->_dbh->FETCH('AutoCommit') ) {
@@ -1606,9 +1583,8 @@ sub _exec_txn_commit {
 sub txn_rollback {
   my $self = shift;
 
-  $self->_verify_pid unless DBIx::Class::_ENV_::BROKEN_FORK;
   $self->throw_exception("Unable to txn_rollback() on a disconnected storage")
-    unless $self->_dbh;
+    unless $self->_seems_connected;
 
   # esoteric case for folks using external $dbh handles
   if (! $self->transaction_depth and ! $self->_dbh->FETCH('AutoCommit') ) {
@@ -1636,9 +1612,8 @@ sub _exec_txn_rollback {
 
 # generate the DBI-specific stubs, which then fallback to ::Storage proper
 quote_sub __PACKAGE__ . "::$_" => sprintf (<<'EOS', $_) for qw(svp_begin svp_release svp_rollback);
-  $_[0]->_verify_pid unless DBIx::Class::_ENV_::BROKEN_FORK;
   $_[0]->throw_exception('Unable to %s() on a disconnected storage')
-    unless $_[0]->_dbh;
+    unless $_[0]->_seems_connected;
   shift->next::method(@_);
 EOS
 
@@ -2036,24 +2011,28 @@ sub insert {
 }
 
 sub insert_bulk {
+  carp_unique(
+    'insert_bulk() should have never been exposed as a public method and '
+  . 'calling it is depecated as of Aug 2014. If you believe having a genuine '
+  . 'use for this method please contact the development team via '
+  . DBIx::Class::_ENV_::HELP_URL
+  );
+
+  return '0E0' unless @{$_[3]||[]};
+
+  shift->_insert_bulk(@_);
+}
+
+sub _insert_bulk {
   my ($self, $source, $cols, $data) = @_;
 
-  my @col_range = (0..$#$cols);
-
-  # FIXME SUBOPTIMAL - DBI needs fixing to always stringify regardless of DBD
-  # For the time being forcibly stringify whatever is stringifiable
-  # ResultSet::populate() hands us a copy - safe to mangle
-  for my $r (0 .. $#$data) {
-    for my $c (0 .. $#{$data->[$r]}) {
-      $data->[$r][$c] = "$data->[$r][$c]"
-        if ( length ref $data->[$r][$c] and is_plain_value $data->[$r][$c] );
-    }
-  }
+  $self->throw_exception('Calling _insert_bulk without a dataset to process makes no sense')
+    unless @{$data||[]};
 
   my $colinfos = $source->columns_info($cols);
 
   local $self->{_autoinc_supplied_for_op} =
-    (first { $_->{is_auto_increment} } values %$colinfos)
+    (grep { $_->{is_auto_increment} } values %$colinfos)
       ? 1
       : 0
   ;
@@ -2080,16 +2059,16 @@ sub insert_bulk {
   # can be later matched up by address), because we want to supply a real
   # value on which perhaps e.g. datatype checks will be performed
   my ($proto_data, $value_type_by_col_idx);
-  for my $i (@col_range) {
-    my $colname = $cols->[$i];
-    if (ref $data->[0][$i] eq 'SCALAR') {
+  for my $col_idx (0..$#$cols) {
+    my $colname = $cols->[$col_idx];
+    if (ref $data->[0][$col_idx] eq 'SCALAR') {
       # no bind value at all - no type
 
-      $proto_data->{$colname} = $data->[0][$i];
+      $proto_data->{$colname} = $data->[0][$col_idx];
     }
-    elsif (ref $data->[0][$i] eq 'REF' and ref ${$data->[0][$i]} eq 'ARRAY' ) {
+    elsif (ref $data->[0][$col_idx] eq 'REF' and ref ${$data->[0][$col_idx]} eq 'ARRAY' ) {
       # repack, so we don't end up mangling the original \[]
-      my ($sql, @bind) = @${$data->[0][$i]};
+      my ($sql, @bind) = @${$data->[0][$col_idx]};
 
       # normalization of user supplied stuff
       my $resolved_bind = $self->_resolve_bindattrs(
@@ -2098,23 +2077,23 @@ sub insert_bulk {
 
       # store value-less (attrs only) bind info - we will be comparing all
       # supplied binds against this for sanity
-      $value_type_by_col_idx->{$i} = [ map { $_->[0] } @$resolved_bind ];
+      $value_type_by_col_idx->{$col_idx} = [ map { $_->[0] } @$resolved_bind ];
 
       $proto_data->{$colname} = \[ $sql, map { [
         # inject slice order to use for $proto_bind construction
-          { %{$resolved_bind->[$_][0]}, _bind_data_slice_idx => $i, _literal_bind_subindex => $_+1 }
+          { %{$resolved_bind->[$_][0]}, _bind_data_slice_idx => $col_idx, _literal_bind_subindex => $_+1 }
             =>
           $resolved_bind->[$_][1]
         ] } (0 .. $#bind)
       ];
     }
     else {
-      $value_type_by_col_idx->{$i} = undef;
+      $value_type_by_col_idx->{$col_idx} = undef;
 
       $proto_data->{$colname} = \[ '?', [
-        { dbic_colname => $colname, _bind_data_slice_idx => $i }
+        { dbic_colname => $colname, _bind_data_slice_idx => $col_idx }
           =>
-        $data->[0][$i]
+        $data->[0][$col_idx]
       ] ];
     }
   }
@@ -2129,7 +2108,7 @@ sub insert_bulk {
     # if the bindlist is empty and we had some dynamic binds, this means the
     # storage ate them away (e.g. the NoBindVars component) and interpolated
     # them directly into the SQL. This obviously can't be good for multi-inserts
-    $self->throw_exception('Cannot insert_bulk without support for placeholders');
+    $self->throw_exception('Unable to invoke fast-path insert without storage placeholder support');
   }
 
   # sanity checks
@@ -2147,13 +2126,13 @@ sub insert_bulk {
         Data::Dumper::Concise::Dumper ({
           map { $cols->[$_] =>
             $data->[$r_idx][$_]
-          } @col_range
+          } 0..$#$cols
         }),
       }
     );
   };
 
-  for my $col_idx (@col_range) {
+  for my $col_idx (0..$#$cols) {
     my $reference_val = $data->[0][$col_idx];
 
     for my $row_idx (1..$#$data) {  # we are comparing against what we got from [0] above, hence start from 1
@@ -2257,16 +2236,13 @@ sub insert_bulk {
 sub _dbh_execute_for_fetch {
   my ($self, $source, $sth, $proto_bind, $cols, $data) = @_;
 
-  my @idx_range = ( 0 .. $#$proto_bind );
-
   # If we have any bind attributes to take care of, we will bind the
   # proto-bind data (which will never be used by execute_for_fetch)
   # However since column bindtypes are "sticky", this is sufficient
   # to get the DBD to apply the bindtype to all values later on
-
   my $bind_attrs = $self->_dbi_attrs_for_bind($source, $proto_bind);
 
-  for my $i (@idx_range) {
+  for my $i (0 .. $#$proto_bind) {
     $sth->bind_param (
       $i+1, # DBI bind indexes are 1-based
       $proto_bind->[$i][1],
@@ -2287,7 +2263,7 @@ sub _dbh_execute_for_fetch {
     return undef if ++$fetch_row_idx > $#$data;
 
     return [ map {
-      ! defined $_->{_literal_bind_subindex}
+      my $v = ! defined $_->{_literal_bind_subindex}
 
         ? $data->[ $fetch_row_idx ]->[ $_->{_bind_data_slice_idx} ]
 
@@ -2299,7 +2275,14 @@ sub _dbh_execute_for_fetch {
             [ ${ $data->[ $fetch_row_idx ]->[ $_->{_bind_data_slice_idx} ]}->[ $_->{_literal_bind_subindex} ] ],
             {},     # a fake column_info bag
           )->[0][1]
+      ;
 
+      # FIXME SUBOPTIMAL - DBI needs fixing to always stringify regardless of DBD
+      # For the time being forcibly stringify whatever is stringifiable
+      (length ref $v and is_plain_value $v)
+        ? "$v"
+        : $v
+      ;
     } map { $_->[0] } @$proto_bind ];
   };
 

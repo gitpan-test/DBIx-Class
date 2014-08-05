@@ -1,6 +1,6 @@
 Revision history for DBIx::Class
 
-0.082700_04 DEVELOPER RELEASE (roughly 0e14d9181) Wackinger \m/ Village 2014-07-31 11:26 (UTC)
+0.082700_05 DEVELOPER RELEASE (roughly 26aea721) 2014-08-05 15:38 (UTC)
     * Notable Changes and Deprecations
         - DBIC::FilterColumn now properly bypasses \'' and \[] literals, just
           like the rest of DBIC
