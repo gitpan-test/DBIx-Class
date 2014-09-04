@@ -11,7 +11,7 @@ our $VERSION;
 # $VERSION declaration must stay up here, ahead of any other package
 # declarations, as to not confuse various modules attempting to determine
 # this ones version, whether that be s.c.o. or Module::Metadata, etc
-$VERSION = '0.082700_05';
+$VERSION = '0.082700_06';
 
 $VERSION = eval $VERSION if $VERSION =~ /_/; # numify for warning-free dev releases
 
@@ -480,6 +480,8 @@ nuba: Nuba Princigalli <nuba@cpan.org>
 
 Numa: Dan Sully <daniel@cpan.org>
 
+oalders: Olaf Alders <olaf@wundersolutions.com>
+
 ovid: Curtis "Ovid" Poe <ovid@cpan.org>
 
 oyse: E<Oslash>ystein Torget <oystein.torget@dnv.com>
@@ -509,6 +511,8 @@ quicksilver: Jules Bean
 rafl: Florian Ragwitz <rafl@debian.org>
 
 rainboxx: Matthias Dietrich <perl@rb.ly>
+
+Relequestual: Ben Hutton <relequestual@gmail.com>
 
 rbo: Robert Bohne <rbo@cpan.org>
 

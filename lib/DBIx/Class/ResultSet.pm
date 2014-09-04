@@ -10,7 +10,6 @@ use DBIx::Class::_Util qw(
   fail_on_internal_wantarray fail_on_internal_call UNRESOLVABLE_CONDITION
 );
 use Try::Tiny;
-use Data::Compare (); # no imports!!! guard against insane architecture
 
 # not importing first() as it will clash with our own method
 use List::Util ();
@@ -656,26 +655,17 @@ sub _stack_cond {
     (ref $_ eq 'HASH' and ! keys %$_)
   ) and $_ = undef for ($left, $right);
 
-  # either on of the two undef or both undef
-  if ( ( (defined $left) xor (defined $right) ) or ! defined $left ) {
+  # either one of the two undef
+  if ( (defined $left) xor (defined $right) ) {
     return defined $left ? $left : $right;
   }
-
-  my $cond = $self->result_source->schema->storage->_collapse_cond({ -and => [$left, $right] });
-
-  for my $c (grep { ref $cond->{$_} eq 'ARRAY' and ($cond->{$_}[0]||'') eq '-and' } keys %$cond) {
-
-    my @vals = sort @{$cond->{$c}}[ 1..$#{$cond->{$c}} ];
-    my @fin = shift @vals;
-
-    for my $v (@vals) {
-      push @fin, $v unless Data::Compare::Compare( $fin[-1], $v );
-    }
-
-    $cond->{$c} = (@fin == 1) ? $fin[0] : [-and => @fin ];
+  # both undef
+  elsif ( ! defined $left ) {
+    return undef
   }
-
-  $cond;
+  else {
+    return $self->result_source->schema->storage->_collapse_cond({ -and => [$left, $right] });
+  }
 }
 
 =head2 search_literal
@@ -4156,10 +4146,11 @@ names:
 
 B<NOTE:> You will almost always need a corresponding L</as> attribute when you
 use L</select>, to instruct DBIx::Class how to store the result of the column.
-Also note that the L</as> attribute has nothing to do with the SQL-side 'AS'
-identifier aliasing. You can however alias a function, so you can use it in
-e.g. an C<ORDER BY> clause. This is done via the C<-as> B<select function
-attribute> supplied as shown in the example above.
+
+Also note that the L</as> attribute has B<nothing to do> with the SQL-side
+C<AS> identifier aliasing. You B<can> alias a function (so you can use it e.g.
+in an C<ORDER BY> clause), however this is done via the C<-as> B<select
+function attribute> supplied as shown in the example above.
 
 =head2 +select
 
@@ -4189,8 +4180,10 @@ Indicates DBIC-side names for object inflation. That is L</as> indicates the
 slot name in which the column value will be stored within the
 L<Row|DBIx::Class::Row> object. The value will then be accessible via this
 identifier by the C<get_column> method (or via the object accessor B<if one
-with the same name already exists>) as shown below. The L</as> attribute has
-B<nothing to do> with the SQL-side C<AS>. See L</select> for details.
+with the same name already exists>) as shown below.
+
+The L</as> attribute has B<nothing to do> with the SQL-side identifier
+aliasing C<AS>. See L</select> for details.
 
   $rs = $schema->resultset('Employee')->search(undef, {
     select => [
@@ -4366,8 +4359,10 @@ For a more in-depth discussion, see L</PREFETCHING>.
 
 This attribute is a shorthand for specifying a L</join> spec, adding all
 columns from the joined related sources as L</+columns> and setting
-L</collapse> to a true value. For example, the following two queries are
-equivalent:
+L</collapse> to a true value. It can be thought of as a rough B<superset>
+of the L</join> attribute.
+
+For example, the following two queries are equivalent:
 
   my $rs = $schema->resultset('Artist')->search({}, {
     prefetch => { cds => ['genre', 'tracks' ] },
@@ -4544,15 +4539,20 @@ A arrayref of columns to group by. Can include columns of joined tables.
 
 =back
 
-HAVING is a select statement attribute that is applied between GROUP BY and
-ORDER BY. It is applied to the after the grouping calculations have been
-done.
+The HAVING operator specifies a B<secondary> condition applied to the set
+after the grouping calculations have been done. In other words it is a
+constraint just like L</where> (and accepting the same
+L<SQL::Abstract syntax|SQL::Abstract/WHERE CLAUSES>) applied to the data
+as it exists after GROUP BY has taken place. Specifying L</having> without
+L</group_by> is a logical mistake, and a fatal error on most RDBMS engines.
+
+E.g.
 
   having => { 'count_employee' => { '>=', 100 } }
 
 or with an in-place function in which case literal SQL is required:
 
-  having => \[ 'count(employee) >= ?', [ count => 100 ] ]
+  having => \[ 'count(employee) >= ?', 100 ]
 
 =head2 distinct
 

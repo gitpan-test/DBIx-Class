@@ -15,7 +15,7 @@ use mro 'c3';
 
 use List::Util 'first';
 use Scalar::Util 'blessed';
-use DBIx::Class::_Util 'UNRESOLVABLE_CONDITION';
+use DBIx::Class::_Util qw(UNRESOLVABLE_CONDITION serialize);
 use SQL::Abstract qw(is_plain_value is_literal_value);
 use namespace::clean;
 
@@ -986,6 +986,8 @@ sub _extract_colinfo_of_stable_main_source_order_by_portion {
 sub _collapse_cond {
   my ($self, $where, $where_is_anded_array) = @_;
 
+  my $fin;
+
   if (! $where) {
     return;
   }
@@ -998,17 +1000,17 @@ sub _collapse_cond {
       my $chunk = shift @pieces;
 
       if (ref $chunk eq 'HASH') {
-        push @pairs, map { [ $_ => $chunk->{$_} ] } sort keys %$chunk;
+        push @pairs, map { $_ => $chunk->{$_} } sort keys %$chunk;
       }
       elsif (ref $chunk eq 'ARRAY') {
-        push @pairs, [ -or => $chunk ]
+        push @pairs, -or => $chunk
           if @$chunk;
       }
-      elsif ( ! ref $chunk) {
-        push @pairs, [ $chunk, shift @pieces ];
+      elsif ( ! length ref $chunk) {
+        push @pairs, $chunk, shift @pieces;
       }
       else {
-        push @pairs, [ '', $chunk ];
+        push @pairs, '', $chunk;
       }
     }
 
@@ -1018,25 +1020,31 @@ sub _collapse_cond {
       or return;
 
     # Consolidate various @conds back into something more compact
-    my $fin;
-
     for my $c (@conds) {
       if (ref $c ne 'HASH') {
         push @{$fin->{-and}}, $c;
       }
       else {
         for my $col (sort keys %$c) {
-          if (exists $fin->{$col}) {
-            my ($l, $r) = ($fin->{$col}, $c->{$col});
 
-            (ref $_ ne 'ARRAY' or !@$_) and $_ = [ -and => $_ ] for ($l, $r);
-
-            if (@$l and @$r and $l->[0] eq $r->[0] and $l->[0] eq '-and') {
-              $fin->{$col} = [ -and => map { @$_[1..$#$_] } ($l, $r) ];
-            }
-            else {
-              $fin->{$col} = [ -and => $fin->{$col}, $c->{$col} ];
-            }
+          # consolidate all -and nodes
+          if ($col =~ /^\-and$/i) {
+            push @{$fin->{-and}},
+              ref $c->{$col} eq 'ARRAY' ? @{$c->{$col}}
+            : ref $c->{$col} eq 'HASH' ? %{$c->{$col}}
+            : { $col => $c->{$col} }
+            ;
+          }
+          elsif ($col =~ /^\-/) {
+            push @{$fin->{-and}}, { $col => $c->{$col} };
+          }
+          elsif (exists $fin->{$col}) {
+            $fin->{$col} = [ -and => map {
+              (ref $_ eq 'ARRAY' and ($_->[0]||'') =~ /^\-and$/i )
+                ? @{$_}[1..$#$_]
+                : $_
+              ;
+            } ($fin->{$col}, $c->{$col}) ];
           }
           else {
             $fin->{$col} = $c->{$col};
@@ -1044,57 +1052,92 @@ sub _collapse_cond {
         }
       }
     }
-
-    if ( ref $fin->{-and} eq 'ARRAY' and @{$fin->{-and}} == 1 ) {
-      my $piece = (delete $fin->{-and})->[0];
-      if (ref $piece eq 'ARRAY') {
-        $fin->{-or} = $fin->{-or} ? [ $piece, $fin->{-or} ] : $piece;
-      }
-      elsif (! exists $fin->{''}) {
-        $fin->{''} = $piece;
-      }
-    }
-
-    return $fin;
   }
   elsif (ref $where eq 'ARRAY') {
-    my @w = @$where;
+    # we are always at top-level here, it is safe to dump empty *standalone* pieces
+    my $fin_idx;
 
-    while ( @w and (
-      (ref $w[0] eq 'ARRAY' and ! @{$w[0]} )
-        or
-      (ref $w[0] eq 'HASH' and ! keys %{$w[0]})
-    )) { shift @w };
+    for (my $i = 0; $i <= $#$where; $i++ ) {
 
-    return unless @w;
+      my $logic_mod = lc ( ($where->[$i] =~ /^(\-(?:and|or))$/i)[0] || '' );
 
-    if ( @w == 1 ) {
-      return ( ref $w[0] )
-        ? $self->_collapse_cond($w[0])
-        : { $w[0] => undef }
-      ;
-    }
-    elsif ( @w == 2 and ! ref $w[0]) {
-      if ( ( $w[0]||'' ) =~ /^\-and$/i ) {
-        return (ref $w[1] eq 'HASH' or ref $w[1] eq 'ARRAY')
-          ? $self->_collapse_cond($w[1], (ref $w[1] eq 'ARRAY') )
-          : $self->throw_exception("Unsupported top-level op/arg pair: [ $w[0] => $w[1] ]")
-        ;
+      if ($logic_mod) {
+        $i++;
+        $self->throw_exception("Unsupported top-level op/arg pair: [ $logic_mod => $where->[$i] ]")
+          unless ref $where->[$i] eq 'HASH' or ref $where->[$i] eq 'ARRAY';
+
+        my $sub_elt = $self->_collapse_cond({ $logic_mod => $where->[$i] })
+          or next;
+
+        $fin_idx->{ "SER_" . serialize $sub_elt } = $sub_elt;
+      }
+      elsif (! length ref $where->[$i] ) {
+        my $sub_elt = $self->_collapse_cond({ @{$where}[$i, $i+1] })
+          or next;
+
+        $fin_idx->{ "COL_$where->[$i]_" . serialize $sub_elt } = $sub_elt;
+        $i++;
       }
       else {
-        return $self->_collapse_cond({ @w });
+        $fin_idx->{ "SER_" . serialize $where->[$i] } = $self->_collapse_cond( $where->[$i] ) || next;
       }
     }
-    else {
-      return { -or => \@w };
-    }
+
+    return unless $fin_idx;
+
+    $fin = ( keys %$fin_idx == 1 ) ? (values %$fin_idx)[0] : {
+      -or => [ map {
+        # unroll single-element hashes
+        ( ref $fin_idx->{$_} eq 'HASH' and keys %{$fin_idx->{$_}} == 1 )
+          ? %{$fin_idx->{$_}}
+          : $fin_idx->{$_}
+      } sort keys %$fin_idx ]
+    };
   }
   else {
     # not a hash not an array
-    return { '' => $where };
+    $fin = { '' => $where };
   }
 
-  die 'should not get here';
+  # unroll single-element -and's
+  while (
+    $fin->{-and}
+      and
+    @{$fin->{-and}} < 2
+  ) {
+    my $and = delete $fin->{-and};
+    last if @$and == 0;
+
+    # at this point we have @$and == 1
+    if (
+      ref $and->[0] eq 'HASH'
+        and
+      ! grep { exists $fin->{$_} } keys %{$and->[0]}
+    ) {
+      $fin = {
+        %$fin, %{$and->[0]}
+      };
+    }
+  }
+
+  # compress same-column conds found in $fin
+  for my $col ( grep { $_ !~ /^\-/ } keys %$fin ) {
+    next unless ref $fin->{$col} eq 'ARRAY' and ($fin->{$col}[0]||'') =~ /^\-and$/i;
+    my $val_bag = { map {
+      (! defined $_ )                   ? ( UNDEF => undef )
+    : ( ! ref $_ or is_plain_value $_ ) ? ( "VAL_$_" => $_ )
+    : ( ( 'SER_' . serialize $_ ) => $_ )
+    } @{$fin->{$col}}[1 .. $#{$fin->{$col}}] };
+
+    if (keys %$val_bag == 1 ) {
+      ($fin->{$col}) = values %$val_bag;
+    }
+    else {
+      $fin->{$col} = [ -and => map { $val_bag->{$_} } sort keys %$val_bag ];
+    }
+  }
+
+  return keys %$fin ? $fin : ();
 }
 
 sub _collapse_cond_unroll_pairs {
@@ -1103,7 +1146,7 @@ sub _collapse_cond_unroll_pairs {
   my @conds;
 
   while (@$pairs) {
-    my ($lhs, $rhs) = @{ shift @$pairs };
+    my ($lhs, $rhs) = splice @$pairs, 0, 2;
 
     if ($lhs eq '') {
       push @conds, $self->_collapse_cond($rhs);
@@ -1131,7 +1174,7 @@ sub _collapse_cond_unroll_pairs {
           push @conds, { $lhs => $rhs };
         }
         else {
-          for my $p ($self->_collapse_cond_unroll_pairs([ [ $lhs => $rhs->{'='} ] ])) {
+          for my $p ($self->_collapse_cond_unroll_pairs([ $lhs => $rhs->{'='} ])) {
 
             # extra sanity check
             if (keys %$p > 1) {
@@ -1163,22 +1206,34 @@ sub _collapse_cond_unroll_pairs {
             if  @$rhs == 1;
 
           if( $rhs->[0] =~ /^\-and$/i ) {
-            unshift @$pairs, map { [ $lhs => $_ ] } @{$rhs}[1..$#$rhs];
+            unshift @$pairs, map { $lhs => $_ } @{$rhs}[1..$#$rhs];
           }
           # if not an AND then it's an OR
           elsif(@$rhs == 2) {
-            unshift @$pairs, [ $lhs => $rhs->[1] ];
+            unshift @$pairs, $lhs => $rhs->[1];
           }
           else {
-            push @conds, { $lhs => $rhs };
+            push @conds, { $lhs => [ @{$rhs}[1..$#$rhs] ] };
           }
         }
         elsif (@$rhs == 1) {
-          unshift @$pairs, [ $lhs => $rhs->[0] ];
+          unshift @$pairs, $lhs => $rhs->[0];
         }
         else {
           push @conds, { $lhs => $rhs };
         }
+      }
+      # unroll func + { -value => ... }
+      elsif (
+        ref $rhs eq 'HASH'
+          and
+        ( my ($subop) = keys %$rhs ) == 1
+          and
+        length ref ((values %$rhs)[0])
+          and
+        my $vref = is_plain_value( (values %$rhs)[0] )
+      ) {
+        push @conds, { $lhs => { $subop => @$vref } }
       }
       else {
         push @conds, { $lhs => $rhs };
@@ -1205,7 +1260,6 @@ sub _collapse_cond_unroll_pairs {
 # is instead used to infer inambiguous values from conditions
 # (e.g. the inheritance of resultset conditions on new_result)
 #
-my $undef_marker = \ do{ my $x = 'undef' };
 sub _extract_fixed_condition_columns {
   my ($self, $where, $consider_nulls) = @_;
   my $where_hash = $self->_collapse_cond($_[1]);
@@ -1216,7 +1270,7 @@ sub _extract_fixed_condition_columns {
     my $vals;
 
     if (!defined ($v = $where_hash->{$c}) ) {
-      $vals->{$undef_marker} = $v if $consider_nulls
+      $vals->{UNDEF} = $v if $consider_nulls
     }
     elsif (
       ref $v eq 'HASH'
@@ -1225,15 +1279,15 @@ sub _extract_fixed_condition_columns {
     ) {
       if (exists $v->{-value}) {
         if (defined $v->{-value}) {
-          $vals->{$v->{-value}} = $v->{-value}
+          $vals->{"VAL_$v->{-value}"} = $v->{-value}
         }
         elsif( $consider_nulls ) {
-          $vals->{$undef_marker} = $v->{-value};
+          $vals->{UNDEF} = $v->{-value};
         }
       }
       # do not need to check for plain values - _collapse_cond did it for us
-      elsif(ref $v->{'='} and is_literal_value($v->{'='}) ) {
-        $vals->{$v->{'='}} = $v->{'='};
+      elsif(length ref $v->{'='} and is_literal_value($v->{'='}) ) {
+        $vals->{ 'SER_' . serialize $v->{'='} } = $v->{'='};
       }
     }
     elsif (
@@ -1241,19 +1295,23 @@ sub _extract_fixed_condition_columns {
         or
       is_plain_value ($v)
     ) {
-      $vals->{$v} = $v;
+      $vals->{"VAL_$v"} = $v;
     }
     elsif (ref $v eq 'ARRAY' and ($v->[0]||'') eq '-and') {
       for ( @{$v}[1..$#$v] ) {
         my $subval = $self->_extract_fixed_condition_columns({ $c => $_ }, 'consider nulls');  # always fish nulls out on recursion
         next unless exists $subval->{$c};  # didn't find anything
-        $vals->{defined $subval->{$c} ? $subval->{$c} : $undef_marker} = $subval->{$c};
+        $vals->{
+          ! defined $subval->{$c}                                        ? 'UNDEF'
+        : ( ! length ref $subval->{$c} or is_plain_value $subval->{$c} ) ? "VAL_$subval->{$c}"
+        : ( 'SER_' . serialize $subval->{$c} )
+        } = $subval->{$c};
       }
     }
 
     if (keys %$vals == 1) {
       ($res->{$c}) = (values %$vals)
-        unless !$consider_nulls and exists $vals->{$undef_marker};
+        unless !$consider_nulls and exists $vals->{UNDEF};
     }
     elsif (keys %$vals > 1) {
       $res->{$c} = UNRESOLVABLE_CONDITION;

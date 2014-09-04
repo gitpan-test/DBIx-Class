@@ -627,6 +627,7 @@ t/search/related_has_many.t
 t/search/related_strip_prefetch.t
 t/search/select_chains.t
 t/search/select_chains_unbalanced.t
+t/search/stack_cond.t
 t/search/subquery.t
 t/search/void.t
 t/sqlmaker/bind_transport.t

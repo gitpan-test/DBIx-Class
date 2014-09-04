@@ -1,6 +1,6 @@
 Revision history for DBIx::Class
 
-0.082700_05 DEVELOPER RELEASE (roughly 26aea721) 2014-08-05 15:38 (UTC)
+0.082700_06 DEVELOPER RELEASE (roughly 8d54fafa) 2014-09-04 14:18 (UTC)
     * Notable Changes and Deprecations
         - DBIC::FilterColumn now properly bypasses \'' and \[] literals, just
           like the rest of DBIC
@@ -59,6 +59,8 @@ Revision history for DBIx::Class
           blind new) (GH#51)
 
     * Misc
+        - A bunch of fixes for the botched condition parsing in the previous
+          devrels (082700_01 ~ 082700_05) (RT#98161)
         - Ensure source metadata calls always take place on the result source
           instance registered with the caller
         - IFF DBIC_TRACE output defaults to STDERR we now silence the possible
