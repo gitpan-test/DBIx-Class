@@ -1809,7 +1809,7 @@ sub _resolve_condition {
 
   # _resolve_relationship_condition always returns qualified cols even in the
   # case of join_free_condition, but nothing downstream expects this
-  if (ref $res[0] eq 'HASH' and ($is_objlike[0] or $is_objlike[1]) ) {
+  if ($rc->{join_free_condition} and ref $res[0] eq 'HASH') {
     $res[0] = { map
       { ($_ =~ /\.(.+)/) => $res[0]{$_} }
       keys %{$res[0]}
@@ -1835,7 +1835,7 @@ Internals::SvREADONLY($UNRESOLVABLE_CONDITION => 1);
 ## self-explanatory API, modeled on the custom cond coderef:
 # rel_name              => (scalar)
 # foreign_alias         => (scalar)
-# foreign_values        => (either not supplied or a hashref)
+# foreign_values        => (either not supplied, or a hashref, or a foreign ResultObject (to be ->get_columns()ed), or plain undef )
 # self_alias            => (scalar)
 # self_result_object    => (either not supplied or a result object)
 # require_join_free_condition => (boolean, throws on failure to construct a JF-cond)
@@ -1881,34 +1881,41 @@ sub _resolve_relationship_condition {
 
   $args->{condition} ||= $rel_info->{cond};
 
-# TEMP
-#  my $rel_rsrc = $self->related_source($args->{rel_name});
+  $self->throw_exception( "Argument 'self_result_object' must be an object of class '@{[ $self->result_class ]}'" )
+    if (
+      exists $args->{self_result_object}
+        and
+      ( ! defined blessed $args->{self_result_object} or ! $args->{self_result_object}->isa($self->result_class) )
+    )
+  ;
 
-  if (exists $args->{self_result_object}) {
-    $self->throw_exception( "Argument 'self_result_object' must be an object of class '@{[ $self->result_class ]}'" )
-      unless defined blessed $args->{self_result_object};
-
-    $self->throw_exception( "Object '$args->{self_result_object}' must be of class '@{[ $self->result_class ]}'" )
-      unless $args->{self_result_object}->isa($self->result_class);
-  }
+  my $rel_rsrc = $self->related_source($args->{rel_name});
 
   if (exists $args->{foreign_values}) {
     if (defined blessed $args->{foreign_values}) {
-      $self->throw_exception( "Object supplied as 'foreign_values' ($args->{foreign_values}) must be of class '$rel_info->{class}'" )
-        unless $args->{foreign_values}->isa($rel_info->{class});
+
+      $self->throw_exception( "Objects supplied as 'foreign_values' ($args->{foreign_values}) must inherit from DBIx::Class::Row" )
+        unless $args->{foreign_values}->isa('DBIx::Class::Row');
+
+      carp_unique(
+        "Objects supplied as 'foreign_values' ($args->{foreign_values}) "
+      . "usually should inherit from the related ResultClass ('@{[ $rel_rsrc->result_class ]})', "
+      . "perhaps you've made a mistake invoking the condition resolver?"
+      ) unless $args->{foreign_values}->isa($rel_rsrc->result_class);
 
       $args->{foreign_values} = { $args->{foreign_values}->get_columns };
     }
     elsif (! defined $args->{foreign_values} or ref $args->{foreign_values} eq 'HASH') {
-      # TEMP
-      my $rel_rsrc = $self->related_source($args->{rel_name});
       my $ci = $rel_rsrc->columns_info;
       ! exists $ci->{$_} and $self->throw_exception(
         "Key '$_' supplied as 'foreign_values' is not a column on related source '@{[ $rel_rsrc->source_name ]}'"
       ) for keys %{ $args->{foreign_values} ||= {} };
     }
     else {
-      $self->throw_exception( "Argument 'foreign_values' must be either an object inheriting from '$rel_info->{class}' or a hash reference or undef" );
+      $self->throw_exception(
+        "Argument 'foreign_values' must be either an object inheriting from '@{[ $rel_rsrc->result_class ]}', "
+      . "or a hash reference, or undef"
+      );
     }
   }
 
@@ -1947,8 +1954,6 @@ sub _resolve_relationship_condition {
 
       my ($joinfree_alias, $joinfree_source);
       if (defined $args->{self_result_object}) {
-        # TEMP
-        my $rel_rsrc = $self->related_source($args->{rel_name});
         $joinfree_alias = $args->{foreign_alias};
         $joinfree_source = $rel_rsrc;
       }
@@ -2122,8 +2127,6 @@ sub _resolve_relationship_condition {
 
       # there is no way to know who is right and who is left in a cref
       # therefore a full blown resolution call
-      # TEMP
-      my $rel_rsrc = $self->related_source($args->{rel_name});
       $colinfos ||= $storage->_resolve_column_info([
         { -alias => $args->{self_alias}, -rsrc => $self },
         { -alias => $args->{foreign_alias}, -rsrc => $rel_rsrc },
